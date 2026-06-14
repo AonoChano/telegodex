@@ -67,7 +67,8 @@ def format_markdown_v2(text: str) -> str:
         return placeholder
 
     # 先保护 Markdown 链接中的 URL，避免被误识别
-    text = re.sub(r'\[([^\]]+)\]\((https?://[^)]+)\)', lambda m: protect(m, 'LINK'), text)
+    # 支持多行链接格式：[text]\n(url)
+    text = re.sub(r'\[([^\]]+)\]\s*\(([^)]+)\)', lambda m: protect(m, 'LINK'), text, flags=re.DOTALL)
 
     # 然后保护独立的 URL
     text = re.sub(r'(?<!\()(https?://[^\s\)]+)(?!\))', protect_standalone_url, text)
@@ -113,7 +114,8 @@ def format_markdown_v2(text: str) -> str:
 
         elif 'LINK' in placeholder:
             # Markdown 链接：需要转义内部文本，但保留语法结构
-            link_match = re.match(r'\[([^\]]+)\]\(([^)]+)\)', original)
+            # 支持多行链接：[text]\n(url)
+            link_match = re.match(r'\[([^\]]+)\]\s*\(([^)]+)\)', original, re.DOTALL)
             if link_match:
                 link_text = link_match.group(1)
                 link_url = link_match.group(2)
@@ -124,8 +126,16 @@ def format_markdown_v2(text: str) -> str:
                     if char not in ['[', ']', '(', ')']:
                         escaped_text = escaped_text.replace(char, f'\\{char}')
 
-                # URL 不需要转义（Telegram 接受原始 URL）
-                formatted_link = f'[{escaped_text}]({link_url})'
+                # URL 中也需要转义特殊字符（Telegram MarkdownV2 要求）
+                # 但保留 URL 必需的字符：: / ? = & #
+                link_url = link_url.strip()
+                escaped_url = link_url
+                for char in SPECIAL_CHARS:
+                    # 排除 URL 中常用的字符
+                    if char not in ['(', ')']:  # 括号在 URL 中也需要转义
+                        escaped_url = escaped_url.replace(char, f'\\{char}')
+
+                formatted_link = f'[{escaped_text}]({escaped_url})'
                 text = text.replace(placeholder, formatted_link)
 
         elif 'BOLD' in placeholder:
@@ -327,6 +337,12 @@ def hello():
 E = 2(Delta f + f_m)
 ```
 其中各符号含义如下...""",
+
+        # 多行链接格式（AI 有时会生成）
+        """访问官方文档：
+[卡森公式推导]
+(https://en.wikipedia.org/wiki/Carson_bandwidth_rule)
+获取详细信息。""",
 
         # 复杂 LaTeX 示例
         """贝塔函数的积分表达式：
