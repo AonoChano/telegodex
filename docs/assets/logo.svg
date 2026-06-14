@@ -1,22 +1,21 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 220" width="100%" height="100%">
-  <!-- 背景透明：已删除填充矩形 -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 680 220" width="100%" height="100%">
   <defs>
     <filter id="white-shadow" x="-10%" y="-10%" width="130%" height="130%">
       <feDropShadow dx="1.5" dy="1.5" stdDeviation="1" flood-color="white" flood-opacity="0.65"/>
     </filter>
   </defs>
   <g font-family="'Courier New', Courier, monospace" font-size="20" font-weight="bold" filter="url(#white-shadow)" fill="#ffffff" xml:space="preserve">
-    <!-- 第1行：蓝色 █ (奇数行) -->
-    <text x="-10" y="40">&#xA0;&#xA0;<tspan fill="#229ed9">████████</tspan>╗<tspan fill="#229ed9">████████</tspan>╗<tspan fill="#229ed9">██</tspan>╗&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;<tspan fill="#229ed9">███████</tspan>╗&#xA0;<tspan fill="#229ed9">██████</tspan>╗&#xA0;&#xA0;<tspan fill="#229ed9">██████</tspan>╗&#xA0;&#xA0;&#xA0;&#xA0;</text>
-    <!-- 第2行：白色 █ (偶数行) -->
-    <text x="-10" y="70">&#xA0;&#xA0;╚══<tspan>██</tspan>╔══╝<tspan>██</tspan>╔════╝<tspan>██</tspan>║&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;<tspan>██</tspan>╔════╝<tspan>██</tspan>╔════╝&#xA0;<tspan>██</tspan>╔═══<tspan>██</tspan>╗&#xA0;&#xA0;&#xA0;</text>
-    <!-- 第3行：蓝色 █ (奇数行) -->
-    <text x="-10" y="100">&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;<tspan fill="#229ed9">██</tspan>║&#xA0;&#xA0;&#xA0;<tspan fill="#229ed9">█████</tspan>╗&#xA0;&#xA0;<tspan fill="#229ed9">██</tspan>║&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;<tspan fill="#229ed9">█████</tspan>╗&#xA0;&#xA0;<tspan fill="#229ed9">██</tspan>║&#xA0;&#xA0;<tspan fill="#229ed9">███</tspan>╗<tspan fill="#229ed9">██</tspan>║&#xA0;&#xA0;&#xA0;<tspan fill="#229ed9">██</tspan>║&#xA0;&#xA0;&#xA0;</text>
-    <!-- 第4行：白色 █ (偶数行) -->
-    <text x="-10" y="130">&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;<tspan>██</tspan>║&#xA0;&#xA0;&#xA0;<tspan>██</tspan>╔══╝&#xA0;&#xA0;<tspan>██</tspan>║&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;<tspan>██</tspan>╔══╝&#xA0;&#xA0;<tspan>██</tspan>║&#xA0;&#xA0;&#xA0;<tspan>██</tspan>║<tspan>██</tspan>║&#xA0;&#xA0;&#xA0;<tspan>██</tspan>║&#xA0;&#xA0;&#xA0;</text>
-    <!-- 第5行：蓝色 █ (奇数行) -->
-    <text x="-10" y="160">&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;<tspan fill="#229ed9">██</tspan>║&#xA0;&#xA0;&#xA0;<tspan fill="#229ed9">███████</tspan>╗<tspan fill="#229ed9">███████</tspan>╗<tspan fill="#229ed9">███████</tspan>╗╚<tspan fill="#229ed9">██████</tspan>╔╝╚<tspan fill="#229ed9">██████</tspan>╔╝&#xA0;&#xA0;&#xA0;</text>
-    <!-- 第6行：无 █，全白色 -->
-    <text x="-10" y="190">&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;╚═╝&#xA0;&#xA0;&#xA0;╚══════╝╚══════╝╚══════╝&#xA0;╚═════╝&#xA0;&#xA0;╚═════╝&#xA0;&#xA0;&#xA0;&#xA0;</text>
+    <!-- 第1行 -->
+    <text x="-10" y="40">&#xA0;&#xA0;<tspan fill="#229ed9">████████</tspan>╗<tspan fill="#229ed9">███████</tspan>╗&#xA0;<tspan fill="#229ed9">██</tspan>╗&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;<tspan fill="#229ed9">███████</tspan>╗&#xA0;<tspan fill="#229ed9">██████</tspan>╗&#xA0;&#xA0;<tspan fill="#229ed9">██████</tspan>╗</text>
+    <!-- 第2行 -->
+    <text x="-10" y="70">&#xA0;&#xA0;╚══<tspan>██</tspan>╔══╝<tspan>██</tspan>╔════╝&#xA0;<tspan>██</tspan>║&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;<tspan>██</tspan>╔════╝<tspan>██</tspan>╔════╝&#xA0;<tspan>██</tspan>╔═══<tspan>██</tspan>╗</text>
+    <!-- 第3行 -->
+    <text x="-10" y="100">&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;<tspan fill="#229ed9">██</tspan>║&#xA0;&#xA0;&#xA0;<tspan fill="#229ed9">█████</tspan>╗&#xA0;&#xA0;&#xA0;<tspan fill="#229ed9">██</tspan>║&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;<tspan fill="#229ed9">█████</tspan>╗&#xA0;&#xA0;<tspan fill="#229ed9">██</tspan>║&#xA0;&#xA0;<tspan fill="#229ed9">███</tspan>╗<tspan fill="#229ed9">██</tspan>║&#xA0;&#xA0;&#xA0;<tspan fill="#229ed9">██</tspan>║</text>
+    <!-- 第4行 -->
+    <text x="-10" y="130">&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;<tspan>██</tspan>║&#xA0;&#xA0;&#xA0;<tspan>██</tspan>╔══╝&#xA0;&#xA0;&#xA0;<tspan>██</tspan>║&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;<tspan>██</tspan>╔══╝&#xA0;&#xA0;<tspan>██</tspan>║&#xA0;&#xA0;&#xA0;<tspan>██</tspan>║<tspan>██</tspan>║&#xA0;&#xA0;&#xA0;<tspan>██</tspan>║</text>
+    <!-- 第5行 -->
+    <text x="-10" y="160">&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;<tspan fill="#229ed9">██</tspan>║&#xA0;&#xA0;&#xA0;<tspan fill="#229ed9">███████</tspan>╗&#xA0;<tspan fill="#229ed9">███████</tspan>╗<tspan fill="#229ed9">███████</tspan>╗╚<tspan fill="#229ed9">██████</tspan>╔╝╚<tspan fill="#229ed9">██████</tspan>╔╝</text>
+    <!-- 第6行 -->
+    <text x="-10" y="190">&#xA0;&#xA0;&#xA0;&#xA0;&#xA0;╚═╝&#xA0;&#xA0;&#xA0;╚══════╝&#xA0;╚══════╝╚══════╝&#xA0;╚═════╝&#xA0;&#xA0;╚═════╝</text>
   </g>
 </svg>
