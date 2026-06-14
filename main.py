@@ -5,7 +5,9 @@ import sys
 from pathlib import Path
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
+from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ParseMode
+from aiogram.utils.backoff import BackoffConfig
 from loguru import logger
 
 from config import settings
@@ -196,9 +198,24 @@ async def main():
         return
 
     # 初始化 Bot 和 Dispatcher
+    #
+    # Bot session 超时：aiogram 默认 AiohttpSession.timeout=60s。这个值会和
+    # _listen_updates 里的 polling_timeout 相加变成 aiohttp 的 request_timeout：
+    #
+    #   request_timeout = bot.session.timeout + polling_timeout
+    #                   = 60 + 10  (默认) = 70s
+    #
+    # 网络断后一次 getUpdates 会卡满 70s 才抛异常，期间 _listen_updates 看起
+    # 来在"卡死"。日志打 "Sleep for 1.0 seconds"（这是 backoff delay，跟
+    # getUpdates 卡多久无关），但用户感知是 sleep 几分钟后才"看到"重试。
+    #
+    # 改成 20s：request_timeout = 20 + 10 = 30s，单次失败 30s + backoff 0.5-3s
+    # ≈ 30-35s/轮。日常长轮询时 20s 不会触发（polling_timeout=10s，server
+    # 端无新消息时会先在 10s 短轮询一次返回），仅在网络故障下兜底。
     bot = Bot(
         token=bot_token,
-        default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+        session=AiohttpSession(timeout=20),
     )
     dp = Dispatcher()
 
@@ -220,9 +237,21 @@ async def main():
             return await handler(event, data)
 
     # 启动轮询
+    #
+    # 显式传 backoff_config 收紧重试节奏。aiogram 默认是 min=0.5, max=5.0,
+    # factor=1.5, jitter=0.1，连续失败 5 次后 delay 累积到 4.6s。
+    # 这里用更紧凑的 max=3.0 + factor=1.3：失败 5 次后 delay ≈ 1.4s，
+    # 配合 30s 单次 getUpdates 上限，5 轮失败 = 5*30 + 7 ≈ 2.5 分钟。
+    # 避免"打了 sleep 1s 结果卡 5 分钟"的感知错位。
+    polling_backoff = BackoffConfig(
+        min_delay=0.5,
+        max_delay=3.0,
+        factor=1.3,
+        jitter=0.1,
+    )
     logger.info("✓ Telegodex 启动成功！")
     try:
-        await dp.start_polling(bot)
+        await dp.start_polling(bot, backoff_config=polling_backoff)
     finally:
         # 关闭顺序：HTTP 共享 session 先关（里面还有未释放的连接），
         # 然后 aiogram session，再 db。这样能避免 Windows Proactor 下
