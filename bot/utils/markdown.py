@@ -58,12 +58,16 @@ def format_markdown_v2(text: str) -> str:
 
     # 步骤 0: 保护独立的 URL（不在 Markdown 链接中的）
     # 匹配 http:// 或 https:// 开头的 URL，但不在 []() 或 ``  内
-    # 这些 URL Telegram 会自动识别为链接
+    # 这些 URL Telegram 会自动识别为链接，但在 MarkdownV2 中仍需转义特殊字符
     def protect_standalone_url(match):
         url = match.group(0)
         placeholder = f"\x00PROTECTEDURL{len(protected)}\x00"
-        # URL 不需要转义，Telegram 会自动识别
-        protected.append((placeholder, url))
+        # URL 需要转义特殊字符（除了协议分隔符）
+        escaped_url = url
+        for char in SPECIAL_CHARS:
+            if char not in ['(', ')', ':']:  # 保留 : 用于 http:// https://
+                escaped_url = escaped_url.replace(char, f'\\{char}')
+        protected.append((placeholder, escaped_url))
         return placeholder
 
     # 先保护 Markdown 链接中的 URL，避免被误识别
