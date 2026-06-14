@@ -32,12 +32,33 @@ def check_configuration():
 
     # 检查 AI 服务商配置
     ai_providers = []
+
+    # 国际服务商
     if settings.openai_api_key:
         ai_providers.append("OpenAI")
     if settings.anthropic_api_key:
         ai_providers.append("Anthropic")
     if settings.google_api_key:
         ai_providers.append("Google")
+
+    # 国内服务商
+    if settings.deepseek_api_key:
+        ai_providers.append("DeepSeek")
+    if settings.qwen_api_key:
+        ai_providers.append("Qwen")
+    if settings.moonshot_api_key:
+        ai_providers.append("Moonshot")
+    if settings.zhipu_api_key:
+        ai_providers.append("Zhipu")
+    if settings.baidu_api_key:
+        ai_providers.append("Baidu")
+
+    # 检查自定义 Provider
+    custom_providers_config = settings.get_ai_providers_config()
+    custom_count = len([k for k in custom_providers_config.keys()
+                       if k not in ['openai', 'anthropic', 'google', 'deepseek', 'qwen', 'moonshot', 'zhipu', 'baidu']])
+    if custom_count > 0:
+        ai_providers.append(f"{custom_count} 个自定义")
 
     if not ai_providers:
         errors.append("❌ 至少需要配置一个 AI 服务商的 API Key")
@@ -76,8 +97,9 @@ def print_banner():
 ║      ██║   ███████╗███████╗███████╗╚██████╔╝╚██████╔╝  ║
 ║      ╚═╝   ╚══════╝╚══════╝╚══════╝ ╚═════╝  ╚═════╝   ║
 ║                                                          ║
-║           多 AI 服务商 Telegram Bot 平台                ║
-║                    v1.0.0                                ║
+║           多 AI 服务商 Telegram Bot 平台                 ║
+║                    v1.1.0                                ║
+║            github.com/AonoChano/telegodex                ║
 ║                                                          ║
 ╚══════════════════════════════════════════════════════════╝
     """
