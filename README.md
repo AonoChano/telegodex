@@ -1,94 +1,127 @@
-# Telegodex
+<div align="center">
 
-一个产品级的 Telegram AI Bot 服务器，支持多 AI 服务商统一接入，提供丝滑的交互体验。
+<img src="docs/assets/logo.svg" alt="Telegodex Logo" width="900">
 
-## 特性
+# 🐉 Telegodex
 
-- 🤖 **多 AI 支持**：OpenAI (GPT-5)、Anthropic (Claude)、Google (Gemini)、DeepSeek、通义千问、Kimi、GLM、文心一言等
-- 🔌 **自定义 Provider**：支持任何 OpenAI 兼容 API（Ollama、LiteLLM、vLLM 等）
-- 💬 **完整 Rich Markdown**：通过 Telegram Rich Messages 支持表格、任务列表、脚注、公式等富文本
-- 🎨 **产品级交互**：内联按钮、回复键盘、上下文管理
-- 🔒 **安全保护**：速率限制、用户认证、敏感信息过滤
-- 🧩 **插件化架构**：易于扩展新 AI 服务商
-- 🔌 **预留接口**：Codex/Claude Code 集成预留
-- 🌏 **国内优化**：深度支持国内主流 AI 模型
+A Telegram bot framework for AI chats. Eight providers built in, more via JSON config.
 
-## 技术栈
+<p>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-22c55e.svg" alt="License"></a>
+  <a href="#tech-stack"><img src="https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white" alt="Python 3.11+"></a>
+  <a href="https://docs.aiogram.dev/"><img src="https://img.shields.io/badge/aiogram-3.x-26A5E4?logo=telegram&logoColor=white" alt="aiogram 3.x"></a>
+  <a href="#tech-stack"><img src="https://img.shields.io/badge/SQLAlchemy-2.x-D71F00?logo=sqlalchemy&logoColor=white" alt="SQLAlchemy 2.x"></a>
+  <a href="#roadmap"><img src="https://img.shields.io/badge/status-active%20development-f59e0b.svg" alt="Active development"></a>
+</p>
 
-- Python 3.11+
-- aiogram 3.x (Telegram Bot 框架)
-- SQLAlchemy (ORM)
-- Redis (缓存/限流)
-- OpenAI SDK / Anthropic SDK / Google SDK
-- 支持所有 OpenAI 兼容 API
+[English] · [简体中文](docs/i18n/README.zh-CN.md) · [日本語](docs/i18n/README.ja.md)
 
-## 支持的 AI 服务商
+</div>
 
-### 内置支持
-- 🌍 **国际**: OpenAI, Anthropic (Claude), Google (Gemini)
-- 🇨🇳 **国内**: DeepSeek, 通义千问, Moonshot Kimi, 智谱 GLM, 百度文心
+---
 
-### 自定义支持
-- ✅ Ollama（本地模型）
-- ✅ LiteLLM（多服务商代理）
-- ✅ vLLM, FastChat
-- ✅ Azure OpenAI
-- ✅ 任何 OpenAI 兼容 API
+## What it does
 
-详见 [docs/MODELS.md](docs/MODELS.md) 和 [docs/CUSTOM_PROVIDERS.md](docs/CUSTOM_PROVIDERS.md)
+A Telegram bot, with all the production stuff most demos skip.
 
-## 快速开始
+- **Eight providers, one interface.** OpenAI, Anthropic, Google, DeepSeek, Qwen, Kimi, GLM, ERNIE. Switch by changing a config flag.
+- **Custom providers via JSON.** Add any OpenAI-compatible endpoint (Ollama, vLLM, LiteLLM, Azure, LM Studio) to `custom_providers.json`. No code change.
+- **A new provider in <50 lines.** Inherit `BaseAIProvider`, implement 4 methods, register in the router. A plugin, not a fork.
+- **Telegram-native rendering.** MarkdownV2 with tables, task lists, footnotes, expandable blockquotes, LaTeX. Inline buttons, reply keyboards, model and temperature pickers.
+- **Persistence and security built in.** Conversation history, per-user preferences, per-user rate limits, admin allow-list, sanitized input, no API keys in logs.
 
-### 1. 安装依赖
+## Quick start
 
 ```bash
+git clone https://github.com/CYcha/Telegodex.git
+cd Telegodex
 pip install -r requirements.txt
+cp .env.example .env
 ```
 
-### 2. 配置环境变量
-
-创建 `.env` 文件：
-
-```env
-# Telegram Bot Token
-TELEGRAM_BOT_TOKEN=your_bot_token
-
-# AI Provider API Keys
-OPENAI_API_KEY=your_openai_key
-ANTHROPIC_API_KEY=your_anthropic_key
-GOOGLE_API_KEY=your_google_key
-
-# Database
-DATABASE_URL=sqlite:///telegodex.db
-
-# Redis (可选)
-REDIS_URL=redis://localhost:6379
-
-# Security
-ADMIN_USER_IDS=123456,789012  # 管理员 Telegram User IDs
-MAX_REQUESTS_PER_MINUTE=20
-```
-
-### 3. 运行
+Fill in `TELEGRAM_BOT_TOKEN` and at least one provider key in `.env`, then:
 
 ```bash
-python main.py
+python run.py
 ```
 
-## 架构设计
+Send `/start` to your bot.
 
-基于 **Harness Engineering** 原则构建，包含完整的 AI 安全护栏和上下文管理。
+Full walkthrough: [docs/QUICKSTART.md](docs/QUICKSTART.md).
 
-- 📖 [快速入门](docs/QUICKSTART.md) - 5分钟上手指南
-- 📚 [完整文档](docs/USAGE.md) - 详细使用说明
-- 💬 [Rich Messages](docs/RICH_MESSAGES.md) - Telegram Rich Markdown 输出说明
-- 🚀 [启动与轮询](docs/STARTUP.md) - 单实例轮询和启动横幅说明
-- 🏗️ [架构设计](docs/ARCHITECTURE.md) - 系统设计详解
-- 🤖 [模型列表](docs/MODELS.md) - 30+ 支持的模型
-- ⚙️ [自定义配置](docs/CUSTOM_PROVIDERS.md) - 添加任意 AI 服务商
-- 📋 [开发规范](RULES.md) - 代码标准与安全边界
-- 🔧 [AI 协作指南](CLAUDE.md) - AI 助手使用文档
+## Add a custom provider
 
-## 扩展开发
+```json
+{
+  "ollama": {
+    "type": "openai_compatible",
+    "base_url": "http://localhost:11434/v1",
+    "models": ["llama3.2"]
+  }
+}
+```
 
-参考 `extensions/` 目录下的接口定义，以及 [HARNESS.md](HARNESS.md) 了解 Harness 管理协议。
+Add the block to `custom_providers.json`, restart, done.
+
+Reference: [docs/CUSTOM_PROVIDERS.md](docs/CUSTOM_PROVIDERS.md).
+
+## Layout
+
+```
+ai/          BaseAIProvider + 8 implementations
+bot/         aiogram handlers, keyboards, rich rendering
+storage/     SQLAlchemy async ORM (User, Conversation, Message)
+security/    rate limit, admin gate, input validation
+extensions/  Codex and Claude Code bridges
+```
+
+Provider contract: `chat()`, `chat_stream()`, `get_available_models()`, `validate_api_key()`. Swap providers in the router; handlers stay the same.
+
+## Supported providers
+
+| Region | Provider | Default models |
+|---|---|---|
+| International | OpenAI, Anthropic, Google | `gpt-4o`, `claude-sonnet-4.6`, `gemini-2.0-flash` |
+| China | DeepSeek, Qwen, Kimi, GLM, ERNIE | `deepseek-v4-pro`, `qwen-max`, `kimi-k2-7-code`, `glm-4-6`, `ernie-5.0` |
+
+Plus any OpenAI-compatible endpoint through `custom_providers.json`. Full catalog: [docs/MODELS.md](docs/MODELS.md).
+
+## Tech stack
+
+Python 3.11+ · aiogram 3.x · SQLAlchemy 2.x async · Pydantic Settings · Alembic · Redis (optional)
+
+## Documentation
+
+- [Quickstart](docs/QUICKSTART.md)
+- [Usage](docs/USAGE.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Custom providers](docs/CUSTOM_PROVIDERS.md)
+- [Model catalog](docs/MODELS.md)
+- [Rich messages](docs/RICH_MESSAGES.md)
+
+## Roadmap
+
+- [x] Multi-provider abstraction (v1.0)
+- [x] Rich Markdown, interactive keyboards, context windowing (v1.1)
+- [ ] Codex bridge
+- [ ] Claude Code bridge
+- [ ] Web admin dashboard
+- [ ] Voice and image input
+- [ ] Docker compose & Helm chart
+
+## Contributing
+
+PRs welcome. Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [CLAUDE.md](CLAUDE.md) first.
+
+## Security
+
+Vulnerabilities: email the maintainer (see commit history). Don't open a public issue.
+
+What the code enforces: no API keys in logs, sanitized input at every boundary, `ADMIN_USER_IDS` allow-list, per-user rate limits.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
+
+---
+
