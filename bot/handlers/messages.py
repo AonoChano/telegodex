@@ -1,4 +1,3 @@
-import asyncio
 import time
 
 from aiogram import Router, F
@@ -16,6 +15,7 @@ from bot.utils.rich_messages import (
     send_message_draft,
     new_draft_id,
 )
+from bot.utils.latex import normalize_latex
 from prompts import get_prompt_manager
 from config import settings
 
@@ -310,6 +310,8 @@ async def handle_message(message: Message, context_manager: ContextManager, ai_r
             ):
                 if not chunk:
                     continue
+                # 流式阶段立即归一化，避免草稿里出现裸 \command
+                chunk = normalize_latex(chunk)
                 stream_used = True
                 response_text += chunk
                 buffer += chunk
@@ -356,7 +358,7 @@ async def handle_message(message: Message, context_manager: ContextManager, ai_r
                 temperature=temperature,
                 max_tokens=settings.max_tokens,
             )
-            response_text = response.content
+            response_text = normalize_latex(response.content)
             response_model = response.model
             response_tokens = (
                 response.usage.get("total_tokens") if response.usage else None
