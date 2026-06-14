@@ -1,78 +1,68 @@
 ---
-title: Architecture Design
+title: Architecture
 category: architecture
-last_updated: 2026-06-14
+last_updated: 2026-06-15
 relevance: high
-summary: System design, layer separation, and plugin architecture patterns
-related: [CUSTOM_PROVIDERS.md, FEATURES.md]
+summary: Runtime layers, provider contract, Telegram rendering, and future Codex bridge boundaries
+related: [CUSTOM_PROVIDERS.md, RICH_MESSAGES.md, STARTUP.md]
 ---
 
-# Telegodex - 项目结构
+# Architecture
 
-```
-Telegodex/
-├── main.py                          # 主入口
-├── config.py                        # 配置管理
-├── requirements.txt                 # 依赖包
-├── .env.example                     # 环境变量示例
-├── .gitignore
-│
-├── ai/                              # AI 服务商抽象层
-│   ├── __init__.py
-│   ├── base.py                      # 统一接口定义
-│   ├── router.py                    # AI 路由器
-│   ├── openai_provider.py           # OpenAI 实现
-│   ├── anthropic_provider.py        # Claude 实现
-│   └── google_provider.py           # Gemini 实现
-│
-├── bot/                             # Telegram Bot 层
-│   ├── __init__.py
-│   ├── keyboards.py                 # 交互键盘
-│   └── handlers/                    # 消息处理器
-│       ├── __init__.py
-│       ├── messages.py              # 文本消息处理
-│       └── callbacks.py             # 回调处理
-│
-├── storage/                         # 存储层
-│   ├── __init__.py
-│   ├── models.py                    # 数据库模型
-│   └── context_manager.py           # 上下文管理
-│
-├── security/                        # 安全层（待实现）
-│   ├── rate_limiter.py              # 限流
-│   └── auth.py                      # 认证
-│
-└── extensions/                      # 扩展接口
-    ├── README.md                    # 扩展开发文档
-    ├── codex/                       # Codex 预留接口
-    │   └── __init__.py
-    └── claude_code/                 # Claude Code 预留接口
-        └── __init__.py
+Telegodex is a Telegram workbench. The current code ships the chat foundation first: multi-provider routing, rich Telegram output, conversation storage, and safety checks. The next product line is the Codex bridge.
+
+## Runtime Layout
+
+```text
+ai/          Provider abstraction and provider implementations
+bot/         Telegram handlers, keyboards, rich message helpers
+storage/     SQLAlchemy async ORM for users, conversations, and messages
+security/    Input sanitization, rate limiting, admin gate
+extensions/  Reserved bridge surface for Codex and Claude Code
+prompts/     System prompts sent to model providers
+docs/        Public project documentation
 ```
 
-## 设计原则
+The bot starts in `run.py`, validates local config, then calls `main.py`. `main.py` creates the database, provider router, Telegram bot, dispatcher, and dependency-injection middleware.
 
-1. **插件化架构**: 每个 AI 服务商是独立模块，易于扩展
-2. **统一接口**: 所有 AI Provider 实现相同的基类接口
-3. **异步优先**: 全部使用 async/await，提升并发性能
-4. **类型安全**: 使用 Pydantic 进行配置验证
-5. **分层设计**: Bot 层 → 业务层 → 存储层，职责清晰
-6. **预留扩展**: 为 Codex/Claude Code 预留接口
+## Provider Contract
 
-## 核心功能实现状态
+Every provider implements `BaseAIProvider`:
 
-✅ 多 AI 服务商支持（OpenAI, Anthropic, Google）
-✅ 完整 Markdown 格式支持
-✅ 上下文管理和对话历史
-✅ 交互式键盘（菜单、设置、选择器）
-✅ 数据库持久化（SQLAlchemy + SQLite）
-✅ 模块化架构设计
-✅ 扩展接口预留
+```python
+chat(messages, model, temperature, max_tokens) -> AIResponse
+chat_stream(messages, model, temperature, max_tokens) -> AsyncIterator[str]
+get_available_models() -> list[str]
+validate_api_key() -> bool
+```
 
-🚧 待实现：
-- 速率限制（Redis）
-- 用户认证和权限管理
-- 流式响应（打字机效果）
-- 使用统计和计费
-- 多语言支持
-- 测试覆盖
+Handlers depend on that contract, not on individual SDKs. A new built-in provider belongs in `ai/` and gets registered in `AIRouter.BUILTIN_PROVIDERS`. A user-defined provider should use `custom_providers.json` when the endpoint speaks an OpenAI-compatible chat-completions API.
+
+## Telegram Layer
+
+The message handler does four jobs:
+
+1. Sanitize user text.
+2. Load the user and the active conversation.
+3. Call the selected provider.
+4. Send the result through Telegram Rich Messages.
+
+Rich output goes through `sendRichMessage` with `InputRichMessage.markdown`. Telegram parses headings, tables, lists, block quotes, details blocks, code, and formulas. Local code should not convert Markdown into block dictionaries unless Telegram removes the Markdown field.
+
+## Conversation State
+
+The storage layer keeps user preferences and conversation messages. The short-term target is one conversation stream per Telegram AI chat topic, keyed by `message_thread_id` when Telegram sends it. Plain private chats continue to use the default active conversation.
+
+## Codex Bridge Boundary
+
+The future Codex bridge should live under `extensions/` and keep terminal control out of the Telegram handler. The handler should send user intent to a bridge service, then stream structured output back through Rich Markdown drafts and final Rich Messages.
+
+The bridge must expose command proposals, tool output, approval prompts, and file diffs as explicit Telegram-native blocks. Do not hide terminal actions inside plain prose.
+
+## Documentation Rule
+
+`README.md` defines the public product story. Keep docs aligned with it:
+
+- Telegodex is a Telegram Workbench project.
+- The current release is a multi-provider Telegram bot foundation.
+- The long-term product is mobile control for Codex and CLI agents through Telegram.
