@@ -52,7 +52,20 @@ class Settings(BaseSettings):
         """解析管理员 ID 列表"""
         if not self.admin_user_ids:
             return []
-        return [int(uid.strip()) for uid in self.admin_user_ids.split(",") if uid.strip()]
+
+        result = []
+        for uid in self.admin_user_ids.split(","):
+            uid = uid.strip()
+            # 跳过空值和注释
+            if not uid or uid.startswith("#"):
+                continue
+            try:
+                result.append(int(uid))
+            except ValueError:
+                from loguru import logger
+                logger.warning(f"忽略无效的管理员 ID: {uid}")
+
+        return result
 
     def get_ai_providers_config(self) -> Dict[str, Any]:
         """
