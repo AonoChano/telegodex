@@ -2,33 +2,74 @@
 
 <img src="../assets/logo.svg" alt="Telegodex Logo" width="900">
 
-# 🐉 Telegodex
+# Telegodex
 
-跑 AI 聊天的 Telegram Bot 框架。内置 8 家服务商，通过 JSON 配置接入更多。
+**一个 Telegram Workbench 项目。通过 Telegram 控制你的 Codex。**  
+支持多 AI 服务商、自定义 Provider 系统，以及 Telegram 原生富文本输出。
 
 <p>
   <a href="../../LICENSE"><img src="https://img.shields.io/badge/License-MIT-22c55e.svg" alt="License"></a>
-  <a href="#tech-stack"><img src="https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white" alt="Python 3.11+"></a>
+  <a href="#技术栈"><img src="https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white" alt="Python 3.11+"></a>
   <a href="https://docs.aiogram.dev/"><img src="https://img.shields.io/badge/aiogram-3.x-26A5E4?logo=telegram&logoColor=white" alt="aiogram 3.x"></a>
-  <a href="#tech-stack"><img src="https://img.shields.io/badge/SQLAlchemy-2.x-D71F00?logo=sqlalchemy&logoColor=white" alt="SQLAlchemy 2.x"></a>
-  <a href="#roadmap"><img src="https://img.shields.io/badge/status-active%20development-f59e0b.svg" alt="Active development"></a>
+  <a href="#技术栈"><img src="https://img.shields.io/badge/SQLAlchemy-2.x-D71F00?logo=sqlalchemy&logoColor=white" alt="SQLAlchemy 2.x"></a>
+  <a href="#路线图"><img src="https://img.shields.io/badge/status-active%20development-f59e0b.svg" alt="Active development"></a>
 </p>
 
-[English](../../README.md) · 简体中文 · [日本語](./README.ja.md)
+[English](../../README.md) · <u>简体中文</u> · [日本語](./README.ja.md)
 
 </div>
 
 ---
 
-## 它做什么
+## 项目定位
 
-一个 Telegram Bot，把大部分 demo 会跳过的生产细节都补上。
+Telegodex 是一个基于 Telegram 的 AI 工作台。
 
-- **8 家服务商，一个接口。** OpenAI、Anthropic、Google、DeepSeek、通义千问、Kimi、GLM、文心。改一个配置项切换。
-- **通过 JSON 加自己的。** 把 OpenAI 兼容端点（Ollama、vLLM、LiteLLM、Azure、LM Studio）写进 `custom_providers.json`，不改代码。
-- **新服务商 <50 行。** 继承 `BaseAIProvider`，实现 4 个方法，在 router 注册。是插件，不是 fork。
-- **Telegram 原生渲染。** MarkdownV2 支持表格、任务列表、脚注、可展开引用、LaTeX。内联按钮、回复键盘、模型与温度选择器。
-- **持久化与安全内置。** 对话历史、用户偏好、按用户限流、管理员白名单、输入清洗、日志里不出密钥。
+它面向三件事：
+
+- **远程控制 Codex / CLI Agent。** 把终端级 AI 工作流带到 Telegram，让你可以在手机上操作。
+- **多服务商 AI 接入。** 用一个界面切换 OpenAI、Anthropic、Google、DeepSeek、Qwen、Kimi、GLM 和 ERNIE。
+- **自定义 Provider 注入。** 通过 JSON 配置接入任何 OpenAI-compatible endpoint，不需要改核心代码。
+
+Telegodex 不是普通聊天 Bot。  
+它是 AI 工作的控制界面。
+
+---
+
+## 当前能力
+
+- **从 Telegram 控制 Codex 工作流。** 发送提示词、接收流式输出、审阅操作，并把交互留在移动端。
+- **用 Telegram 原生方式渲染 AI 输出。** 代码块、表格、列表、引用、可折叠区域、公式和结构化摘要。
+- **统一多服务商体验。** 同一套 handler，同一套 UX，不同后端。
+- **支持本地和自托管端点。** Ollama、vLLM、LiteLLM、Azure、LM Studio，以及其它 OpenAI-compatible 服务。
+- **保存用户级会话状态。** 历史记录、偏好、模型选择、temperature 和限流配置。
+- **保持基础安全边界。** 输入清洗、管理员 allow-list，不把 API key 写入日志。
+
+---
+
+## 当前重点
+
+项目正在从通用 AI Bot 变成真正的 Telegram Workbench。
+
+### Stage 1
+- 多服务商聊天基础
+- 自定义 Provider 系统
+- Telegram 原生渲染
+- 存储、偏好和安全
+
+### Stage 2
+- Codex CLI bridge
+- 远程执行 / 命令转发
+- 会话同步和输出流式传输
+- 操作确认和工具调用可见性
+
+### Stage 3
+- Claude Code bridge
+- Telegram 内的 Agent 工作流
+- 更好的任务编排和长任务支持
+- Dashboard 和部署工具
+
+---
 
 ## 快速开始
 
@@ -39,17 +80,19 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-在 `.env` 里填 `TELEGRAM_BOT_TOKEN` 和至少一个服务商的 key，然后：
+在 `.env` 中设置 `TELEGRAM_BOT_TOKEN` 和至少一个服务商 key，然后运行：
 
 ```bash
 python run.py
 ```
 
-给 Bot 发 `/start`。
+在 Telegram 里向你的 Bot 发送 `/start`。
 
-完整教程：[docs/QUICKSTART.md](../QUICKSTART.md)。
+完整步骤见：[docs/QUICKSTART.md](../QUICKSTART.md)
 
-## 加自定义服务商
+---
+
+## 添加自定义 Provider
 
 ```json
 {
@@ -61,66 +104,97 @@ python run.py
 }
 ```
 
-往 `custom_providers.json` 里加这段，重启，搞定。
+把这段加入 `custom_providers.json`，重启后就可以使用该 Provider。
 
-参考：[docs/CUSTOM_PROVIDERS.md](../CUSTOM_PROVIDERS.md)。
+参考：[docs/CUSTOM_PROVIDERS.md](../CUSTOM_PROVIDERS.md)
+
+---
 
 ## 目录结构
 
-```
-ai/          BaseAIProvider + 8 个实现
-bot/         aiogram 处理器、键盘、富文本渲染
-storage/     SQLAlchemy 异步 ORM（User、Conversation、Message）
-security/    限流、管理员鉴权、输入校验
-extensions/  Codex、Claude Code 桥接
+```text
+ai/          BaseAIProvider 和服务商实现
+bot/         aiogram handlers、keyboards、rich rendering
+storage/     SQLAlchemy async ORM (User, Conversation, Message)
+security/    rate limit、admin gate、input validation
+extensions/  Codex 和 Claude Code bridges
 ```
 
-服务商契约：`chat()`、`chat_stream()`、`get_available_models()`、`validate_api_key()`。在 router 换服务商，处理器不动。
+Provider 契约：
+
+- `chat()`
+- `chat_stream()`
+- `get_available_models()`
+- `validate_api_key()`
+
+router 选择 Provider。  
+handler 不关心具体后端。
+
+---
 
 ## 支持的服务商
 
-| 地区 | 服务商 | 默认模型 |
+| 区域 | Provider | 默认模型 |
 |---|---|---|
-| 国际 | OpenAI、Anthropic、Google | `gpt-4o`、`claude-sonnet-4.6`、`gemini-2.0-flash` |
-| 国内 | DeepSeek、通义千问、Kimi、GLM、文心 | `deepseek-v4-pro`、`qwen-max`、`kimi-k2-7-code`、`glm-4-6`、`ernie-5.0` |
+| International | OpenAI, Anthropic, Google | `gpt-4o`, `claude-sonnet-4.6`, `gemini-2.0-flash` |
+| China | DeepSeek, Qwen, Kimi, GLM, ERNIE | `deepseek-v4-pro`, `qwen-max`, `kimi-k2-7-code`, `glm-4-6`, `ernie-5.0` |
 
-任意 OpenAI 兼容端点通过 `custom_providers.json` 接入。完整目录：[docs/MODELS.md](../MODELS.md)。
+任何 OpenAI-compatible endpoint 都可以通过 `custom_providers.json` 接入。
+
+完整目录见：[docs/MODELS.md](../MODELS.md)
+
+---
 
 ## 技术栈
 
-Python 3.11+ · aiogram 3.x · SQLAlchemy 2.x async · Pydantic Settings · Alembic · Redis（可选）
+Python 3.11+ · aiogram 3.x · SQLAlchemy 2.x async · Pydantic Settings · Alembic · Redis (optional)
+
+---
 
 ## 文档
 
-- [快速参考](../QUICKSTART.md)
-- [使用指南](../USAGE.md)
-- [架构设计](../ARCHITECTURE.md)
-- [自定义 Provider](../CUSTOM_PROVIDERS.md)
-- [模型目录](../MODELS.md)
-- [富文本消息](../RICH_MESSAGES.md)
+- [Quickstart](../QUICKSTART.md)
+- [Usage](../USAGE.md)
+- [Architecture](../ARCHITECTURE.md)
+- [Custom providers](../CUSTOM_PROVIDERS.md)
+- [Model catalog](../MODELS.md)
+- [Rich messages](../RICH_MESSAGES.md)
+
+---
 
 ## 路线图
 
-- [x] 多服务商抽象（v1.0）
-- [x] 富文本 Markdown、交互键盘、上下文窗口（v1.1）
-- [ ] Codex 桥接
-- [ ] Claude Code 桥接
-- [ ] Web 管理后台
-- [ ] 语音与图像输入
-- [ ] Docker compose 与 Helm chart
+- [x] 多服务商抽象
+- [x] Telegram Rich rendering
+- [x] 上下文窗口和用户偏好
+- [ ] Codex bridge
+- [ ] Claude Code bridge
+- [ ] Agent/task execution layer
+- [ ] Web admin dashboard
+- [ ] Voice and image input
+- [ ] Docker compose & Helm chart
+
+---
 
 ## 贡献
 
-欢迎 PR。先读 [docs/ARCHITECTURE.md](../ARCHITECTURE.md) 与 [CLAUDE.md](../../CLAUDE.md)。
+欢迎 PR。提交前请阅读 [docs/ARCHITECTURE.md](../ARCHITECTURE.md)。
+
+---
 
 ## 安全
 
-漏洞：直接邮件给维护者（见提交记录），别开公开 Issue。
+请私下向维护者报告漏洞。
 
-代码强制：API Key 不进日志、每个边界做输入清洗、`ADMIN_USER_IDS` 白名单、按用户限流。
+代码库强制执行：
+
+- 不把 API key 写进日志
+- 所有边界做输入清洗
+- `ADMIN_USER_IDS` allow-list
+- 按用户限流
+
+---
 
 ## 许可证
 
-MIT。详见 [LICENSE](../../LICENSE)。
-
-
+MIT。见 [LICENSE](../../LICENSE)。

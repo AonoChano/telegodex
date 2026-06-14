@@ -1,7 +1,11 @@
 <div align="center">
 
 <img src="docs/assets/logo.svg" alt="Telegodex Logo" width="900">
-A Telegram bot framework for AI chats. Eight providers built in, more via JSON config.
+
+# Telegodex
+
+**A Telegram Workbench Project. Control Your Codex on Telegram.**  
+Multi-AI provider support, custom provider system, and rich Telegram-native output.
 
 <p>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-22c55e.svg" alt="License"></a>
@@ -11,21 +15,61 @@ A Telegram bot framework for AI chats. Eight providers built in, more via JSON c
   <a href="#roadmap"><img src="https://img.shields.io/badge/status-active%20development-f59e0b.svg" alt="Active development"></a>
 </p>
 
-<underline>English</underline>  · [简体中文](docs/i18n/README.zh-CN.md) · [日本語](docs/i18n/README.ja.md)
+<underline>English</underline> · [简体中文](docs/i18n/README.zh-CN.md) · [日本語](docs/i18n/README.ja.md)
 
 </div>
 
 ---
 
-## What it does
+## What this project is
 
-A Telegram bot, with all the production stuff most demos skip.
+Telegodex is a Telegram-based workbench for AI-assisted workflows.
 
-- **Eight providers, one interface.** OpenAI, Anthropic, Google, DeepSeek, Qwen, Kimi, GLM, ERNIE. Switch by changing a config flag.
-- **Custom providers via JSON.** Add any OpenAI-compatible endpoint (Ollama, vLLM, LiteLLM, Azure, LM Studio) to `custom_providers.json`. No code change.
-- **A new provider in <50 lines.** Inherit `BaseAIProvider`, implement 4 methods, register in the router. A plugin, not a fork.
-- **Telegram-native rendering.** MarkdownV2 with tables, task lists, footnotes, expandable blockquotes, LaTeX. Inline buttons, reply keyboards, model and temperature pickers.
-- **Persistence and security built in.** Conversation history, per-user preferences, per-user rate limits, admin allow-list, sanitized input, no API keys in logs.
+It is designed for three things:
+
+- **Remote control for Codex / CLI agents.** Bring terminal-grade AI workflows into Telegram so you can operate them from your phone.
+- **Multi-provider AI access.** Switch between OpenAI, Anthropic, Google, DeepSeek, Qwen, Kimi, GLM, and ERNIE with one interface.
+- **Custom provider injection.** Add any OpenAI-compatible endpoint through JSON config without touching core code.
+
+This is not just a chat bot.  
+It is a control surface for AI work.
+
+---
+
+## What it can do
+
+- **Control your Codex workflow from Telegram.** Send prompts, receive streamed output, review actions, and keep the interaction on mobile.
+- **Render AI output in a Telegram-native way.** Code blocks, tables, lists, quotes, expandable sections, formulas, and structured summaries.
+- **Keep one interface across providers.** Same handler, same UX, different backends.
+- **Support local and self-hosted endpoints.** Ollama, vLLM, LiteLLM, Azure, LM Studio, and other OpenAI-compatible services.
+- **Keep session state per user.** History, preferences, model selection, temperature, and rate limits.
+- **Stay operationally safe.** Sanitized input, allow-list admin gate, and no API keys in logs.
+
+---
+
+## Current focus
+
+The project is being shaped from a generic AI bot into a real Telegram workbench.
+
+### Stage 1
+- Multi-provider chat foundation
+- Custom provider system
+- Telegram-native rendering
+- Storage, preferences, and security
+
+### Stage 2
+- Codex CLI bridge
+- Remote execution / command relay
+- Session sync and output streaming
+- Action confirmation and tool-call visibility
+
+### Stage 3
+- Claude Code bridge
+- Agent-style workflows inside Telegram
+- Better task orchestration and long-running jobs
+- Dashboard and deployment tooling
+
+---
 
 ## Quick start
 
@@ -36,7 +80,7 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Fill in `TELEGRAM_BOT_TOKEN` and at least one provider key in `.env`, then:
+Set `TELEGRAM_BOT_TOKEN` and at least one provider key in `.env`, then run:
 
 ```bash
 python run.py
@@ -44,7 +88,9 @@ python run.py
 
 Send `/start` to your bot.
 
-Full walkthrough: [docs/QUICKSTART.md](docs/QUICKSTART.md).
+Full walkthrough: [docs/QUICKSTART.md](docs/QUICKSTART.md)
+
+---
 
 ## Add a custom provider
 
@@ -58,21 +104,33 @@ Full walkthrough: [docs/QUICKSTART.md](docs/QUICKSTART.md).
 }
 ```
 
-Add the block to `custom_providers.json`, restart, done.
+Add the block to `custom_providers.json`, restart, and the provider becomes available.
 
-Reference: [docs/CUSTOM_PROVIDERS.md](docs/CUSTOM_PROVIDERS.md).
+Reference: [docs/CUSTOM_PROVIDERS.md](docs/CUSTOM_PROVIDERS.md)
+
+---
 
 ## Layout
 
-```
-ai/          BaseAIProvider + 8 implementations
+```text
+ai/          BaseAIProvider + provider implementations
 bot/         aiogram handlers, keyboards, rich rendering
 storage/     SQLAlchemy async ORM (User, Conversation, Message)
 security/    rate limit, admin gate, input validation
 extensions/  Codex and Claude Code bridges
 ```
 
-Provider contract: `chat()`, `chat_stream()`, `get_available_models()`, `validate_api_key()`. Swap providers in the router; handlers stay the same.
+Provider contract:
+
+- `chat()`
+- `chat_stream()`
+- `get_available_models()`
+- `validate_api_key()`
+
+The router selects the provider.  
+The handlers stay unchanged.
+
+---
 
 ## Supported providers
 
@@ -81,11 +139,17 @@ Provider contract: `chat()`, `chat_stream()`, `get_available_models()`, `validat
 | International | OpenAI, Anthropic, Google | `gpt-4o`, `claude-sonnet-4.6`, `gemini-2.0-flash` |
 | China | DeepSeek, Qwen, Kimi, GLM, ERNIE | `deepseek-v4-pro`, `qwen-max`, `kimi-k2-7-code`, `glm-4-6`, `ernie-5.0` |
 
-Plus any OpenAI-compatible endpoint through `custom_providers.json`. Full catalog: [docs/MODELS.md](docs/MODELS.md).
+Any OpenAI-compatible endpoint can be added through `custom_providers.json`.
+
+Full catalog: [docs/MODELS.md](docs/MODELS.md)
+
+---
 
 ## Tech stack
 
 Python 3.11+ · aiogram 3.x · SQLAlchemy 2.x async · Pydantic Settings · Alembic · Redis (optional)
+
+---
 
 ## Documentation
 
@@ -96,29 +160,41 @@ Python 3.11+ · aiogram 3.x · SQLAlchemy 2.x async · Pydantic Settings · Alem
 - [Model catalog](docs/MODELS.md)
 - [Rich messages](docs/RICH_MESSAGES.md)
 
+---
+
 ## Roadmap
 
-- [x] Multi-provider abstraction (v1.0)
-- [x] Rich Markdown, interactive keyboards, context windowing (v1.1)
+- [x] Multi-provider abstraction
+- [x] Rich Telegram rendering
+- [x] Context windowing and user preferences
 - [ ] Codex bridge
 - [ ] Claude Code bridge
+- [ ] Agent/task execution layer
 - [ ] Web admin dashboard
 - [ ] Voice and image input
 - [ ] Docker compose & Helm chart
 
+---
+
 ## Contributing
 
-PRs welcome. Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [CLAUDE.md](CLAUDE.md) first.
+PRs welcome. Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) before opening changes.
+
+---
 
 ## Security
 
-Vulnerabilities: email the maintainer (see commit history). Don't open a public issue.
+Report vulnerabilities privately to the maintainer.
 
-What the code enforces: no API keys in logs, sanitized input at every boundary, `ADMIN_USER_IDS` allow-list, per-user rate limits.
+Enforced by the codebase:
+
+- no API keys in logs
+- sanitized input at every boundary
+- `ADMIN_USER_IDS` allow-list
+- per-user rate limits
+
+---
 
 ## License
 
 MIT. See [LICENSE](LICENSE).
-
----
-
