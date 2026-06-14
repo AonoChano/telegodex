@@ -39,7 +39,7 @@ class RichMessageBuilder:
     def create_paragraph(rich_text: Dict) -> Dict:
         """创建段落块"""
         return {
-            "type": "richBlockParagraph",
+            "type": "paragraph",
             "text": rich_text
         }
 
@@ -47,7 +47,7 @@ class RichMessageBuilder:
     def create_heading(rich_text: Dict, level: int = 2) -> Dict:
         """创建标题块"""
         return {
-            "type": "richBlockSectionHeading",
+            "type": "heading",
             "level": level,
             "text": rich_text
         }
@@ -63,21 +63,18 @@ class RichMessageBuilder:
         """
         cells = []
         for row_idx, row in enumerate(rows):
+            row_cells = []
             for col_idx, cell_content in enumerate(row):
                 cell = {
-                    "type": "richBlockTableCell",
                     "text": RichMessageBuilder.create_text(cell_content),
-                    "row_index": row_idx,
-                    "column_index": col_idx,
                     "is_header": has_header and row_idx == 0
                 }
-                cells.append(cell)
+                row_cells.append(cell)
+            cells.append(row_cells)
 
         return {
-            "type": "richBlockTable",
-            "cells": cells,
-            "row_count": len(rows),
-            "column_count": len(rows[0]) if rows else 0
+            "type": "table",
+            "cells": cells
         }
 
     @staticmethod
@@ -106,7 +103,7 @@ class RichMessageBuilder:
     def create_code_block(code: str, language: str = "") -> Dict:
         """创建代码块"""
         return {
-            "type": "richBlockCode",
+            "type": "code",
             "code": RichMessageBuilder.create_text(code),
             "language": language
         }
@@ -115,7 +112,7 @@ class RichMessageBuilder:
     def create_blockquote(text: str) -> Dict:
         """创建引用块"""
         return {
-            "type": "richBlockBlockQuotation",
+            "type": "blockQuote",
             "text": RichMessageBuilder.create_text(text)
         }
 
@@ -139,14 +136,18 @@ class MarkdownToRichMessage:
 
         rows = []
         for line in lines:
-            # 跳过分隔行
-            if re.match(r'^\s*\|[\s\-:]+\|\s*$', line):
+            # 跳过分隔行（只包含 |、-、: 和空格）
+            if re.match(r'^\s*\|[\s\-:|]+\|\s*$', line):
                 continue
 
             # 解析单元格
             cells = [cell.strip() for cell in line.split('|')[1:-1]]
-            if cells:
-                rows.append(cells)
+
+            # 跳过空行或全是分隔符的行
+            if not cells or all(re.match(r'^[\s\-:]*$', cell) for cell in cells):
+                continue
+
+            rows.append(cells)
 
         if not rows:
             return None
@@ -227,9 +228,12 @@ async def send_rich_message(
     """
     url = f"https://api.telegram.org/bot{bot_token}/sendRichMessage"
 
+    # rich_message 参数应该只包含 blocks，不需要 type 字段
     payload = {
         "chat_id": chat_id,
-        "rich_message": rich_message
+        "rich_message": {
+            "blocks": rich_message.get("blocks", [])
+        }
     }
 
     try:
