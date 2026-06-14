@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema",
+  "title": "Telegodex Custom Providers Configuration",
+  "description": "自定义 AI Provider 配置文件，支持任何 OpenAI 兼容 API",
+  "type": "object",
+  "patternProperties": {
+    "^[a-zA-Z0-9_-]+$": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["openai_compatible"],
+          "description": "Provider 类型，当前仅支持 openai_compatible"
+        },
+        "api_key": {
+          "type": "string",
+          "description": "API Key"
+        },
+        "base_url": {
+          "type": "string",
+          "format": "uri",
+          "description": "API 基础 URL，例如 https://api.example.com/v1"
+        },
+        "models": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "可用模型列表"
+        },
+        "default_model": {
+          "type": "string",
+          "description": "默认模型名称"
+        }
+      },
+      "required": ["type", "api_key", "base_url"],
+      "additionalProperties": true
+    }
+  },
+  "examples": [
+    {
+      "my_custom_api": {
+        "type": "openai_compatible",
+        "api_key": "sk-xxxxx",
+        "base_url": "https://api.example.com/v1",
+        "models": ["model-1", "model-2"],
+        "default_model": "model-1"
+      },
+      "ollama_local": {
+        "type": "openai_compatible",
+        "api_key": "dummy",
+        "base_url": "http://localhost:11434/v1",
+        "models": ["llama3", "qwen2"],
+        "default_model": "llama3"
+      }
+    }
+  ]
+}

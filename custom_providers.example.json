@@ -1,0 +1,36 @@
+{
+  "_comment": "自定义 AI Provider 配置示例",
+  "_comment_2": "复制此文件为 custom_providers.json 并根据需要修改",
+
+  "my_custom_provider": {
+    "type": "openai_compatible",
+    "api_key": "your_api_key_here",
+    "base_url": "https://api.example.com/v1",
+    "models": ["model-1", "model-2", "model-3"],
+    "default_model": "model-1"
+  },
+
+  "ollama_local": {
+    "type": "openai_compatible",
+    "api_key": "ollama",
+    "base_url": "http://localhost:11434/v1",
+    "models": ["llama3.2", "qwen2.5", "deepseek-coder"],
+    "default_model": "llama3.2"
+  },
+
+  "litellm_proxy": {
+    "type": "openai_compatible",
+    "api_key": "sk-your-litellm-key",
+    "base_url": "http://localhost:4000",
+    "models": ["gpt-4", "claude-3", "gemini-pro"],
+    "default_model": "gpt-4"
+  },
+
+  "azure_openai": {
+    "type": "openai_compatible",
+    "api_key": "your_azure_key",
+    "base_url": "https://your-resource.openai.azure.com/openai/deployments",
+    "models": ["gpt-4", "gpt-35-turbo"],
+    "default_model": "gpt-4"
+  }
+}
