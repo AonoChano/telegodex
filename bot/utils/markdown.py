@@ -97,6 +97,11 @@ def format_markdown_v2(text: str) -> str:
     # 步骤 6: 保护剧透（||text||）
     text = re.sub(r'\|\|(.+?)\|\|', lambda m: protect(m, 'SPOILER'), text)
 
+    # 步骤 6.5: 保护引用块和任务列表
+    text = re.sub(r'^>\s*(.*)$', lambda m: protect(m, 'QUOTE'), text, flags=re.MULTILINE)
+    text = re.sub(r'^-\s*\[\s*\]\s*(.*)$', lambda m: protect(m, 'TODO'), text, flags=re.MULTILINE)
+    text = re.sub(r'^-\s*\[x\]\s*(.*)$', lambda m: protect(m, 'DONE'), text, flags=re.MULTILINE)
+
     # 步骤 7: 转义普通文本中的所有特殊字符
     for char in SPECIAL_CHARS:
         text = text.replace(char, f'\\{char}')
@@ -187,6 +192,33 @@ def format_markdown_v2(text: str) -> str:
                         escaped_spoiler = escaped_spoiler.replace(char, f'\\{char}')
                 text = text.replace(placeholder, f'||{escaped_spoiler}||')
 
+
+        elif 'QUOTE' in placeholder:
+            quote_match = re.match(r'^>\s*(.*)$', original)
+            if quote_match:
+                quote_text = quote_match.group(1)
+                for char in SPECIAL_CHARS:
+                    if char != '>':
+                        quote_text = quote_text.replace(char, f'\{char}')
+                text = text.replace(placeholder, f'> {quote_text}' if quote_text else '>')
+
+        elif 'TODO' in placeholder:
+            todo_match = re.match(r'^-\s*\[\s*\]\s*(.*)$', original)
+            if todo_match:
+                task_text = todo_match.group(1)
+                for char in SPECIAL_CHARS:
+                    if char not in ['-', '[', ']']:
+                        task_text = task_text.replace(char, f'\{char}')
+                text = text.replace(placeholder, f'\- \[ \] {task_text}')
+
+        elif 'DONE' in placeholder:
+            done_match = re.match(r'^-\s*\[x\]\s*(.*)$', original)
+            if done_match:
+                task_text = done_match.group(1)
+                for char in SPECIAL_CHARS:
+                    if char not in ['-', '[', ']', 'x']:
+                        task_text = task_text.replace(char, f'\{char}')
+                text = text.replace(placeholder, f'\- \[x\] {task_text}')
     return text
 
     # 步骤 3: 保护链接（[text](url)）
