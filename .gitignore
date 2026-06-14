@@ -69,3 +69,8 @@ AGENTS.md
 CLAUDE.md
 RULES.md
 HARNESS.md
+
+# Local Telegram API doc dump (downloaded for offline reference only;
+# the project does not ship or rely on these files)
+docs/TelegramDocuments/
+docs/DownloadDocs.py
