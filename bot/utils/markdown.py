@@ -6,6 +6,10 @@ https://core.telegram.org/bots/api#markdownv2-style
 
 需要转义的字符（代码块外）：
 _ * [ ] ( ) ~ ` > # + - = | { } . !
+
+特殊支持：
+- 代码块可以指定语言（如 python, javascript, latex 等）
+- latex 语言会触发 LaTeX 数学公式渲染
 """
 
 import re
@@ -18,14 +22,25 @@ def format_markdown_v2(text: str) -> str:
 
     处理逻辑：
     1. 识别并保护所有 Markdown 语法结构（代码块、行内代码、链接、粗体、斜体等）
-    2. 在普通文本区域转义特殊字符
-    3. 恢复 Markdown 语法结构
+    2. 特别识别 LaTeX 代码块（```latex...```）
+    3. 在普通文本区域转义特殊字符
+    4. 恢复 Markdown 语法结构
 
     Args:
         text: AI 输出的原始文本（可能包含 Markdown 语法）
 
     Returns:
         符合 Telegram MarkdownV2 规范的格式化文本
+
+    支持的格式：
+    - **粗体** -> *粗体*
+    - *斜体* -> _斜体_
+    - `代码` -> `代码`
+    - ```language\ncode\n``` -> 代码块（支持语法高亮）
+    - ```latex\nformula\n``` -> LaTeX 数学公式渲染
+    - [文本](链接) -> 链接
+    - ~~删除线~~ -> ~删除线~
+    - ||剧透|| -> ||剧透||
     """
     # 需要转义的字符（在普通文本中）
     SPECIAL_CHARS = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
@@ -39,7 +54,8 @@ def format_markdown_v2(text: str) -> str:
         protected.append((placeholder, match.group(0)))
         return placeholder
 
-    # 步骤 1: 保护代码块（```...```）
+    # 步骤 1: 保护代码块（```...```），包括 LaTeX
+    # 匹配格式：```language\ncode\n``` 或 ```\ncode\n```
     text = re.sub(r'```[\s\S]*?```', lambda m: protect(m, 'CODEBLOCK'), text)
 
     # 步骤 2: 保护行内代码（`...`）
@@ -187,6 +203,23 @@ def hello():
 
         # 带链接
         "访问 [GitHub](https://github.com) 获取更多信息",
+
+        # LaTeX 数学公式（行内）
+        "卡片公式为 `$E = 2(\\Delta f + f_m)$`",
+
+        # LaTeX 数学公式（代码块）
+        """卡片公式的数学表达式为：
+```latex
+E = 2(Delta f + f_m)
+```
+其中各符号含义如下...""",
+
+        # 复杂 LaTeX 示例
+        """贝塔函数的积分表达式：
+```latex
+B = 2f_m(1 + beta) = 2Delta fleft(1 + frac{1}{beta}right)
+```
+当 $\\beta \\gg 1$ 时，$\\beta \\approx 2f_m$。""",
 
         # 复杂混合
         """**注意**：这个函数很重要！
