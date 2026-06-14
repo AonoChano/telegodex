@@ -1,3 +1,6 @@
+import asyncio
+import time
+
 from aiogram import Router, F
 from aiogram.types import Message
 from aiogram.filters import Command
@@ -7,11 +10,83 @@ from ai import AIRouter, Message as AIMessage, MessageRole
 from storage import ContextManager
 from bot.keyboards import get_main_menu
 from bot.utils.markdown import format_markdown_v2
-from bot.utils.rich_messages import send_rich_message
+from bot.utils.rich_messages import (
+    send_rich_message,
+    send_rich_message_draft,
+    send_message_draft,
+    new_draft_id,
+)
 from prompts import get_prompt_manager
 from config import settings
 
 router = Router()
+
+# 流式 draft 触发间隔：积攒 N 字符再推送一次，避免触发限流
+DRAFT_FLUSH_CHARS = 24
+# 流式 draft 触发最长时间：超过 N 秒强制推送一次（兜底）
+DRAFT_FLUSH_INTERVAL = 1.0
+# 单次草稿内容上限：sendMessageDraft 文本最大 4096 字符
+DRAFT_MAX_CHARS = 4000
+
+
+async def _try_draft(
+    bot_token: str,
+    chat_id: int | str,
+    text: str,
+    draft_id: int,
+    message_thread_id: int | None,
+    *,
+    use_rich: bool,
+) -> bool:
+    """尝试推送一次草稿。失败时 rich → 纯文本回退；都失败则返回 False。"""
+    if not text:
+        return False
+    if use_rich:
+        ok = await send_rich_message_draft(
+            bot_token=bot_token,
+            chat_id=chat_id,
+            markdown_text=text,
+            draft_id=draft_id,
+            message_thread_id=message_thread_id,
+        )
+        if ok:
+            return True
+        # Rich 草稿被拒（多为版本/权限），降级为纯文本草稿
+        ok = await send_message_draft(
+            bot_token=bot_token,
+            chat_id=chat_id,
+            text=text,
+            draft_id=draft_id,
+            message_thread_id=message_thread_id,
+        )
+        return ok
+    return await send_message_draft(
+        bot_token=bot_token,
+        chat_id=chat_id,
+        text=text,
+        draft_id=draft_id,
+        message_thread_id=message_thread_id,
+    )
+
+
+async def _stream_with_draft(
+    *,
+    bot_token: str,
+    chat_id: int | str,
+    message_thread_id: int | None,
+    full_text: str,
+    draft_id: int,
+    use_rich_draft: bool,
+) -> bool:
+    """一次性回灌历史流：用于 provider 不支持 chat_stream 的回退路径。"""
+    return await _try_draft(
+        bot_token=bot_token,
+        chat_id=chat_id,
+        text=full_text,
+        draft_id=draft_id,
+        message_thread_id=message_thread_id,
+        use_rich=use_rich_draft,
+    )
 
 
 def escape_markdown(text: str) -> str:
@@ -197,34 +272,129 @@ async def handle_message(message: Message, context_manager: ContextManager, ai_r
             AIMessage(role=MessageRole.SYSTEM, content=system_prompt)
         ] + history
 
-        # 调用 AI
-        response = await provider.chat(
-            messages=messages_with_system,
-            model=user.preferred_model,
-            temperature=float(user.temperature or 0.7),
-            max_tokens=settings.max_tokens,
-        )
+        bot_token = settings.telegram_bot_token
+        if hasattr(bot_token, 'get_secret_value'):
+            bot_token = bot_token.get_secret_value()
 
-        # 保存 AI 响应
+        # 仅私有 chat 支持 draft API；其它场景（群组/频道）跳过预览
+        use_draft = message.chat.type == "private"
+        draft_id = new_draft_id() if use_draft else 0
+        model_name = user.preferred_model
+        temperature = float(user.temperature or 0.7)
+
+        response_text = ""
+        response_model = model_name
+        response_tokens = None
+        stream_used = False
+
+        # ---- 1) 优先尝试流式 ----
+        try:
+            buffer = ""
+            last_flush = time.monotonic()
+            if use_draft:
+                # 推送占位草稿（让用户立即看到"思考中"）
+                await _try_draft(
+                    bot_token=bot_token,
+                    chat_id=message.chat.id,
+                    text="💭 …",
+                    draft_id=draft_id,
+                    message_thread_id=thread_id,
+                    use_rich=False,
+                )
+
+            async for chunk in provider.chat_stream(
+                messages=messages_with_system,
+                model=model_name,
+                temperature=temperature,
+                max_tokens=settings.max_tokens,
+            ):
+                if not chunk:
+                    continue
+                stream_used = True
+                response_text += chunk
+                buffer += chunk
+                now = time.monotonic()
+                # 草稿会带动画；为避免触发限流，按字符数 + 时间双触发
+                if (
+                    len(buffer) >= DRAFT_FLUSH_CHARS
+                    or (now - last_flush) >= DRAFT_FLUSH_INTERVAL
+                ):
+                    if use_draft and response_text:
+                        await _try_draft(
+                            bot_token=bot_token,
+                            chat_id=message.chat.id,
+                            text=response_text[-DRAFT_MAX_CHARS:],
+                            draft_id=draft_id,
+                            message_thread_id=thread_id,
+                            use_rich=True,
+                        )
+                    buffer = ""
+                    last_flush = now
+
+            # 流结束后推送一次最终草稿
+            if stream_used and use_draft and response_text:
+                await _try_draft(
+                    bot_token=bot_token,
+                    chat_id=message.chat.id,
+                    text=response_text[-DRAFT_MAX_CHARS:],
+                    draft_id=draft_id,
+                    message_thread_id=thread_id,
+                    use_rich=True,
+                )
+        except Exception as stream_err:
+            logger.warning(
+                f"流式 chat_stream 失败，回退非流式: {stream_err}"
+            )
+            stream_used = False
+            response_text = ""
+
+        # ---- 2) 流式失败 / 没拿到内容则回退非流式 ----
+        if not stream_used:
+            response = await provider.chat(
+                messages=messages_with_system,
+                model=model_name,
+                temperature=temperature,
+                max_tokens=settings.max_tokens,
+            )
+            response_text = response.content
+            response_model = response.model
+            response_tokens = (
+                response.usage.get("total_tokens") if response.usage else None
+            )
+            # 非流式时也尝试一次草稿，让用户在持久化前先看到完整预览
+            if use_draft and response_text:
+                await _try_draft(
+                    bot_token=bot_token,
+                    chat_id=message.chat.id,
+                    text=response_text[-DRAFT_MAX_CHARS:],
+                    draft_id=draft_id,
+                    message_thread_id=thread_id,
+                    use_rich=True,
+                )
+
+        if not response_text.strip():
+            await message.answer(
+                "⚠️ AI 返回了空内容",
+                message_thread_id=thread_id,
+            )
+            return
+
+        # ---- 3) 保存 AI 响应 ----
         await context_manager.add_message(
             conversation_id=conversation.id,
             role=MessageRole.ASSISTANT,
-            content=response.content,
+            content=response_text,
             provider=user.preferred_provider,
-            model=response.model,
-            tokens_used=response.usage.get("total_tokens") if response.usage else None,
+            model=response_model,
+            tokens_used=response_tokens,
         )
 
-        # 格式化并发送响应（带 message_thread_id 保证回发到对应 topic）
+        # ---- 4) 持久化收尾：sendRichMessage ----
         try:
-            bot_token = settings.telegram_bot_token
-            if hasattr(bot_token, 'get_secret_value'):
-                bot_token = bot_token.get_secret_value()
-
             success = await send_rich_message(
                 bot_token=bot_token,
                 chat_id=message.chat.id,
-                markdown_text=response.content,
+                markdown_text=response_text,
                 message_thread_id=thread_id,
             )
 
@@ -232,7 +402,7 @@ async def handle_message(message: Message, context_manager: ContextManager, ai_r
                 logger.info("Rich Message sent successfully")
             else:
                 logger.warning("Rich Messages unavailable, falling back to MarkdownV2")
-                formatted_content = format_markdown_v2(response.content)
+                formatted_content = format_markdown_v2(response_text)
                 await message.answer(
                     formatted_content,
                     parse_mode="MarkdownV2",
@@ -242,7 +412,7 @@ async def handle_message(message: Message, context_manager: ContextManager, ai_r
         except Exception as format_error:
             # 如果格式化失败，回退到纯文本
             logger.warning(f"格式化失败，使用纯文本: {format_error}")
-            await message.answer(response.content, message_thread_id=thread_id)
+            await message.answer(response_text, message_thread_id=thread_id)
 
     except Exception as e:
         logger.error(f"AI 调用失败: {e}")
