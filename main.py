@@ -1,5 +1,7 @@
 import asyncio
+import logging
 import os
+import sys
 from pathlib import Path
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
@@ -10,6 +12,108 @@ from config import settings
 from storage import Database, ContextManager
 from ai import AIRouter
 from bot import messages_router, callbacks_router
+
+
+class _InterceptHandler(logging.Handler):
+    """把 Python stdlib 的 logger（aiogram / aiohttp 等）转给 loguru 处理。
+
+    否则这些 logger 会走自己的 Handler，把 traceback 满屏打到 stderr，
+    与 loguru 终端简化的目标相冲。
+    """
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            level = logger.level(record.levelname).name
+        except ValueError:
+            level = record.levelno
+
+        # 找到真正发起 log 的调用栈层（不是 logging 库内部）
+        frame, depth = logging.currentframe(), 2
+        while frame.f_code.co_filename == logging.__file__:
+            frame = frame.f_back
+            depth += 1
+
+        # 用 patch 把 {name} 字段覆盖为 stdlib logger 名（如 aiogram.dispatcher）
+        # 否则 loguru 默认用调用模块名（会显示 __main__ / main.py 等）
+        logger.patch(lambda r: r.update(name=record.name)).opt(
+            depth=depth, exception=record.exc_info
+        ).log(level, record.getMessage())
+
+
+def _strip_exception_block(text: str) -> str:
+    """loguru 在 format 之后总会把 traceback 块自动追加到行尾。
+
+    对终端来说这破坏"单行"约束；对文件来说这正是我们想要的。所以终端 sink
+    通过这个函数把从 "Traceback (most recent call last):" 开始的所有内容砍掉。
+    """
+    marker = "Traceback (most recent call last):"
+    idx = text.find(marker)
+    if idx < 0:
+        return text
+    return text[:idx].rstrip() + "\n"
+
+
+def _terminal_sink(message) -> None:
+    """终端 sink：单行 + 砍掉 traceback 块。"""
+    sys.stderr.write(_strip_exception_block(str(message)))
+
+
+def _setup_logging() -> None:
+    """双 sink：终端精简 / 文件详尽。
+
+    关键：loguru 的默认行为是 format 渲染完之后**自动追加** exception 块。
+    这是 source of truth。**不要**在 format 里写 ``{exception}`` token，否则
+    会得到两份重复 traceback。正确分流：
+
+    - 终端：用 callable sink + ``_strip_exception_block`` 砍掉追加的 traceback
+    - 文件：直接用默认行为，traceback 由 loguru 自动追加
+    """
+    # 关掉 loguru 的默认 stderr sink
+    logger.remove()
+
+    terminal_format = (
+        "<green>{time:HH:mm:ss.SSS}</green> | "
+        "<level>{level: <8}</level> | "
+        "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - "
+        "<level>{message}</level>"
+    )
+    file_format = (
+        "{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | "
+        "{name}:{function}:{line} - {message}"
+    )
+
+    # 终端：单行、彩色、sink 砍掉自动追加的 traceback 块
+    logger.add(
+        _terminal_sink,
+        level="INFO",
+        format=terminal_format,
+        backtrace=False,
+        diagnose=False,
+        colorize=True,
+    )
+
+    # 文件：默认行为 — message 后由 loguru 自动追加完整 traceback
+    # 1 份/错误，不重复。rotation/retain/enqueue/diagnose 保留
+    log_dir = Path("logs")
+    log_dir.mkdir(parents=True, exist_ok=True)
+    logger.add(
+        log_dir / "bot_{time:YYYY-MM-DD}.log",
+        level="DEBUG",
+        format=file_format,
+        rotation="00:00",
+        retention="7 days",
+        backtrace=False,
+        diagnose=True,
+        enqueue=True,
+    )
+
+    # 接管 stdlib logger（aiogram / aiohttp / asyncio 等）
+    root = logging.getLogger()
+    root.handlers = [_InterceptHandler()]
+    root.setLevel(logging.INFO)
+    for noisy in ("aiogram.event", "aiogram.dispatcher",
+                  "aiogram.middlewares", "aiohttp.access"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
 
 if os.name == "nt":
     import msvcrt
@@ -65,8 +169,8 @@ def _release_polling_lock(lock_file) -> None:
 
 async def main():
     """主入口"""
-    # 初始化日志
-    logger.add("logs/bot_{time}.log", rotation="1 day", retention="7 days", level="INFO")
+    # 初始化日志（双 sink：终端简 / 文件详）
+    _setup_logging()
     logger.info("Telegodex 启动中...")
 
     # 初始化数据库
