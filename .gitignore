@@ -63,3 +63,9 @@ htmlcov/
 *.tmp
 *.temp
 *~
+
+# AI CLI CoWoker FILES
+AGENTS.md
+CLAUDE.md
+RULES.md
+HARNESS.md
