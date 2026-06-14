@@ -1,128 +1,141 @@
 #!/usr/bin/env python3
 """
-Telegodex 启动脚本
+Telegodex startup script.
 
-使用示例：
+Usage:
     python run.py
     python run.py --check-config
 """
 
 import asyncio
+import re
 import sys
 from pathlib import Path
+
 from loguru import logger
 
-# 添加项目根目录到 Python 路径
 sys.path.insert(0, str(Path(__file__).parent))
 
 from config import settings
 
 
-def check_configuration():
-    """检查配置是否正确"""
-    logger.info("开始检查配置...")
+def check_configuration() -> bool:
+    """Validate required local configuration before starting the bot."""
+    logger.info("Checking configuration...")
+    errors: list[str] = []
 
-    errors = []
-
-    # 检查必需的配置
     if not settings.telegram_bot_token:
-        errors.append("❌ TELEGRAM_BOT_TOKEN 未配置")
+        errors.append("TELEGRAM_BOT_TOKEN is not configured")
     else:
-        logger.info("✓ Telegram Bot Token 已配置")
+        logger.info("Telegram Bot Token is configured")
 
-    # 检查 AI 服务商配置
-    ai_providers = []
+    ai_providers: list[str] = []
+    provider_checks = {
+        "OpenAI": settings.openai_api_key,
+        "Anthropic": settings.anthropic_api_key,
+        "Google": settings.google_api_key,
+        "DeepSeek": settings.deepseek_api_key,
+        "Qwen": settings.qwen_api_key,
+        "Moonshot": settings.moonshot_api_key,
+        "Zhipu": settings.zhipu_api_key,
+        "Baidu": settings.baidu_api_key,
+    }
 
-    # 国际服务商
-    if settings.openai_api_key:
-        ai_providers.append("OpenAI")
-    if settings.anthropic_api_key:
-        ai_providers.append("Anthropic")
-    if settings.google_api_key:
-        ai_providers.append("Google")
+    for name, api_key in provider_checks.items():
+        if api_key:
+            ai_providers.append(name)
 
-    # 国内服务商
-    if settings.deepseek_api_key:
-        ai_providers.append("DeepSeek")
-    if settings.qwen_api_key:
-        ai_providers.append("Qwen")
-    if settings.moonshot_api_key:
-        ai_providers.append("Moonshot")
-    if settings.zhipu_api_key:
-        ai_providers.append("Zhipu")
-    if settings.baidu_api_key:
-        ai_providers.append("Baidu")
-
-    # 检查自定义 Provider
-    custom_providers_config = settings.get_ai_providers_config()
-    custom_count = len([k for k in custom_providers_config.keys()
-                       if k not in ['openai', 'anthropic', 'google', 'deepseek', 'qwen', 'moonshot', 'zhipu', 'baidu']])
-    if custom_count > 0:
-        ai_providers.append(f"{custom_count} 个自定义")
+    provider_config = settings.get_ai_providers_config()
+    built_in = {"openai", "anthropic", "google", "deepseek", "qwen", "moonshot", "zhipu", "baidu"}
+    custom_count = len([name for name in provider_config if name not in built_in])
+    if custom_count:
+        ai_providers.append(f"{custom_count} custom")
 
     if not ai_providers:
-        errors.append("❌ 至少需要配置一个 AI 服务商的 API Key")
+        errors.append("At least one AI provider API key is required")
     else:
-        logger.info(f"✓ 已配置 AI 服务商: {', '.join(ai_providers)}")
+        logger.info(f"Configured AI providers: {', '.join(ai_providers)}")
 
-    # 检查数据库配置
-    logger.info(f"✓ 数据库: {settings.database_url}")
+    logger.info(f"Database: {settings.database_url}")
 
-    # 检查管理员配置
     if settings.admin_ids:
-        logger.info(f"✓ 管理员 IDs: {settings.admin_ids}")
+        logger.info(f"Admin user IDs: {settings.admin_ids}")
     else:
-        logger.warning("⚠️ 未配置管理员 ID")
+        logger.warning("No admin user IDs configured")
 
-    # 输出结果
     if errors:
-        logger.error("\n配置检查失败：")
+        logger.error("Configuration check failed:")
         for error in errors:
-            logger.error(error)
+            logger.error(f"- {error}")
         return False
-    else:
-        logger.success("\n✅ 配置检查通过！")
-        return True
+
+    logger.success("Configuration check passed")
+    return True
 
 
-def print_banner():
-    """打印启动横幅"""
-    banner = """
-╔══════════════════════════════════════════════════════════╗
-║                                                          ║
-║   ████████╗███████╗██╗     ███████╗ ██████╗  ██████╗   ║
-║   ╚══██╔══╝██╔════╝██║     ██╔════╝██╔════╝ ██╔═══██╗  ║
-║      ██║   █████╗  ██║     █████╗  ██║  ███╗██║   ██║  ║
-║      ██║   ██╔══╝  ██║     ██╔══╝  ██║   ██║██║   ██║  ║
-║      ██║   ███████╗███████╗███████╗╚██████╔╝╚██████╔╝  ║
-║      ╚═╝   ╚══════╝╚══════╝╚══════╝ ╚═════╝  ╚═════╝   ║
-║                                                          ║
-║           多 AI 服务商 Telegram Bot 平台                 ║
-║                    v1.1.0                                ║
-║            github.com/AonoChano/telegodex                ║
-║                                                          ║
-╚══════════════════════════════════════════════════════════╝
-    """
-    print(banner)
+def _terminal_link(text: str, url: str) -> str:
+    """Return an OSC 8 terminal hyperlink."""
+    return f"\033]8;;{url}\033\\{text}\033]8;;\033\\"
 
 
-async def main():
-    """主函数"""
+def print_banner() -> None:
+    """Print the startup banner."""
+    blue = "\033[38;2;34;158;217m"
+    white = "\033[97m"
+    reset = "\033[0m"
+    repo_url = "https://github.com/AonoChano/telegodex"
+    repo_label = "github.com/AonoChano/telegodex"
+    repo_link = _terminal_link(repo_label, repo_url)
+    logo_lines = [
+        "   ████████╗███████╗██╗     ███████╗ ██████╗  ██████╗     ",
+        "   ╚══██╔══╝██╔════╝██║     ██╔════╝██╔════╝ ██╔═══██╗    ",
+        "      ██║   █████╗  ██║     █████╗  ██║  ███╗██║   ██║    ",
+        "      ██║   ██╔══╝  ██║     ██╔══╝  ██║   ██║██║   ██║    ",
+        "      ██║   ███████╗███████╗███████╗╚██████╔╝╚██████╔╝    ",
+        "      ╚═╝   ╚══════╝╚══════╝╚══════╝ ╚═════╝  ╚═════╝     ",
+    ]
+    tagline = "  AI Workbench Telegram Bot   |  Codex, ClaudeCode, etc."
+    repo_line = f"  {repo_label}                  v0.0.1"
+    width = max(len(line) for line in logo_lines + [tagline, repo_line])
+    ansi_pattern = re.compile(r"\033\]8;;.*?\033\\|\033\]8;;\033\\|\033\[[0-9;]*m")
+
+    def visible_len(content: str) -> int:
+        plain = content.replace(repo_link, repo_label)
+        return len(ansi_pattern.sub("", plain))
+
+    def box_line(content: str = "") -> str:
+        return f"{white}║{reset}{content}{' ' * max(width - visible_len(content), 0)}{white}║{reset}"
+
+    print()
+    print(f"{white}╔{'═' * width}╗{reset}")
+    print(box_line())
+    for index, line in enumerate(logo_lines):
+        color = blue if index % 2 == 0 else white
+        print(box_line(f"{color}{line}{reset}"))
+    print(box_line())
+    print(box_line(f"{white}{tagline}{reset}"))
+    print(box_line())
+    print(box_line(f"{blue}  {repo_link}{reset}{white}                  v0.0.1{reset}"))
+    print(box_line())
+    print(f"{white}╚{'═' * width}╝{reset}")
+    print()
+
+
+async def main() -> None:
+    """Run the startup flow."""
     print_banner()
 
-    # 检查命令行参数
     if "--check-config" in sys.argv:
         check_configuration()
         return
 
-    # 检查配置
     if not check_configuration():
-        logger.error("\n请修复配置错误后重新启动")
+        logger.error("Fix the configuration errors and restart Telegodex")
         sys.exit(1)
 
-    # 导入 main 并启动
-    logger.info("\n正在启动 Telegodex...")
+    logger.info("Starting Telegodex...")
     from main import main as bot_main
+
     await bot_main()
 
 
@@ -130,7 +143,7 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        logger.info("\n\n👋 Telegodex 已停止")
+        logger.info("Telegodex stopped")
     except Exception as e:
-        logger.exception(f"启动失败: {e}")
+        logger.exception(f"Startup failed: {e}")
         sys.exit(1)

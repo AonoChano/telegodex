@@ -6,7 +6,7 @@
 
 - 🤖 **多 AI 支持**：OpenAI (GPT-5)、Anthropic (Claude)、Google (Gemini)、DeepSeek、通义千问、Kimi、GLM、文心一言等
 - 🔌 **自定义 Provider**：支持任何 OpenAI 兼容 API（Ollama、LiteLLM、vLLM 等）
-- 💬 **完整 Markdown**：支持 Telegram MarkdownV2 全部特性
+- 💬 **完整 Rich Markdown**：通过 Telegram Rich Messages 支持表格、任务列表、脚注、公式等富文本
 - 🎨 **产品级交互**：内联按钮、回复键盘、上下文管理
 - 🔒 **安全保护**：速率限制、用户认证、敏感信息过滤
 - 🧩 **插件化架构**：易于扩展新 AI 服务商
@@ -81,6 +81,8 @@ python main.py
 
 - 📖 [快速入门](docs/QUICKSTART.md) - 5分钟上手指南
 - 📚 [完整文档](docs/USAGE.md) - 详细使用说明
+- 💬 [Rich Messages](docs/RICH_MESSAGES.md) - Telegram Rich Markdown 输出说明
+- 🚀 [启动与轮询](docs/STARTUP.md) - 单实例轮询和启动横幅说明
 - 🏗️ [架构设计](docs/ARCHITECTURE.md) - 系统设计详解
 - 🤖 [模型列表](docs/MODELS.md) - 30+ 支持的模型
 - ⚙️ [自定义配置](docs/CUSTOM_PROVIDERS.md) - 添加任意 AI 服务商
