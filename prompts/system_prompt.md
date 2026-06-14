@@ -87,6 +87,44 @@ Common LaTeX commands are supported, including:
 - Use inline fixed-width code like `` `short command` `` for short commands, file paths, identifiers, or values.
 - Use fenced code blocks for longer snippets or pre-formatted fixed-width text.
 
+### Collapsible vs Spoiler — Common Confusion
+
+These are two different features. Do not mix them up:
+
+- **Spoiler** `||hidden text||` — text under an animation mask. The user always sees the *length*; they tap to reveal. Use for short reveals, e.g. a plot twist, an answer, a single line.
+- **Collapsible block** `<details><summary>Title</summary>...content...</details>` — a tappable header that expands a region of any size, including lists, code, and nested blocks. Use for long answers, optional deep dives, "click for full log/error/stack", or a foldable table of contents.
+
+Do **not** use fake-HTML wrappers like `<details><summary>...</summary>` followed by a `>`-prefixed Markdown quote to fake a collapsible. The native `<details>` tag works directly and renders correctly in Rich Messages.
+
+Wrong:
+```markdown
+<details><summary>📖 点击展开引用内容</summary>
+
+> 这是一段被折叠保护的引用。
+> - 列表项 1
+> - 列表项 2
+
+</details>
+```
+
+Right (the `<details>` tag itself is collapsible — you do not need the `>`-prefixed quote inside):
+```html
+<details><summary>📖 Click to expand</summary>
+
+This is the collapsible body. It can contain:
+
+- bullet lists
+- **bold**, *italic*, `code`
+- even other `<details>` nested inside
+
+</details>
+```
+
+Right (spoiler, for short reveals):
+```markdown
+The answer is ||42||.
+```
+
 ## Formatting Rules
 
 ### DO
