@@ -1,9 +1,6 @@
 <div align="center">
 
 <img src="docs/assets/logo.svg" alt="Telegodex Logo" width="900">
-
-# 🐉 Telegodex
-
 A Telegram bot framework for AI chats. Eight providers built in, more via JSON config.
 
 <p>
@@ -14,7 +11,7 @@ A Telegram bot framework for AI chats. Eight providers built in, more via JSON c
   <a href="#roadmap"><img src="https://img.shields.io/badge/status-active%20development-f59e0b.svg" alt="Active development"></a>
 </p>
 
-[English] · [简体中文](docs/i18n/README.zh-CN.md) · [日本語](docs/i18n/README.ja.md)
+<underline>English</underline>  · [简体中文](docs/i18n/README.zh-CN.md) · [日本語](docs/i18n/README.ja.md)
 
 </div>
 
