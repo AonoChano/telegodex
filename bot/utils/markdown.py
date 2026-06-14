@@ -21,10 +21,11 @@ def format_markdown_v2(text: str) -> str:
     将 AI 输出的 Markdown 文本转换为 Telegram MarkdownV2 格式
 
     处理逻辑：
-    1. 识别并保护所有 Markdown 语法结构（代码块、行内代码、链接、粗体、斜体等）
-    2. 特别识别 LaTeX 代码块（```latex...```）
-    3. 在普通文本区域转义特殊字符
-    4. 恢复 Markdown 语法结构
+    1. 自动检测纯文本 URL 并转换为 Telegram 可识别格式
+    2. 识别并保护所有 Markdown 语法结构（代码块、行内代码、链接、粗体、斜体等）
+    3. 特别识别 LaTeX 代码块（```latex...```）
+    4. 在普通文本区域转义特殊字符
+    5. 恢复 Markdown 语法结构
 
     Args:
         text: AI 输出的原始文本（可能包含 Markdown 语法）
@@ -41,6 +42,7 @@ def format_markdown_v2(text: str) -> str:
     - [文本](链接) -> 链接
     - ~~删除线~~ -> ~删除线~
     - ||剧透|| -> ||剧透||
+    - http://example.com -> 自动检测并保留（Telegram 自动识别）
     """
     # 需要转义的字符（在普通文本中）
     SPECIAL_CHARS = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
@@ -54,6 +56,22 @@ def format_markdown_v2(text: str) -> str:
         protected.append((placeholder, match.group(0)))
         return placeholder
 
+    # 步骤 0: 保护独立的 URL（不在 Markdown 链接中的）
+    # 匹配 http:// 或 https:// 开头的 URL，但不在 []() 或 ``  内
+    # 这些 URL Telegram 会自动识别为链接
+    def protect_standalone_url(match):
+        url = match.group(0)
+        placeholder = f"\x00PROTECTEDURL{len(protected)}\x00"
+        # URL 不需要转义，Telegram 会自动识别
+        protected.append((placeholder, url))
+        return placeholder
+
+    # 先保护 Markdown 链接中的 URL，避免被误识别
+    text = re.sub(r'\[([^\]]+)\]\((https?://[^)]+)\)', lambda m: protect(m, 'LINK'), text)
+
+    # 然后保护独立的 URL
+    text = re.sub(r'(?<!\()(https?://[^\s\)]+)(?!\))', protect_standalone_url, text)
+
     # 步骤 1: 保护代码块（```...```），包括 LaTeX
     # 匹配格式：```language\ncode\n``` 或 ```\ncode\n```
     text = re.sub(r'```[\s\S]*?```', lambda m: protect(m, 'CODEBLOCK'), text)
@@ -61,27 +79,24 @@ def format_markdown_v2(text: str) -> str:
     # 步骤 2: 保护行内代码（`...`）
     text = re.sub(r'`[^`\n]+?`', lambda m: protect(m, 'INLINECODE'), text)
 
-    # 步骤 3: 保护链接（[text](url)）
-    text = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', lambda m: protect(m, 'LINK'), text)
-
-    # 步骤 4: 保护粗体（**text**）
+    # 步骤 3: 保护粗体（**text**）
     text = re.sub(r'\*\*(.+?)\*\*', lambda m: protect(m, 'BOLD'), text)
 
-    # 步骤 5: 保护斜体（*text*，但要避免与粗体冲突）
+    # 步骤 4: 保护斜体（*text*，但要避免与粗体冲突）
     # 使用负向前瞻和负向后顾确保不匹配 **
     text = re.sub(r'(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)', lambda m: protect(m, 'ITALIC'), text)
 
-    # 步骤 6: 保护删除线（~~text~~）
+    # 步骤 5: 保护删除线（~~text~~）
     text = re.sub(r'~~(.+?)~~', lambda m: protect(m, 'STRIKE'), text)
 
-    # 步骤 7: 保护剧透（||text||）
+    # 步骤 6: 保护剧透（||text||）
     text = re.sub(r'\|\|(.+?)\|\|', lambda m: protect(m, 'SPOILER'), text)
 
-    # 步骤 8: 转义普通文本中的所有特殊字符
+    # 步骤 7: 转义普通文本中的所有特殊字符
     for char in SPECIAL_CHARS:
         text = text.replace(char, f'\\{char}')
 
-    # 步骤 9: 恢复所有保护的 Markdown 结构
+    # 步骤 8: 恢复所有保护的 Markdown 结构
     for placeholder, original in reversed(protected):
         # 根据不同类型处理原始内容
         if 'CODEBLOCK' in placeholder:
@@ -92,8 +107,12 @@ def format_markdown_v2(text: str) -> str:
             # 行内代码：直接恢复，不转义
             text = text.replace(placeholder, original)
 
+        elif 'URL' in placeholder and 'LINK' not in placeholder:
+            # 独立 URL：直接恢复，Telegram 会自动识别
+            text = text.replace(placeholder, original)
+
         elif 'LINK' in placeholder:
-            # 链接：需要转义内部文本，但保留语法结构
+            # Markdown 链接：需要转义内部文本，但保留语法结构
             link_match = re.match(r'\[([^\]]+)\]\(([^)]+)\)', original)
             if link_match:
                 link_text = link_match.group(1)
@@ -105,13 +124,8 @@ def format_markdown_v2(text: str) -> str:
                     if char not in ['[', ']', '(', ')']:
                         escaped_text = escaped_text.replace(char, f'\\{char}')
 
-                # 转义 URL 中的特殊字符（保留 : / ? = & # 这些URL常用字符）
-                escaped_url = link_url
-                # 只转义 URL 中的 . - _ ! 这些字符
-                for char in ['.', '-', '_', '!']:
-                    escaped_url = escaped_url.replace(char, f'\\{char}')
-
-                formatted_link = f'[{escaped_text}]({escaped_url})'
+                # URL 不需要转义（Telegram 接受原始 URL）
+                formatted_link = f'[{escaped_text}]({link_url})'
                 text = text.replace(placeholder, formatted_link)
 
         elif 'BOLD' in placeholder:
