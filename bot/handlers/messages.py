@@ -208,8 +208,12 @@ async def handle_message(message: Message, context_manager: ContextManager, ai_r
                 # 转换为 Rich Message
                 rich_message = MarkdownToRichMessage.convert(response.content)
 
+                # 获取 Bot Token
+                bot_token = settings.telegram_bot_token
+                if hasattr(bot_token, 'get_secret_value'):
+                    bot_token = bot_token.get_secret_value()
+
                 # 尝试发送 Rich Message
-                bot_token = message.bot.token.get_secret_value()
                 success = await send_rich_message(
                     bot_token=bot_token,
                     chat_id=message.chat.id,
