@@ -21,12 +21,21 @@ from config import settings
 
 router = Router()
 
-# 流式 draft 触发间隔：积攒 N 字符再推送一次，避免触发限流
-DRAFT_FLUSH_CHARS = 24
+# 流式 draft 触发字符阈值：积攒 N 字符再推送一次。Telegram 官方文档没有公开
+# draft 的更新频率上限，参考 telegramify-markdown 的 DraftStream 实践，64 字符
+# 是一个在"动画流畅"和"不刷屏"之间的折中。
+DRAFT_FLUSH_CHARS = 64
 # 流式 draft 触发最长时间：超过 N 秒强制推送一次（兜底）
-DRAFT_FLUSH_INTERVAL = 1.0
+DRAFT_FLUSH_INTERVAL = 1.5
 # 单次草稿内容上限：sendMessageDraft 文本最大 4096 字符
 DRAFT_MAX_CHARS = 4000
+# 同一次响应内对**同一 draft_id** 的最大推送次数。超过后停止草稿，攒到
+# sendRichMessage 持久化时一次性发出。30 秒预览窗口 + 反滥用保护实测上
+# 6 次左右开始出现 raised/拒绝。
+DRAFT_MAX_CALLS_PER_ID = 6
+# 响应总字符数低于此值时跳过草稿阶段，直接 sendRichMessage 持久化。短回复
+# 频繁推草稿不划算（看起来在闪、实则在等）。
+DRAFT_MIN_RESPONSE_CHARS = 80
 
 
 async def _try_draft(
@@ -37,11 +46,20 @@ async def _try_draft(
     message_thread_id: int | None,
     *,
     use_rich: bool,
+    allow_rich: bool = True,
 ) -> bool:
-    """尝试推送一次草稿。失败时 rich → 纯文本回退；都失败则返回 False。"""
+    """
+    尝试推送一次草稿。
+
+    - ``use_rich=True`` 且 ``allow_rich=True``：先发 Rich 草稿，失败再降级到
+      纯文本草稿。
+    - ``use_rich=True`` 但 ``allow_rich=False``：本次响应内 Rich 已经失败过，
+      直接发纯文本草稿，避免反复换 draft_id 触发的反滥用保护。
+    - ``use_rich=False``：只发纯文本草稿。
+    """
     if not text:
         return False
-    if use_rich:
+    if use_rich and allow_rich:
         ok = await send_rich_message_draft(
             bot_token=bot_token,
             chat_id=chat_id,
@@ -51,15 +69,14 @@ async def _try_draft(
         )
         if ok:
             return True
-        # Rich 草稿被拒（多为版本/权限），降级为纯文本草稿
-        ok = await send_message_draft(
+        # Rich 草稿被拒：降级为纯文本草稿
+        return await send_message_draft(
             bot_token=bot_token,
             chat_id=chat_id,
             text=text,
             draft_id=draft_id,
             message_thread_id=message_thread_id,
         )
-        return ok
     return await send_message_draft(
         bot_token=bot_token,
         chat_id=chat_id,
@@ -286,6 +303,49 @@ async def handle_message(message: Message, context_manager: ContextManager, ai_r
         response_model = model_name
         response_tokens = None
         stream_used = False
+        # 本次响应内的草稿状态机：
+        # - rich_ok：是否在本次响应中成功推过 rich 草稿
+        # - rich_disabled：rich 草稿连续失败后置 True，本轮内不再尝试 rich
+        # - draft_call_count：累计已推次数（占位 + 内容），封顶 DRAFT_MAX_CALLS_PER_ID
+        rich_ok = False
+        rich_disabled = False
+        draft_call_count = 0
+
+        async def _push_draft(text: str, *, use_rich: bool) -> None:
+            """包一层 _try_draft，负责更新 rich_disabled / draft_call_count。"""
+            nonlocal rich_ok, rich_disabled, draft_call_count
+            if not use_draft or not text or draft_call_count >= DRAFT_MAX_CALLS_PER_ID:
+                return
+            ok = await _try_draft(
+                bot_token=bot_token,
+                chat_id=message.chat.id,
+                text=text,
+                draft_id=draft_id,
+                message_thread_id=thread_id,
+                use_rich=use_rich,
+                allow_rich=not rich_disabled,
+            )
+            draft_call_count += 1
+            if use_rich and ok:
+                rich_ok = True
+            elif use_rich and not ok and not rich_disabled:
+                # 第一次 rich 失败：降级为纯文本草稿，且本轮不再试 rich
+                rich_disabled = True
+                if not text:
+                    return
+                ok2 = await _try_draft(
+                    bot_token=bot_token,
+                    chat_id=message.chat.id,
+                    text=text,
+                    draft_id=draft_id,
+                    message_thread_id=thread_id,
+                    use_rich=False,
+                )
+                if not ok2:
+                    # 连纯文本都失败（多半被服务器拒），整个草稿阶段直接放弃
+                    logger.warning(
+                        f"Plain draft also failed, abandoning draft for this response"
+                    )
 
         # ---- 1) 优先尝试流式 ----
         try:
@@ -293,14 +353,7 @@ async def handle_message(message: Message, context_manager: ContextManager, ai_r
             last_flush = time.monotonic()
             if use_draft:
                 # 推送占位草稿（让用户立即看到"思考中"）
-                await _try_draft(
-                    bot_token=bot_token,
-                    chat_id=message.chat.id,
-                    text="💭 …",
-                    draft_id=draft_id,
-                    message_thread_id=thread_id,
-                    use_rich=False,
-                )
+                await _push_draft("💭 …", use_rich=False)
 
             async for chunk in provider.chat_stream(
                 messages=messages_with_system,
@@ -316,39 +369,38 @@ async def handle_message(message: Message, context_manager: ContextManager, ai_r
                 response_text += chunk
                 buffer += chunk
                 now = time.monotonic()
-                # 草稿会带动画；为避免触发限流，按字符数 + 时间双触发
+                # 草稿会带动画；按字符数 + 时间双触发，但短回复不推草稿
                 if (
                     len(buffer) >= DRAFT_FLUSH_CHARS
                     or (now - last_flush) >= DRAFT_FLUSH_INTERVAL
                 ):
-                    if use_draft and response_text:
-                        await _try_draft(
-                            bot_token=bot_token,
-                            chat_id=message.chat.id,
-                            text=response_text[-DRAFT_MAX_CHARS:],
-                            draft_id=draft_id,
-                            message_thread_id=thread_id,
-                            use_rich=True,
+                    if len(response_text) >= DRAFT_MIN_RESPONSE_CHARS:
+                        await _push_draft(
+                            response_text[-DRAFT_MAX_CHARS:], use_rich=True
                         )
                     buffer = ""
                     last_flush = now
 
-            # 流结束后推送一次最终草稿
-            if stream_used and use_draft and response_text:
-                await _try_draft(
-                    bot_token=bot_token,
-                    chat_id=message.chat.id,
-                    text=response_text[-DRAFT_MAX_CHARS:],
-                    draft_id=draft_id,
-                    message_thread_id=thread_id,
-                    use_rich=True,
+            # 流结束：若响应已经够长且本轮尚未达到调用上限，推送一次最终草稿
+            if (
+                stream_used
+                and use_draft
+                and response_text
+                and len(response_text) >= DRAFT_MIN_RESPONSE_CHARS
+                and draft_call_count < DRAFT_MAX_CALLS_PER_ID
+            ):
+                await _push_draft(
+                    response_text[-DRAFT_MAX_CHARS:], use_rich=True
                 )
         except Exception as stream_err:
             logger.warning(
-                f"流式 chat_stream 失败，回退非流式: {stream_err}"
+                f"流式 chat_stream 失败，回退非流式: {type(stream_err).__name__}: {stream_err}"
             )
             stream_used = False
             response_text = ""
+            draft_call_count = 0
+            rich_disabled = False
+            rich_ok = False
 
         # ---- 2) 流式失败 / 没拿到内容则回退非流式 ----
         if not stream_used:
@@ -363,15 +415,14 @@ async def handle_message(message: Message, context_manager: ContextManager, ai_r
             response_tokens = (
                 response.usage.get("total_tokens") if response.usage else None
             )
-            # 非流式时也尝试一次草稿，让用户在持久化前先看到完整预览
-            if use_draft and response_text:
-                await _try_draft(
-                    bot_token=bot_token,
-                    chat_id=message.chat.id,
-                    text=response_text[-DRAFT_MAX_CHARS:],
-                    draft_id=draft_id,
-                    message_thread_id=thread_id,
-                    use_rich=True,
+            # 非流式时尝试一次草稿，让用户在持久化前先看到完整预览
+            if (
+                use_draft
+                and response_text
+                and len(response_text) >= DRAFT_MIN_RESPONSE_CHARS
+            ):
+                await _push_draft(
+                    response_text[-DRAFT_MAX_CHARS:], use_rich=True
                 )
 
         if not response_text.strip():

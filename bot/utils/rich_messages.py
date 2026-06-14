@@ -132,11 +132,12 @@ async def _post_bot_method(
             ) as resp:
                 result = await resp.json()
     except aiohttp.ClientError as e:
-        logger.error(f"{method} request failed: {e}")
-        return False, str(e)
+        logger.error(f"{method} request failed: {type(e).__name__}: {e!r}")
+        return False, str(e) or type(e).__name__
     except Exception as e:
-        logger.error(f"{method} raised: {e}")
-        return False, str(e)
+        # 用 type+repr 记录，避免 str(e) 为空时丢失关键信息
+        logger.error(f"{method} raised {type(e).__name__}: {e!r}")
+        return False, f"{type(e).__name__}: {e}"
 
     if result.get("ok"):
         return True, ""
