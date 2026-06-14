@@ -42,6 +42,8 @@ def format_markdown_v2(text: str) -> str:
     - [文本](链接) -> 链接
     - ~~删除线~~ -> ~删除线~
     - ||剧透|| -> ||剧透||
+    - <blockquote expandable>...</blockquote> -> **>... + || 结尾（MarkdownV2 的
+      expandable blockquote 形式，Bot API 7.3+；内部嵌套格式完整保留）
     - http://example.com -> 自动检测并保留（Telegram 自动识别）
     """
     # 需要转义的字符（在普通文本中）
@@ -55,6 +57,61 @@ def format_markdown_v2(text: str) -> str:
         placeholder = f"\x00PROTECTED{prefix}{len(protected)}\x00"
         protected.append((placeholder, match.group(0)))
         return placeholder
+
+    # 步骤 -1: 处理 Telegram 原生 <blockquote expandable>...</blockquote>
+    # 这是 Bot API 7.3+ 的可展开引用块：客户端默认只显示前 3 行，展开后看全
+    # 文。MarkdownV2 不支持 HTML 标签，需要转成 **>... + || 结尾 的形式：
+    #
+    #   **>first line
+    #   >middle line
+    #   >last line||
+    #
+    # **> 在 MarkdownV2 里有歧义（既可以是粗体+引用，也可能是 empty bold
+    # 触发 expandable），所以**显式**用占位符保护，最后整段还原。
+    #
+    # 处理策略：内部递归走 format_markdown_v2 完成粗体 / 链接 / 行内代码等
+    # 转义，然后**重新用占位符保护代码块**（代码块是多行的，split-by-line
+    # 加 `>` 会切碎它），再按行加 `>`，最后还原。
+    def _convert_expandable_bq(m: re.Match) -> str:
+        inner = m.group(1).strip("\n")
+        if not inner:
+            return ""
+        inner_v2 = format_markdown_v2(inner)
+
+        # 重新保护代码块（多行原子），避免被按行 split 切碎
+        bq_protected: List[Tuple[str, str]] = []
+
+        def _protect_codeblock_in_bq(m2: re.Match) -> str:
+            placeholder = f"\x00EXPBQCODEBLOCK{len(bq_protected)}\x00"
+            bq_protected.append((placeholder, m2.group(0)))
+            return placeholder
+
+        inner_v2 = re.sub(
+            r"```[\s\S]*?```", _protect_codeblock_in_bq, inner_v2
+        )
+
+        lines = inner_v2.split("\n")
+        if not lines:
+            return ""
+        formatted = "**>" + lines[0]
+        for line in lines[1:]:
+            formatted += "\n>" + line
+        formatted += "||"
+
+        # 还原代码块
+        for placeholder, original in bq_protected:
+            formatted = formatted.replace(placeholder, original)
+
+        outer_placeholder = f"\x00PROTECTEDEXPBQ{len(protected)}\x00"
+        protected.append((outer_placeholder, formatted))
+        return outer_placeholder
+
+    text = re.sub(
+        r"<blockquote\s+expandable>(.*?)</blockquote>",
+        _convert_expandable_bq,
+        text,
+        flags=re.DOTALL,
+    )
 
     # 步骤 0: 保护独立的 URL（不在 Markdown 链接中的）
     # 匹配 http:// 或 https:// 开头的 URL，但不在 []() 或 ``  内
@@ -219,6 +276,12 @@ def format_markdown_v2(text: str) -> str:
                     if char not in ['-', '[', ']', 'x']:
                         task_text = task_text.replace(char, f'\{char}')
                 text = text.replace(placeholder, f'\- \[x\] {task_text}')
+
+        elif 'EXPBQ' in placeholder:
+            # <blockquote expandable> 已经在步骤 -1 转成 **>... + || 结尾
+            # 的 MarkdownV2 expandable 引用形式，original 已经是最终形态，
+            # 原样还原即可
+            text = text.replace(placeholder, original)
     return text
 
     # 步骤 3: 保护链接（[text](url)）

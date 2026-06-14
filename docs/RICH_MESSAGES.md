@@ -29,7 +29,19 @@ Rich Markdown keeps the normal block quote form:
 
 Use block quotes only for actual quoted material or callouts. Do not use them as generic indentation.
 
-For collapsible content, use Rich Markdown's HTML-compatible details block:
+For long citations, source dumps, or anything readers will want to scan past, use the Telegram-native **expandable block quote** (Bot API 7.3+):
+
+```html
+<blockquote expandable>
+First three lines are visible by default; the rest unfolds when the
+user taps the block. Use this for source citations, log dumps, optional
+reference material, or long quoted passages.
+</blockquote>
+```
+
+The body is rendered as a regular block quote when expanded. Cannot be nested inside another block quote, and cannot contain other block quotes. The MarkdownV2 fallback path converts `<blockquote expandable>…</blockquote>` to `**>…` + last line `||` (the MarkdownV2 form of an expandable block quote).
+
+For collapsible content that should look like a foldable panel with a custom title (e.g. "Click for full log"), use Rich Markdown's HTML-compatible details block:
 
 ```html
 <details><summary>Summary</summary>
@@ -47,7 +59,7 @@ Expanded by default.
 </details>
 ```
 
-Older MarkdownV2-style expandable block quotes remain part of Telegram's normal parse-mode formatting, but the primary Telegodex path is Rich Markdown. Prefer `<details>` for collapsible rich messages.
+Pick the right "hidden until tapped" affordance for the content. `<details>` and `<blockquote expandable>` are not interchangeable: `<blockquote expandable>` is for quoted material without a custom title; `<details>` is for non-quote content with a custom title. Use `||spoiler||` for short single-line reveals.
 
 ## Monospace And Code
 
