@@ -12,6 +12,7 @@ from bot.utils.rich_messages import (
     send_rich_message,
     has_rich_features
 )
+from prompts import get_prompt_manager
 from config import settings
 
 router = Router()
@@ -181,9 +182,18 @@ async def handle_message(message: Message, context_manager: ContextManager, ai_r
         # 发送 "正在输入..." 状态
         await message.bot.send_chat_action(chat_id=message.chat.id, action="typing")
 
+        # 获取系统提示词
+        prompt_manager = get_prompt_manager()
+        system_prompt = prompt_manager.get_system_prompt()
+
+        # 构建包含系统提示词的消息历史
+        messages_with_system = [
+            AIMessage(role=MessageRole.SYSTEM, content=system_prompt)
+        ] + history
+
         # 调用 AI
         response = await provider.chat(
-            messages=history,
+            messages=messages_with_system,
             model=user.preferred_model,
             temperature=float(user.temperature or 0.7),
             max_tokens=settings.max_tokens,
