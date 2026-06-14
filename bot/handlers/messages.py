@@ -6,13 +6,14 @@ from loguru import logger
 from ai import AIRouter, Message as AIMessage, MessageRole
 from storage import ContextManager
 from bot.keyboards import get_main_menu
+from bot.utils.markdown import format_markdown_v2
 from config import settings
 
 router = Router()
 
 
 def escape_markdown(text: str) -> str:
-    """转义 Telegram MarkdownV2 特殊字符"""
+    """转义 Telegram MarkdownV2 特殊字符（用于 Bot 自身消息）"""
     special_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
     for char in special_chars:
         text = text.replace(char, f'\\{char}')
@@ -193,8 +194,14 @@ async def handle_message(message: Message, context_manager: ContextManager, ai_r
             tokens_used=response.usage.get("total_tokens") if response.usage else None,
         )
 
-        # 发送响应（使用纯文本，不需要转义）
-        await message.answer(response.content)
+        # 格式化并发送响应（使用 MarkdownV2）
+        try:
+            formatted_content = format_markdown_v2(response.content)
+            await message.answer(formatted_content, parse_mode="MarkdownV2")
+        except Exception as format_error:
+            # 如果格式化失败，回退到纯文本
+            logger.warning(f"MarkdownV2 格式化失败，使用纯文本: {format_error}")
+            await message.answer(response.content)
 
     except Exception as e:
         logger.error(f"AI 调用失败: {e}")
