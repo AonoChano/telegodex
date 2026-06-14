@@ -45,6 +45,45 @@ RETRYABLE_EXCEPTIONS: tuple[type[BaseException], ...] = (
     json.JSONDecodeError,
 )
 
+# 共享的 aiohttp ClientSession。每个 _post_bot_method 调用都 new 一次 session
+# 是常见反模式：流式响应里推 20+ 次草稿 = 20+ 个 session 内部创建/销毁 Proactor
+# pipe transport，bot 关闭时残留 transport 在 __del__ 里尝试通过已关闭的事件
+# 循环清理 -> 'Event loop is closed' 异常。
+# 共享 session 还顺带把 TCP 连接、TLS 握手、连接池都复用掉，省掉每次冷启动
+# 30-50ms 的开销。
+_shared_session: aiohttp.ClientSession | None = None
+_shared_session_lock = threading.Lock()
+
+
+def _get_shared_session() -> aiohttp.ClientSession:
+    """懒加载共享 session。线程安全（即使 event loop 关闭后被调用也不会崩）。"""
+    global _shared_session
+    if _shared_session is None or _shared_session.closed:
+        with _shared_session_lock:
+            if _shared_session is None or _shared_session.closed:
+                _shared_session = aiohttp.ClientSession(
+                    timeout=aiohttp.ClientTimeout(total=15),
+                )
+    return _shared_session
+
+
+async def close_shared_session() -> None:
+    """在 bot shutdown 时显式关闭共享 session。
+
+    必须在事件循环还活着时调用（main.py 的 finally 链）。调用后再访问会
+    触发懒加载重建，行为正确。
+    """
+    global _shared_session
+    with _shared_session_lock:
+        if _shared_session is not None and not _shared_session.closed:
+            try:
+                await _shared_session.close()
+            except Exception as e:
+                logger.warning(
+                    f"close_shared_session raised {type(e).__name__}: {e!r}"
+                )
+        _shared_session = None
+
 # 进程内单调递增的 draft_id 序列。Telegram 只要求"非零 + 同 id 视为同草稿"
 # 所以单计数器足够，溢出时折叠到 1。
 _draft_lock = threading.Lock()
@@ -178,13 +217,13 @@ async def _post_bot_method(
             await asyncio.sleep(delay)
 
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    url,
-                    json=payload,
-                    timeout=aiohttp.ClientTimeout(total=15),
-                ) as resp:
-                    result = await resp.json()
+            session = _get_shared_session()
+            async with session.post(
+                url,
+                json=payload,
+                timeout=aiohttp.ClientTimeout(total=15),
+            ) as resp:
+                result = await resp.json()
         except RETRYABLE_EXCEPTIONS as e:
             last_exc = e
             if not first_failure_logged:

@@ -120,6 +120,18 @@ async def main():
     try:
         await dp.start_polling(bot)
     finally:
+        # 关闭顺序：HTTP 共享 session 先关（里面还有未释放的连接），
+        # 然后 aiogram session，再 db。这样能避免 Windows Proactor 下
+        # '_ProactorBasePipeTransport.__del__' 在已关闭 event loop 上
+        # 抛 'Event loop is closed' 异常。
+        from bot.utils.rich_messages import close_shared_session
+
+        try:
+            await close_shared_session()
+        except Exception as e:
+            logger.warning(
+                f"close_shared_session 失败: {type(e).__name__}: {e!r}"
+            )
         await db.close()
         await bot.session.close()
         _release_polling_lock(polling_lock)
