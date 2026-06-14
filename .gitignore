@@ -46,13 +46,12 @@ logs/
 __pycache__/
 *.py[cod]
 
-# OS
-.DS_Store
-Thumbs.db
-desktop.ini
-
-# Claude Code
-.claude/
+# Claude Code session data (keep harness structure)
+.claude/*.jsonl
+.claude/projects/
+.claude/skills/
+.claude/workflows/*.output
+!.claude/tasks/
 !.claude/settings.local.json
 
 # Testing

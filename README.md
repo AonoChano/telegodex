@@ -35,7 +35,7 @@
 - ✅ Azure OpenAI
 - ✅ 任何 OpenAI 兼容 API
 
-详见 [MODELS.md](MODELS.md) 和 [CUSTOM_PROVIDERS.md](CUSTOM_PROVIDERS.md)
+详见 [docs/MODELS.md](docs/MODELS.md) 和 [docs/CUSTOM_PROVIDERS.md](docs/CUSTOM_PROVIDERS.md)
 
 ## 快速开始
 
@@ -77,12 +77,16 @@ python main.py
 
 ## 架构设计
 
-参考 [需求.md](需求.md) 和以下官方文档：
+基于 **Harness Engineering** 原则构建，包含完整的 AI 安全护栏和上下文管理。
 
-- [Telegram Bot API](https://core.telegram.org/bots/api)
-- [Claude API Documentation](https://docs.anthropic.com/en/docs/overview)
-- [OpenAI API Documentation](https://platform.openai.com/docs)
+- 📖 [快速入门](docs/QUICKSTART.md) - 5分钟上手指南
+- 📚 [完整文档](docs/USAGE.md) - 详细使用说明
+- 🏗️ [架构设计](docs/ARCHITECTURE.md) - 系统设计详解
+- 🤖 [模型列表](docs/MODELS.md) - 30+ 支持的模型
+- ⚙️ [自定义配置](docs/CUSTOM_PROVIDERS.md) - 添加任意 AI 服务商
+- 📋 [开发规范](RULES.md) - 代码标准与安全边界
+- 🔧 [AI 协作指南](CLAUDE.md) - AI 助手使用文档
 
 ## 扩展开发
 
-参考 `extensions/` 目录下的接口定义。
+参考 `extensions/` 目录下的接口定义，以及 [HARNESS.md](HARNESS.md) 了解 Harness 管理协议。
