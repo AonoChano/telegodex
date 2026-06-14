@@ -11,6 +11,14 @@ from config import settings
 router = Router()
 
 
+def escape_markdown(text: str) -> str:
+    """转义 Telegram MarkdownV2 特殊字符"""
+    special_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
+    for char in special_chars:
+        text = text.replace(char, f'\\{char}')
+    return text
+
+
 @router.message(Command("start"))
 async def cmd_start(message: Message, context_manager: ContextManager, ai_router: AIRouter):
     """处理 /start 命令"""
@@ -25,14 +33,23 @@ async def cmd_start(message: Message, context_manager: ContextManager, ai_router
         language_code=user.language_code,
     )
 
+    user_name = escape_markdown(user.first_name or 'User')
+    providers = []
+    if ai_router.is_provider_available('openai'):
+        providers.append('• ✅ OpenAI \\(GPT\\)')
+    if ai_router.is_provider_available('anthropic'):
+        providers.append('• ✅ Anthropic \\(Claude\\)')
+    if ai_router.is_provider_available('google'):
+        providers.append('• ✅ Google \\(Gemini\\)')
+
+    providers_text = '\n'.join(providers) if providers else '• ⚠️ 无可用服务商'
+
     welcome_text = f"""👋 欢迎使用 **Telegodex**\\!
 
-你好，{escape_markdown(user.first_name or 'User')}\\!
+你好，{user_name}\\!
 
 我是一个多 AI 服务商的智能助手，支持：
-{'• ✅ OpenAI \\(GPT\\)' if ai_router.is_provider_available('openai') else ''}
-{'• ✅ Anthropic \\(Claude\\)' if ai_router.is_provider_available('anthropic') else ''}
-{'• ✅ Google \\(Gemini\\)' if ai_router.is_provider_available('google') else ''}
+{providers_text}
 
 发送任何消息开始对话，或使用菜单按钮\\!
 
@@ -184,10 +201,3 @@ async def handle_message(message: Message, context_manager: ContextManager, ai_r
         logger.error(f"AI 调用失败: {e}")
         await message.answer(f"❌ 处理失败: {escape_markdown(str(e))}", parse_mode="MarkdownV2")
 
-
-def escape_markdown(text: str) -> str:
-    """转义 Telegram MarkdownV2 特殊字符"""
-    special_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
-    for char in special_chars:
-        text = text.replace(char, f'\\{char}')
-    return text
