@@ -7,6 +7,11 @@ from ai import AIRouter, Message as AIMessage, MessageRole
 from storage import ContextManager
 from bot.keyboards import get_main_menu
 from bot.utils.markdown import format_markdown_v2
+from bot.utils.rich_messages import (
+    MarkdownToRichMessage,
+    send_rich_message,
+    has_rich_features
+)
 from config import settings
 
 router = Router()
@@ -194,13 +199,39 @@ async def handle_message(message: Message, context_manager: ContextManager, ai_r
             tokens_used=response.usage.get("total_tokens") if response.usage else None,
         )
 
-        # 格式化并发送响应（使用 MarkdownV2）
+        # 格式化并发送响应
         try:
-            formatted_content = format_markdown_v2(response.content)
-            await message.answer(formatted_content, parse_mode="MarkdownV2")
+            # 检测是否包含需要 Rich Messages 的特性（表格、数学公式等）
+            if has_rich_features(response.content):
+                logger.info("检测到 Rich 特性（表格/数学公式），尝试使用 Rich Messages API")
+
+                # 转换为 Rich Message
+                rich_message = MarkdownToRichMessage.convert(response.content)
+
+                # 尝试发送 Rich Message
+                bot_token = message.bot.token.get_secret_value()
+                success = await send_rich_message(
+                    bot_token=bot_token,
+                    chat_id=message.chat.id,
+                    rich_message=rich_message,
+                    fallback_text=response.content
+                )
+
+                if success:
+                    logger.info("✅ Rich Message 发送成功")
+                else:
+                    # Rich Messages 不可用，回退到 MarkdownV2
+                    logger.warning("⚠️ Rich Messages 不可用，回退到 MarkdownV2")
+                    formatted_content = format_markdown_v2(response.content)
+                    await message.answer(formatted_content, parse_mode="MarkdownV2")
+            else:
+                # 普通 Markdown，使用 MarkdownV2
+                formatted_content = format_markdown_v2(response.content)
+                await message.answer(formatted_content, parse_mode="MarkdownV2")
+
         except Exception as format_error:
             # 如果格式化失败，回退到纯文本
-            logger.warning(f"MarkdownV2 格式化失败，使用纯文本: {format_error}")
+            logger.warning(f"格式化失败，使用纯文本: {format_error}")
             await message.answer(response.content)
 
     except Exception as e:
