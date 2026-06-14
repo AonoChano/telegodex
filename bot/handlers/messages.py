@@ -193,11 +193,10 @@ async def handle_message(message: Message, context_manager: ContextManager, ai_r
             tokens_used=response.usage.get("total_tokens") if response.usage else None,
         )
 
-        # 发送响应（转义 MarkdownV2）
-        reply_text = escape_markdown(response.content)
-        await message.answer(reply_text, parse_mode="MarkdownV2")
+        # 发送响应（使用纯文本，不需要转义）
+        await message.answer(response.content)
 
     except Exception as e:
         logger.error(f"AI 调用失败: {e}")
-        await message.answer(f"❌ 处理失败: {escape_markdown(str(e))}", parse_mode="MarkdownV2")
+        await message.answer(f"❌ 处理失败: {str(e)}")
 
