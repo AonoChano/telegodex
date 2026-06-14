@@ -46,13 +46,17 @@ logs/
 __pycache__/
 *.py[cod]
 
-# Claude Code session data (keep harness structure)
-.claude/*.jsonl
-.claude/projects/
-.claude/skills/
-.claude/workflows/*.output
-!.claude/tasks/
-!.claude/settings.local.json
+# Local AI / Agent IDE state and guidance
+.agents/
+.codex/
+.claude/
+.trae/
+AGENTS.md
+CLAUDE.md
+CLAUDE.*
+RULES.md
+HARNESS.md
+*.agent.md
 
 # Testing
 .coverage
@@ -64,16 +68,7 @@ htmlcov/
 *.temp
 *~
 
-# AI CLI CoWoker FILES
-AGENTS.md
-CLAUDE.md
-RULES.md
-HARNESS.md
-
 # Local Telegram API doc dump (downloaded for offline reference only;
 # the project does not ship or rely on these files)
 docs/TelegramDocuments/
 docs/DownloadDocs.py
-
-
-.trae/rules/git-commit-message.md
