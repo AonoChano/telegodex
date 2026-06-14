@@ -302,6 +302,7 @@ Update documentation when:
 3. **Changing config**: Update `.env.example` and `docs/USAGE.md`
 4. **Changing architecture**: Update `docs/ARCHITECTURE.md`
 5. **Bug fixes** (user-facing): Update `docs/CHANGELOG.md`
+6.  **Update `docs/CHANGELOG.md`**: When a git push is made, modify the changelog to record changes of every small version.
 
 ### Documentation Standards
 
