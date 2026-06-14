@@ -42,20 +42,39 @@ class ContextManager:
 
         return user
 
-    async def get_or_create_conversation(self, user_id: int) -> Conversation:
-        """获取或创建活跃对话"""
+    async def get_or_create_conversation(
+        self, user_id: int, thread_id: int | None = None
+    ) -> Conversation:
+        """获取或创建当前 thread 的活跃对话。
+
+        ``thread_id=None`` 时落到旧版"全局会话"语义上，保证非 topic 私聊
+        / 群聊行为不变；``thread_id`` 给定时则按 topic 维度隔离。
+        """
+        thread_clause = (
+            Conversation.thread_id.is_(None)
+            if thread_id is None
+            else Conversation.thread_id == thread_id
+        )
         result = await self.session.execute(
             select(Conversation)
-            .where(Conversation.user_id == user_id, Conversation.is_active == True)
+            .where(
+                Conversation.user_id == user_id,
+                thread_clause,
+                Conversation.is_active == True,
+            )
             .order_by(desc(Conversation.updated_at))
         )
         conversation = result.scalar_one_or_none()
 
         if not conversation:
-            conversation = Conversation(user_id=user_id, title="新对话")
+            conversation = Conversation(
+                user_id=user_id, thread_id=thread_id, title="新对话"
+            )
             self.session.add(conversation)
             await self.session.commit()
-            logger.info(f"创建新对话: user_id={user_id}")
+            logger.info(
+                f"创建新对话: user_id={user_id}, thread_id={thread_id}"
+            )
 
         return conversation
 
@@ -126,13 +145,22 @@ class ContextManager:
         await self.session.commit()
         logger.info(f"清空对话历史: conversation_id={conversation_id}")
 
-    async def create_new_conversation(self, user_id: int) -> Conversation:
-        """创建新对话（结束当前活跃对话）"""
-        # 结束所有活跃对话
+    async def create_new_conversation(
+        self, user_id: int, thread_id: int | None = None
+    ) -> Conversation:
+        """在同一 thread 内结束当前活跃对话并开启新对话。"""
+        thread_clause = (
+            Conversation.thread_id.is_(None)
+            if thread_id is None
+            else Conversation.thread_id == thread_id
+        )
+
+        # 结束当前 thread 内的活跃对话（其他 thread 不受影响）
         result = await self.session.execute(
             select(Conversation).where(
                 Conversation.user_id == user_id,
-                Conversation.is_active == True
+                thread_clause,
+                Conversation.is_active == True,
             )
         )
         active_conversations = result.scalars().all()
@@ -141,11 +169,16 @@ class ContextManager:
             conv.is_active = False
 
         # 创建新对话
-        new_conversation = Conversation(user_id=user_id, title="新对话")
+        new_conversation = Conversation(
+            user_id=user_id, thread_id=thread_id, title="新对话"
+        )
         self.session.add(new_conversation)
         await self.session.commit()
 
-        logger.info(f"创建新对话: user_id={user_id}, conversation_id={new_conversation.id}")
+        logger.info(
+            f"创建新对话: user_id={user_id}, thread_id={thread_id}, "
+            f"conversation_id={new_conversation.id}"
+        )
         return new_conversation
 
     async def get_user_conversations(self, user_id: int, limit: int = 10) -> List[Conversation]:

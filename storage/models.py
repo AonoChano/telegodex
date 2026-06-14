@@ -1,5 +1,15 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, DateTime, Text, ForeignKey, Boolean
+from sqlalchemy import (
+    Column,
+    Integer,
+    String,
+    DateTime,
+    Text,
+    ForeignKey,
+    Boolean,
+    Index,
+    text,
+)
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import declarative_base, relationship
 from loguru import logger
@@ -37,6 +47,8 @@ class Conversation(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     title = Column(String(500), nullable=True)  # 对话标题（自动生成）
+    # Telegram topic / message_thread_id；普通私聊下为 NULL，相当于旧版的"全局会话"
+    thread_id = Column(Integer, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     is_active = Column(Boolean, default=True)
@@ -44,6 +56,11 @@ class Conversation(Base):
     # 关系
     user = relationship("User", back_populates="conversations")
     messages = relationship("ConversationMessage", back_populates="conversation", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        # 一个用户在同一 thread 内只保留少量活跃会话，定位最快
+        Index("ix_conversations_user_thread_active", "user_id", "thread_id", "is_active"),
+    )
 
 
 class ConversationMessage(Base):
@@ -78,10 +95,41 @@ class Database:
         )
 
     async def init_db(self):
-        """初始化数据库表"""
+        """初始化数据库表，并对老库做轻量列补齐"""
         async with self.engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+            await self._ensure_column(
+                conn, "conversations", "thread_id", "INTEGER"
+            )
         logger.info("✓ 数据库初始化完成")
+
+    async def _ensure_column(
+        self, conn, table_name: str, column_name: str, column_type: str
+    ) -> None:
+        """
+        轻量 schema 迁移：列已存在则跳过，不存在则 ADD COLUMN。
+
+        兼容 SQLite / PostgreSQL / MySQL。SQLite 没有
+        ``ALTER TABLE ... ADD COLUMN IF NOT EXISTS``，需要先 ``PRAGMA`` 探测。
+        """
+        dialect = self.engine.dialect.name
+        if dialect == "sqlite":
+            result = await conn.execute(text(f"PRAGMA table_info({table_name})"))
+            existing = {row[1] for row in result.fetchall()}
+            if column_name in existing:
+                return
+            await conn.execute(
+                text(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}")
+            )
+        else:
+            # PostgreSQL 9.6+ / MySQL 8.0+ 都支持 IF NOT EXISTS
+            await conn.execute(
+                text(
+                    f"ALTER TABLE {table_name} ADD COLUMN IF NOT EXISTS "
+                    f"{column_name} {column_type}"
+                )
+            )
+        logger.info(f"Schema migration: added {table_name}.{column_name}")
 
     async def get_session(self) -> AsyncSession:
         """获取数据库会话"""

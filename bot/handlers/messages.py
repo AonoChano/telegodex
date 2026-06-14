@@ -101,9 +101,12 @@ async def cmd_help(message: Message):
 async def cmd_new(message: Message, context_manager: ContextManager):
     """开始新对话"""
     user_id = message.from_user.id
+    thread_id = message.message_thread_id
 
-    # 创建新对话
-    conversation = await context_manager.create_new_conversation(user_id)
+    # 创建新对话（按 topic 隔离）
+    conversation = await context_manager.create_new_conversation(
+        user_id, thread_id=thread_id
+    )
 
     await message.answer(
         "✅ 已开始新对话\\!",
@@ -115,7 +118,11 @@ async def cmd_new(message: Message, context_manager: ContextManager):
 async def cmd_clear(message: Message, context_manager: ContextManager):
     """清空当前对话"""
     user_id = message.from_user.id
-    conversation = await context_manager.get_or_create_conversation(user_id)
+    thread_id = message.message_thread_id
+
+    conversation = await context_manager.get_or_create_conversation(
+        user_id, thread_id=thread_id
+    )
 
     await context_manager.clear_conversation(conversation.id)
 
@@ -130,6 +137,7 @@ async def handle_message(message: Message, context_manager: ContextManager, ai_r
     """处理普通文本消息"""
     user_id = message.from_user.id
     user_text = message.text
+    thread_id = message.message_thread_id  # topic 模式下是 topic id；普通私聊为 None
 
     # 输入验证和清理
     from security import sanitize_input
@@ -151,9 +159,11 @@ async def handle_message(message: Message, context_manager: ContextManager, ai_r
         await message.answer("功能开发中...")
         return
 
-    # 获取用户和对话
+    # 获取用户和对话（按 topic 隔离）
     user = await context_manager.get_or_create_user(user_id)
-    conversation = await context_manager.get_or_create_conversation(user_id)
+    conversation = await context_manager.get_or_create_conversation(
+        user_id, thread_id=thread_id
+    )
 
     # 添加用户消息到历史
     await context_manager.add_message(
@@ -205,7 +215,7 @@ async def handle_message(message: Message, context_manager: ContextManager, ai_r
             tokens_used=response.usage.get("total_tokens") if response.usage else None,
         )
 
-        # 格式化并发送响应
+        # 格式化并发送响应（带 message_thread_id 保证回发到对应 topic）
         try:
             bot_token = settings.telegram_bot_token
             if hasattr(bot_token, 'get_secret_value'):
@@ -215,6 +225,7 @@ async def handle_message(message: Message, context_manager: ContextManager, ai_r
                 bot_token=bot_token,
                 chat_id=message.chat.id,
                 markdown_text=response.content,
+                message_thread_id=thread_id,
             )
 
             if success:
@@ -222,13 +233,20 @@ async def handle_message(message: Message, context_manager: ContextManager, ai_r
             else:
                 logger.warning("Rich Messages unavailable, falling back to MarkdownV2")
                 formatted_content = format_markdown_v2(response.content)
-                await message.answer(formatted_content, parse_mode="MarkdownV2")
+                await message.answer(
+                    formatted_content,
+                    parse_mode="MarkdownV2",
+                    message_thread_id=thread_id,
+                )
 
         except Exception as format_error:
             # 如果格式化失败，回退到纯文本
             logger.warning(f"格式化失败，使用纯文本: {format_error}")
-            await message.answer(response.content)
+            await message.answer(response.content, message_thread_id=thread_id)
 
     except Exception as e:
         logger.error(f"AI 调用失败: {e}")
-        await message.answer(f"❌ 处理失败: {str(e)}")
+        await message.answer(
+            f"❌ 处理失败: {str(e)}",
+            message_thread_id=thread_id,
+        )
