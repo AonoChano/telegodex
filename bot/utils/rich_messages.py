@@ -13,12 +13,37 @@ be finalized with ``sendRichMessage`` / ``sendMessage``.
 
 from __future__ import annotations
 
+import asyncio
 import itertools
+import json
 import threading
 from typing import Any, Dict
 
 import aiohttp
 from loguru import logger
+
+# 自定义 loguru 级别：用于"重试中"状态。
+# - 优先级 35（介于 WARNING=30 和 ERROR=40 之间），保证默认 logger 收得到
+#   但仍比 ERROR 温和
+# - 灰色 + ↻ 图标：首次失败时跳红 ERROR，重试中显示灰 ↻，不刷屏
+logger.level("RETRY", no=35, color="<light-black>", icon="↻")
+
+# 网络抖动的退避策略。10 次重试，总等待 ~96 秒。
+# 序列：[1, 2, 2, 3, 5, 8, 13, 20, 20, 20] —— 前段快响（典型瞬时抖动），
+# 后段封顶 20s（已经丢包的连接继续等没有意义）。
+RETRY_DELAYS: list[float] = [1, 2, 2, 3, 5, 8, 13, 20, 20, 20]
+RETRY_MAX_ATTEMPTS: int = len(RETRY_DELAYS)
+
+# 可重试的异常。aiohttp.ClientError 覆盖了连接失败 / 读超时 / 服务器 5xx
+# 等大多数"网络层面"问题；asyncio.TimeoutError 单独再列一次以兼容 3.10；
+# json.JSONDecodeError 处理"网关返回了空 body / 半截 HTML"这种
+# 代理层异常；ConnectionError 兜底原生 socket 错误。
+RETRYABLE_EXCEPTIONS: tuple[type[BaseException], ...] = (
+    aiohttp.ClientError,
+    asyncio.TimeoutError,
+    ConnectionError,
+    json.JSONDecodeError,
+)
 
 # 进程内单调递增的 draft_id 序列。Telegram 只要求"非零 + 同 id 视为同草稿"
 # 所以单计数器足够，溢出时折叠到 1。
@@ -121,27 +146,76 @@ def new_draft_id() -> int:
 async def _post_bot_method(
     bot_token: str, method: str, payload: Dict[str, Any]
 ) -> tuple[bool, str]:
-    """共用底层：调一次 Telegram Bot API 并返回 (ok, description)。"""
-    url = f"https://api.telegram.org/bot{bot_token}/{method}"
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                url,
-                json=payload,
-                timeout=aiohttp.ClientTimeout(total=15),
-            ) as resp:
-                result = await resp.json()
-    except aiohttp.ClientError as e:
-        logger.error(f"{method} request failed: {type(e).__name__}: {e!r}")
-        return False, str(e) or type(e).__name__
-    except Exception as e:
-        # 用 type+repr 记录，避免 str(e) 为空时丢失关键信息
-        logger.error(f"{method} raised {type(e).__name__}: {e!r}")
-        return False, f"{type(e).__name__}: {e}"
+    """
+    共用底层：调一次 Telegram Bot API 并返回 ``(ok, description)``。
 
-    if result.get("ok"):
-        return True, ""
-    return False, result.get("description", "Unknown error")
+    网络层异常走 :data:`RETRY_DELAYS` 退避序列。日志策略：
+
+    - **第一次失败** → 红 ERROR，标 type(e)
+    - **重试 1..N** → 灰 ↻ RETRY，单行 ``[NN/10] in Ns — reason``
+    - **中途恢复** → 绿 SUCCESS，标已重试次数
+    - **10 次都失败** → 红 ERROR，标"permanently failed"
+
+    非网络异常（4xx 业务错误 / JSON 结构错误）不重试。
+    """
+    url = f"https://api.telegram.org/bot{bot_token}/{method}"
+    last_exc: BaseException | None = None
+    first_failure_logged = False
+
+    for attempt in range(RETRY_MAX_ATTEMPTS + 1):
+        if attempt > 0:
+            delay = RETRY_DELAYS[attempt - 1]
+            reason = (
+                f"{type(last_exc).__name__}: {last_exc}"
+                if last_exc is not None
+                else "unknown"
+            )
+            logger.log(
+                "RETRY",
+                f"{method} retry [{attempt:02d}/{RETRY_MAX_ATTEMPTS:02d}] "
+                f"in {delay:>2}s — {reason}",
+            )
+            await asyncio.sleep(delay)
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    url,
+                    json=payload,
+                    timeout=aiohttp.ClientTimeout(total=15),
+                ) as resp:
+                    result = await resp.json()
+        except RETRYABLE_EXCEPTIONS as e:
+            last_exc = e
+            if not first_failure_logged:
+                # 首次失败：跳红，让运维立刻看到
+                logger.error(
+                    f"{method} network error: {type(e).__name__}: {e!r} "
+                    f"(will backoff up to {RETRY_MAX_ATTEMPTS} times)"
+                )
+                first_failure_logged = True
+            continue
+        except Exception as e:
+            # 非可重试异常：原样上报，不消耗重试预算
+            logger.error(f"{method} raised {type(e).__name__}: {e!r}")
+            return False, f"{type(e).__name__}: {e}"
+
+        if result.get("ok"):
+            if first_failure_logged:
+                logger.success(
+                    f"{method} recovered after {attempt} "
+                    f"{'retry' if attempt == 1 else 'retries'}"
+                )
+            return True, ""
+        # 业务层错误（4xx）不重试
+        return False, result.get("description", "Unknown error")
+
+    # 走到这里说明 RETRY_MAX_ATTEMPTS+1 次全部因网络异常失败
+    logger.error(
+        f"{method} permanently failed after {RETRY_MAX_ATTEMPTS} retries: "
+        f"{type(last_exc).__name__ if last_exc else 'Unknown'}: {last_exc!r}"
+    )
+    return False, f"NetworkError: {type(last_exc).__name__ if last_exc else 'Unknown'}: {last_exc}"
 
 
 async def send_rich_message_draft(
