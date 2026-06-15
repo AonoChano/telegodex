@@ -49,6 +49,80 @@ _current_bot: Bot | None = None
 
 
 # ---------------------------------------------------------------------------
+# Forum topic helpers
+# ---------------------------------------------------------------------------
+
+
+async def _ensure_codex_forum_topic(
+    message: Message,
+    chat_id: int | str,
+    context_manager: ContextManager,
+    codex_thread_id: str,
+) -> int | None:
+    """Create a dedicated forum topic for this Codex session if needed.
+
+    Returns the ``message_thread_id`` of the topic, or ``None`` if creation
+    fails or the chat is not a forum.
+    """
+    db = context_manager.session
+    from sqlalchemy import select
+    from storage.models import Conversation
+
+    user_id = message.from_user.id if message.from_user else 0
+
+    # Check if an active conversation with a thread_id already exists.
+    stmt = select(Conversation).where(
+        Conversation.user_id == user_id,
+        Conversation.codex_thread_id == codex_thread_id,
+    )
+    result = await db.execute(stmt)
+    conv = result.scalars().first()
+
+    if conv and conv.thread_id is not None:
+        return conv.thread_id
+
+    # Create forum topic.
+    try:
+        topic = await message.bot.create_forum_topic(
+            chat_id=chat_id,
+            name=f"Codex: {codex_thread_id[:12]}...",
+        )
+        topic_id = topic.message_thread_id
+        logger.info(
+            f"Codex: created forum topic {topic_id} for thread {codex_thread_id}"
+        )
+
+        if conv is not None:
+            conv.thread_id = topic_id
+        else:
+            # Find any conversation for this codex thread.
+            stmt = select(Conversation).where(
+                Conversation.codex_thread_id == codex_thread_id,
+            )
+            result = await db.execute(stmt)
+            conv = result.scalars().first()
+            if conv:
+                conv.thread_id = topic_id
+
+        await db.commit()
+        return topic_id
+    except Exception as exc:
+        logger.warning(f"Codex: failed to create forum topic: {exc}")
+        # Not a forum or bot lacks permission — fall back to main chat.
+        if conv and conv.thread_id is not None:
+            return conv.thread_id
+        return None
+
+
+def _codex_send_kwargs(route: TelegramRoute, topic_id: int | None) -> dict[str, Any]:
+    """Build send kwargs, adding ``message_thread_id`` when a forum topic exists."""
+    kwargs = dict(route.send_kwargs())
+    if topic_id is not None:
+        kwargs["message_thread_id"] = topic_id
+    return kwargs
+
+
+# ---------------------------------------------------------------------------
 # JSON-RPC Notification bridge
 # ---------------------------------------------------------------------------
 
@@ -127,6 +201,7 @@ async def _stream_turn(
     route: TelegramRoute,
     chat_id: int | str,
     session,
+    topic_id: int | None = None,
 ) -> str:
     """Stream turn output via draft messages. Returns the final markdown text."""
     bot_token = _bot_token()
@@ -134,6 +209,9 @@ async def _stream_turn(
     draft_id = new_draft_id() if use_draft else 0
     draft_call_count = 0
     full_text_parts: list[str] = []
+
+    # Use forum topic thread_id if available, otherwise route's thread_id.
+    thread_id = topic_id if topic_id is not None else route.draft_thread_id()
 
     # Create a notification queue for this turn.
     queue: asyncio.Queue[tuple[str, dict[str, Any]]] = asyncio.Queue()
@@ -148,7 +226,7 @@ async def _stream_turn(
             chat_id=route.chat_id,
             markdown_text=text,
             draft_id=draft_id,
-            message_thread_id=route.draft_thread_id(),
+            message_thread_id=thread_id,
         )
         if not ok:
             await send_message_draft(
@@ -156,7 +234,7 @@ async def _stream_turn(
                 chat_id=route.chat_id,
                 text=text,
                 draft_id=draft_id,
-                message_thread_id=route.draft_thread_id(),
+                message_thread_id=thread_id,
             )
         draft_call_count += 1
 
@@ -268,13 +346,13 @@ async def cmd_codex_v2(message: Message, context_manager: ContextManager) -> Non
 
     if not prompt:
         await message.answer(
-            "Usage: /codex &lt;prompt&gt;\n\n"
-            "**Commands:**\n"
-            "- `/codex /status` — Show Codex configuration\n"
-            "- `/codex !command` — Execute shell command\n"
-            "- `/codex @path` — Read file at path\n"
-            "- `/codex new` — Start a fresh session\n\n"
-            "Example: /codex list all Python files",
+            "<b>Usage:</b> <code>/codex &lt;prompt&gt;</code>\n\n"
+            "<b>Commands:</b>\n"
+            "- <code>/codex /status</code> — Show Codex configuration\n"
+            "- <code>/codex !command</code> — Execute shell command\n"
+            "- <code>/codex @path</code> — Read file at path\n"
+            "- <code>/codex new</code> — Start a fresh session\n\n"
+            "<b>Example:</b> <code>/codex list all Python files</code>",
             parse_mode="HTML",
             **route.send_kwargs(),
         )
@@ -298,9 +376,13 @@ async def cmd_codex_v2(message: Message, context_manager: ContextManager) -> Non
     if prompt.strip().lower() == "new":
         try:
             session = await session_manager.new_session(chat_id)
+            topic_id = await _ensure_codex_forum_topic(
+                message, chat_id, context_manager, session.thread_id
+            )
+            topic_info = " — started in this topic" if topic_id else ""
             await message.answer(
-                f"Started a new Codex session.\nThread: `{session.thread_id}`",
-                **route.send_kwargs(),
+                f"Started a new Codex session.\nThread: `{session.thread_id}`{topic_info}",
+                **_codex_send_kwargs(route, topic_id),
             )
         except Exception as exc:
             logger.exception("Codex: failed to start new session")
@@ -385,12 +467,17 @@ async def cmd_codex_v2(message: Message, context_manager: ContextManager) -> Non
         )
         return
 
+    # Ensure a dedicated forum topic exists for this Codex session.
+    topic_id = await _ensure_codex_forum_topic(
+        message, chat_id, context_manager, session.thread_id
+    )
+
     try:
         # Start the turn.
         await session_manager.start_turn(chat_id, prompt)
 
-        # Stream the output.
-        final_text = await _stream_turn(message, route, chat_id, session)
+        # Stream the output into the forum topic.
+        final_text = await _stream_turn(message, route, chat_id, session, topic_id)
 
         if not final_text:
             final_text = "Codex completed with no output."
@@ -400,15 +487,19 @@ async def cmd_codex_v2(message: Message, context_manager: ContextManager) -> Non
             bot_token=_bot_token(),
             chat_id=route.chat_id,
             markdown_text=final_text,
-            message_thread_id=route.message_thread_id,
+            message_thread_id=topic_id,
             direct_messages_topic_id=route.direct_messages_topic_id,
             business_connection_id=route.business_connection_id,
         )
         if not success:
-            await message.answer(final_text, **route.send_kwargs())
+            await message.answer(
+                final_text,
+                **_codex_send_kwargs(route, topic_id),
+            )
 
     except Exception as exc:
         logger.exception("Codex: turn failed")
         await message.answer(
-            f"Codex error: {exc}", **route.send_kwargs()
+            f"Codex error: {exc}",
+            **_codex_send_kwargs(route, topic_id),
         )
