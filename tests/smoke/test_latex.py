@@ -1,4 +1,5 @@
 """冒烟：bot.utils.latex.normalize_latex 的行为。"""
+import _bootstrap  # noqa: F401
 import sys
 from bot.utils.latex import normalize_latex
 

@@ -197,3 +197,35 @@ def normalize_latex(text: str) -> str:
         safe = safe.replace(placeholder, original)
 
     return safe
+
+
+def normalize_rich_markdown_latex(text: str) -> str:
+    """
+    Normalize common model LaTeX delimiters for Telegram Rich Markdown.
+
+    Telegram Rich Markdown treats formula source as raw LaTeX and supports
+    ``$...$``, ``$$...$$``, and fenced ``math`` blocks. Do not replace LaTeX
+    commands with Unicode on this path.
+    """
+    if not text:
+        return text
+
+    protected: List[Tuple[str, str]] = []
+
+    def protect(match, prefix: str) -> str:
+        placeholder = f"\x00RICHLATEX{prefix}{len(protected)}\x00"
+        protected.append((placeholder, match.group(0)))
+        return placeholder
+
+    safe = re.sub(r"```[\s\S]*?```", lambda m: protect(m, "BLOCK"), text)
+    safe = re.sub(r"`[^`\n]+?`", lambda m: protect(m, "INLINE"), safe)
+
+    # OpenAI/Claude often emit TeX display delimiters. Telegram Rich Markdown
+    # documents block math as $$...$$ and inline math as $...$.
+    safe = re.sub(r"\\\[\s*([\s\S]*?)\s*\\\]", r"$$\1$$", safe)
+    safe = re.sub(r"\\\(\s*([\s\S]*?)\s*\\\)", r"$\1$", safe)
+
+    for placeholder, original in reversed(protected):
+        safe = safe.replace(placeholder, original)
+
+    return safe

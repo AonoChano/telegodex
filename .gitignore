@@ -57,6 +57,7 @@ CLAUDE.*
 RULES.md
 HARNESS.md
 *.agent.md
+CurrentHandOff.md
 
 # Testing
 .coverage

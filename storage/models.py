@@ -7,6 +7,7 @@ from sqlalchemy import (
     Text,
     ForeignKey,
     Boolean,
+    BigInteger,
     Index,
     text,
 )
@@ -48,7 +49,7 @@ class Conversation(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     title = Column(String(500), nullable=True)  # 对话标题（自动生成）
     # Telegram topic / message_thread_id；普通私聊下为 NULL，相当于旧版的"全局会话"
-    thread_id = Column(Integer, nullable=True)
+    thread_id = Column(BigInteger, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     is_active = Column(Boolean, default=True)
@@ -99,7 +100,7 @@ class Database:
         async with self.engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
             await self._ensure_column(
-                conn, "conversations", "thread_id", "INTEGER"
+                conn, "conversations", "thread_id", "BIGINT"
             )
         logger.info("✓ 数据库初始化完成")
 

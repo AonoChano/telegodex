@@ -43,7 +43,11 @@ See [RICH_MESSAGES.md](RICH_MESSAGES.md) for the exact Markdown contract.
 
 Telegodex stores conversation messages in SQLite by default. `MAX_CONTEXT_MESSAGES` controls how many messages the bot sends back to a provider.
 
-Telegram's AI chatbot integration can place conversations in separate private chat topics. Code should keep those topics separate by `message_thread_id` when Telegram sends one.
+Telegram's AI chatbot integration can place conversations in separate private chat topics. Code keeps those topics separate by the route Telegram sends with each message. Threaded private AI chats use `message_thread_id`; channel direct messages topics use `direct_messages_topic_id`.
+
+## Streaming Output
+
+When a provider supports `chat_stream()`, Telegodex streams temporary Rich Message drafts in private chats, then persists the complete answer with `sendRichMessage`. Drafts are previews, not stored messages. If Telegram rejects drafts, the bot skips the preview and still sends the final answer.
 
 ## Operational Notes
 

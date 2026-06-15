@@ -7,6 +7,7 @@
 - 文件 sink 里：包含完整 traceback 行（不重复）
 - 颜色 token (<green>, <cyan> 等) 只出现在终端，文件无颜色
 """
+import _bootstrap  # noqa: F401
 import io
 import logging
 import sys

@@ -13,7 +13,7 @@ from loguru import logger
 from config import settings
 from storage import Database, ContextManager
 from ai import AIRouter
-from bot import messages_router, callbacks_router
+from bot.handlers import messages_router, callbacks_router
 
 
 class _InterceptHandler(logging.Handler):

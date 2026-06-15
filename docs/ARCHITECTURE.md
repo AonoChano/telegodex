@@ -49,9 +49,20 @@ The message handler does four jobs:
 
 Rich output goes through `sendRichMessage` with `InputRichMessage.markdown`. Telegram parses headings, tables, lists, block quotes, details blocks, code, and formulas. Local code should not convert Markdown into block dictionaries unless Telegram removes the Markdown field.
 
+`bot/utils/routing.py` extracts the Telegram route from each incoming message.
+Use it whenever a handler replies:
+
+- Keep `message_thread_id` for private threaded AI chats and forum topics.
+- Keep `direct_messages_topic_id` for channel direct messages chats.
+- Keep `business_connection_id` for business-connected updates.
+- Use the route's storage key for conversation isolation.
+
+Do not manually pass only `message_thread_id` in new code. Telegram keeps adding
+chat surfaces, and route extraction is the compatibility boundary.
+
 ## Conversation State
 
-The storage layer keeps user preferences and conversation messages. The short-term target is one conversation stream per Telegram AI chat topic, keyed by `message_thread_id` when Telegram sends it. Plain private chats continue to use the default active conversation.
+The storage layer keeps user preferences and conversation messages. The short-term target is one conversation stream per Telegram AI chat topic. Private threaded AI chats use `message_thread_id`; channel direct messages topics use `direct_messages_topic_id`; plain private chats continue to use the default active conversation.
 
 ## Codex Bridge Boundary
 

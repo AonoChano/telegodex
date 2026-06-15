@@ -15,7 +15,8 @@ from bot.utils.rich_messages import (
     send_message_draft,
     new_draft_id,
 )
-from bot.utils.latex import normalize_latex
+from bot.utils.latex import normalize_rich_markdown_latex
+from bot.utils.routing import TelegramRoute
 from prompts import get_prompt_manager
 from config import settings
 
@@ -118,6 +119,7 @@ def escape_markdown(text: str) -> str:
 async def cmd_start(message: Message, context_manager: ContextManager, ai_router: AIRouter):
     """处理 /start 命令"""
     user = message.from_user
+    route = TelegramRoute.from_message(message)
 
     # 创建或更新用户
     await context_manager.get_or_create_user(
@@ -157,13 +159,15 @@ async def cmd_start(message: Message, context_manager: ContextManager, ai_router
     await message.answer(
         welcome_text,
         parse_mode="MarkdownV2",
-        reply_markup=get_main_menu()
+        reply_markup=get_main_menu(),
+        **route.send_kwargs(),
     )
 
 
 @router.message(Command("help"))
 async def cmd_help(message: Message):
     """处理 /help 命令"""
+    route = TelegramRoute.from_message(message)
     help_text = """📖 **帮助文档**
 
 **基本命令：**
@@ -186,14 +190,15 @@ async def cmd_help(message: Message):
 \\`代码\\` \\- `代码`
 """
 
-    await message.answer(help_text, parse_mode="MarkdownV2")
+    await message.answer(help_text, parse_mode="MarkdownV2", **route.send_kwargs())
 
 
 @router.message(Command("new"))
 async def cmd_new(message: Message, context_manager: ContextManager):
     """开始新对话"""
     user_id = message.from_user.id
-    thread_id = message.message_thread_id
+    route = TelegramRoute.from_message(message)
+    thread_id = route.storage_thread_id
 
     # 创建新对话（按 topic 隔离）
     conversation = await context_manager.create_new_conversation(
@@ -202,7 +207,8 @@ async def cmd_new(message: Message, context_manager: ContextManager):
 
     await message.answer(
         "✅ 已开始新对话\\!",
-        parse_mode="MarkdownV2"
+        parse_mode="MarkdownV2",
+        **route.send_kwargs(),
     )
 
 
@@ -210,7 +216,8 @@ async def cmd_new(message: Message, context_manager: ContextManager):
 async def cmd_clear(message: Message, context_manager: ContextManager):
     """清空当前对话"""
     user_id = message.from_user.id
-    thread_id = message.message_thread_id
+    route = TelegramRoute.from_message(message)
+    thread_id = route.storage_thread_id
 
     conversation = await context_manager.get_or_create_conversation(
         user_id, thread_id=thread_id
@@ -220,7 +227,8 @@ async def cmd_clear(message: Message, context_manager: ContextManager):
 
     await message.answer(
         "🗑️ 当前对话历史已清空\\!",
-        parse_mode="MarkdownV2"
+        parse_mode="MarkdownV2",
+        **route.send_kwargs(),
     )
 
 
@@ -229,14 +237,15 @@ async def handle_message(message: Message, context_manager: ContextManager, ai_r
     """处理普通文本消息"""
     user_id = message.from_user.id
     user_text = message.text
-    thread_id = message.message_thread_id  # topic 模式下是 topic id；普通私聊为 None
+    route = TelegramRoute.from_message(message)
+    thread_id = route.storage_thread_id
 
     # 输入验证和清理
     from security import sanitize_input
     user_text = sanitize_input(user_text, max_length=4000)
 
     if not user_text:
-        await message.answer("⚠️ 消息内容为空或过长")
+        await message.answer("⚠️ 消息内容为空或过长", **route.send_kwargs())
         return
 
     # 菜单按钮处理
@@ -248,7 +257,7 @@ async def handle_message(message: Message, context_manager: ContextManager, ai_r
             await cmd_help(message)
             return
         # TODO: 实现历史记录和设置
-        await message.answer("功能开发中...")
+        await message.answer("功能开发中...", **route.send_kwargs())
         return
 
     # 获取用户和对话（按 topic 隔离）
@@ -273,12 +282,20 @@ async def handle_message(message: Message, context_manager: ContextManager, ai_r
         provider = ai_router.get_default_provider()
 
     if not provider:
-        await message.answer("❌ 没有可用的 AI 服务商，请检查配置")
+        await message.answer(
+            "❌ 没有可用的 AI 服务商，请检查配置",
+            **route.send_kwargs(),
+        )
         return
 
     try:
         # 发送 "正在输入..." 状态
-        await message.bot.send_chat_action(chat_id=message.chat.id, action="typing")
+        await message.bot.send_chat_action(
+            chat_id=route.chat_id,
+            action="typing",
+            message_thread_id=route.message_thread_id,
+            business_connection_id=route.business_connection_id,
+        )
 
         # 获取系统提示词
         prompt_manager = get_prompt_manager()
@@ -318,10 +335,10 @@ async def handle_message(message: Message, context_manager: ContextManager, ai_r
                 return
             ok = await _try_draft(
                 bot_token=bot_token,
-                chat_id=message.chat.id,
+                chat_id=route.chat_id,
                 text=text,
                 draft_id=draft_id,
-                message_thread_id=thread_id,
+                message_thread_id=route.draft_thread_id(),
                 use_rich=use_rich,
                 allow_rich=not rich_disabled,
             )
@@ -335,10 +352,10 @@ async def handle_message(message: Message, context_manager: ContextManager, ai_r
                     return
                 ok2 = await _try_draft(
                     bot_token=bot_token,
-                    chat_id=message.chat.id,
+                    chat_id=route.chat_id,
                     text=text,
                     draft_id=draft_id,
-                    message_thread_id=thread_id,
+                    message_thread_id=route.draft_thread_id(),
                     use_rich=False,
                 )
                 if not ok2:
@@ -363,8 +380,6 @@ async def handle_message(message: Message, context_manager: ContextManager, ai_r
             ):
                 if not chunk:
                     continue
-                # 流式阶段立即归一化，避免草稿里出现裸 \command
-                chunk = normalize_latex(chunk)
                 stream_used = True
                 response_text += chunk
                 buffer += chunk
@@ -376,7 +391,10 @@ async def handle_message(message: Message, context_manager: ContextManager, ai_r
                 ):
                     if len(response_text) >= DRAFT_MIN_RESPONSE_CHARS:
                         await _push_draft(
-                            response_text[-DRAFT_MAX_CHARS:], use_rich=True
+                            normalize_rich_markdown_latex(
+                                response_text[-DRAFT_MAX_CHARS:]
+                            ),
+                            use_rich=True,
                         )
                     buffer = ""
                     last_flush = now
@@ -390,7 +408,10 @@ async def handle_message(message: Message, context_manager: ContextManager, ai_r
                 and draft_call_count < DRAFT_MAX_CALLS_PER_ID
             ):
                 await _push_draft(
-                    response_text[-DRAFT_MAX_CHARS:], use_rich=True
+                    normalize_rich_markdown_latex(
+                        response_text[-DRAFT_MAX_CHARS:]
+                    ),
+                    use_rich=True,
                 )
         except Exception as stream_err:
             logger.warning(
@@ -410,7 +431,7 @@ async def handle_message(message: Message, context_manager: ContextManager, ai_r
                 temperature=temperature,
                 max_tokens=settings.max_tokens,
             )
-            response_text = normalize_latex(response.content)
+            response_text = response.content
             response_model = response.model
             response_tokens = (
                 response.usage.get("total_tokens") if response.usage else None
@@ -422,13 +443,18 @@ async def handle_message(message: Message, context_manager: ContextManager, ai_r
                 and len(response_text) >= DRAFT_MIN_RESPONSE_CHARS
             ):
                 await _push_draft(
-                    response_text[-DRAFT_MAX_CHARS:], use_rich=True
+                    normalize_rich_markdown_latex(
+                        response_text[-DRAFT_MAX_CHARS:]
+                    ),
+                    use_rich=True,
                 )
+
+        response_text = normalize_rich_markdown_latex(response_text)
 
         if not response_text.strip():
             await message.answer(
                 "⚠️ AI 返回了空内容",
-                message_thread_id=thread_id,
+                **route.send_kwargs(),
             )
             return
 
@@ -446,9 +472,11 @@ async def handle_message(message: Message, context_manager: ContextManager, ai_r
         try:
             success = await send_rich_message(
                 bot_token=bot_token,
-                chat_id=message.chat.id,
+                chat_id=route.chat_id,
                 markdown_text=response_text,
-                message_thread_id=thread_id,
+                message_thread_id=route.message_thread_id,
+                direct_messages_topic_id=route.direct_messages_topic_id,
+                business_connection_id=route.business_connection_id,
             )
 
             if success:
@@ -459,17 +487,17 @@ async def handle_message(message: Message, context_manager: ContextManager, ai_r
                 await message.answer(
                     formatted_content,
                     parse_mode="MarkdownV2",
-                    message_thread_id=thread_id,
+                    **route.send_kwargs(),
                 )
 
         except Exception as format_error:
             # 如果格式化失败，回退到纯文本
             logger.warning(f"格式化失败，使用纯文本: {format_error}")
-            await message.answer(response_text, message_thread_id=thread_id)
+            await message.answer(response_text, **route.send_kwargs())
 
     except Exception as e:
         logger.error(f"AI 调用失败: {e}")
         await message.answer(
             f"❌ 处理失败: {str(e)}",
-            message_thread_id=thread_id,
+            **route.send_kwargs(),
         )

@@ -1,4 +1,5 @@
 """冒烟：bot.utils.rich_messages 的重试与降级行为。"""
+import _bootstrap  # noqa: F401
 import asyncio
 import json
 import sys

@@ -97,6 +97,8 @@ def build_rich_markdown_payload(
     is_rtl: bool | None = None,
     skip_entity_detection: bool | None = None,
     message_thread_id: int | None = None,
+    direct_messages_topic_id: int | None = None,
+    business_connection_id: str | None = None,
 ) -> Dict[str, Any]:
     """Build a sendRichMessage payload using InputRichMessage.markdown."""
     rich_message: Dict[str, Any] = {"markdown": markdown_text}
@@ -110,8 +112,12 @@ def build_rich_markdown_payload(
         "chat_id": chat_id,
         "rich_message": rich_message,
     }
+    if business_connection_id is not None:
+        payload["business_connection_id"] = business_connection_id
     if message_thread_id is not None:
         payload["message_thread_id"] = message_thread_id
+    if direct_messages_topic_id is not None:
+        payload["direct_messages_topic_id"] = direct_messages_topic_id
     return payload
 
 
@@ -123,6 +129,8 @@ async def send_rich_message(
     is_rtl: bool | None = None,
     skip_entity_detection: bool | None = None,
     message_thread_id: int | None = None,
+    direct_messages_topic_id: int | None = None,
+    business_connection_id: str | None = None,
 ) -> bool:
     """
     Send Markdown through Telegram's Rich Messages API.
@@ -137,6 +145,8 @@ async def send_rich_message(
         is_rtl=is_rtl,
         skip_entity_detection=skip_entity_detection,
         message_thread_id=message_thread_id,
+        direct_messages_topic_id=direct_messages_topic_id,
+        business_connection_id=business_connection_id,
     )
 
     try:

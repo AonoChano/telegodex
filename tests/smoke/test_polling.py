@@ -1,4 +1,5 @@
 """验证 main.py 中 backoff_config 的实际行为。"""
+import _bootstrap  # noqa: F401
 import sys
 from aiogram.utils.backoff import Backoff, BackoffConfig
 
