@@ -250,14 +250,33 @@ async def main():
         factor=1.3,
         jitter=0.1,
     )
+    # 启动 Codex app-server daemon
+    if settings.codex_daemon_auto_start:
+        from extensions.codex.daemon import get_codex_daemon
+
+        try:
+            codex_daemon = get_codex_daemon()
+            await codex_daemon.start()
+        except Exception as e:
+            logger.warning(f"Codex daemon 启动失败: {type(e).__name__}: {e!r}")
+
     logger.info("✓ Telegodex 启动成功！")
     try:
         await dp.start_polling(bot, backoff_config=polling_backoff)
     finally:
-        # 关闭顺序：HTTP 共享 session 先关（里面还有未释放的连接），
-        # 然后 aiogram session，再 db。这样能避免 Windows Proactor 下
-        # '_ProactorBasePipeTransport.__del__' 在已关闭 event loop 上
-        # 抛 'Event loop is closed' 异常。
+        # 关闭顺序：Codex daemon 先停掉（app-server 子进程），
+        # 然后 HTTP 共享 session，再 aiogram session，最后 db。
+        from extensions.codex.daemon import get_codex_daemon
+
+        try:
+            codex = get_codex_daemon()
+            if codex.is_alive():
+                await codex.stop()
+        except Exception as e:
+            logger.warning(
+                f"Codex daemon 关闭失败: {type(e).__name__}: {e!r}"
+            )
+
         from bot.utils.rich_messages import close_shared_session
 
         try:

@@ -258,13 +258,14 @@ async def cmd_codex_v2(message: Message, context_manager: ContextManager) -> Non
 
     if not prompt:
         await message.answer(
-            "Usage: /codex <prompt>\\\n\\\n"
-            "**Commands:**\\\n"
-            "- `/codex /status` — Show Codex configuration\\\n"
-            "- `/codex !command` — Execute shell command\\\n"
-            "- `/codex @path` — Read file at path\\\n"
-            "- `/codex new` — Start a fresh session\\\n\\\n"
+            "Usage: /codex &lt;prompt&gt;\n\n"
+            "**Commands:**\n"
+            "- `/codex /status` — Show Codex configuration\n"
+            "- `/codex !command` — Execute shell command\n"
+            "- `/codex @path` — Read file at path\n"
+            "- `/codex new` — Start a fresh session\n\n"
             "Example: /codex list all Python files",
+            parse_mode="HTML",
             **route.send_kwargs(),
         )
         return
