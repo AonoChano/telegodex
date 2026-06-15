@@ -106,6 +106,12 @@ class Database:
             await self._ensure_column(
                 conn, "conversations", "thread_id", "BIGINT"
             )
+            await self._ensure_column(
+                conn, "conversations", "codex_thread_id", "VARCHAR"
+            )
+            await self._ensure_column(
+                conn, "conversations", "codex_thread_path", "VARCHAR"
+            )
         logger.info("✓ 数据库初始化完成")
 
     async def _ensure_column(
