@@ -1,0 +1,1 @@
+Keep responses concise and well-structured. Use formatting to aid scanning, not to decorate. Prefer simple structures over complex ones. When explaining concepts, use practical examples.

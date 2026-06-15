@@ -297,9 +297,11 @@ async def handle_message(message: Message, context_manager: ContextManager, ai_r
             business_connection_id=route.business_connection_id,
         )
 
-        # 获取系统提示词
+        # 获取系统提示词（按 provider 分层组合）
         prompt_manager = get_prompt_manager()
-        system_prompt = prompt_manager.get_system_prompt()
+        system_prompt = prompt_manager.get_system_prompt(
+            provider=user.preferred_provider
+        )
 
         # 构建包含系统提示词的消息历史
         messages_with_system = [

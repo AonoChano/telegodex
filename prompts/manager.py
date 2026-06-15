@@ -1,85 +1,96 @@
 """
 提示词管理模块
 
-负责加载和管理系统提示词、角色提示词等。
+负责加载和组合系统提示词，支持按 provider 分层组合。
 """
 
 from pathlib import Path
-from typing import Optional, Dict
+from typing import Optional
+
 from loguru import logger
 
 
 class PromptManager:
-    """提示词管理器"""
+    """提示词管理器
+
+    使用分层组合模式：
+    - base/identity.md  → 身份声明 (system role)
+    - base/formatting.md → 格式能力描述 (developer role)
+    - providers/{name}.md → 行为指导 (developer role)
+
+    组合顺序: identity + formatting + provider
+    """
 
     def __init__(self, prompts_dir: str = "prompts"):
-        self.prompts_dir = Path(prompts_dir)
-        self._cache: Dict[str, str] = {}
+        self._base_dir = Path(prompts_dir)
+        self._cache: dict[str, str] = {}
 
-    def load_prompt(self, prompt_name: str) -> Optional[str]:
+    # ------------------------------------------------------------------
+    # 公开 API
+    # ------------------------------------------------------------------
+
+    def get_system_prompt(self, provider: str = "default") -> str:
         """
-        加载提示词文件
+        获取组合后的系统提示词。
 
         Args:
-            prompt_name: 提示词文件名（不含扩展名），如 "system_prompt"
+            provider: AI provider 名称，如 "openai", "deepseek", "anthropic"。
+                      会尝试加载 providers/{provider}.md，不存在则回退到 default。
 
         Returns:
-            提示词内容，如果文件不存在返回 None
+            组合后的完整系统提示词
         """
-        # 检查缓存
-        if prompt_name in self._cache:
-            return self._cache[prompt_name]
+        cache_key = provider
+        if cache_key in self._cache:
+            return self._cache[cache_key]
 
-        # 尝试加载文件
-        prompt_file = self.prompts_dir / f"{prompt_name}.md"
+        parts: list[str] = []
 
-        if not prompt_file.exists():
-            logger.warning(f"提示词文件不存在: {prompt_file}")
+        # 1. 身份声明
+        identity = self._load("base/identity")
+        if identity:
+            parts.append(identity.strip())
+
+        # 2. 格式能力描述
+        formatting = self._load("base/formatting")
+        if formatting:
+            parts.append(formatting.strip())
+
+        # 3. 行为指导
+        behaviour = self._load(f"providers/{provider}")
+        if behaviour is None:
+            behaviour = self._load("providers/default")
+        if behaviour:
+            parts.append(behaviour.strip())
+
+        combined = "\n\n".join(parts)
+        self._cache[cache_key] = combined
+        return combined
+
+    def reload(self) -> None:
+        """清除缓存，下次调用时重新加载所有文件"""
+        self._cache.clear()
+        logger.info("提示词缓存已清空")
+
+    # ------------------------------------------------------------------
+    # 内部方法
+    # ------------------------------------------------------------------
+
+    def _load(self, name: str) -> Optional[str]:
+        """加载单个提示词片段"""
+        path = self._base_dir / f"{name}.md"
+        if not path.exists():
+            if name.startswith("providers/"):
+                # provider 文件不存在是正常的，静默 skip
+                return None
+            logger.warning(f"提示词文件不存在: {path}")
             return None
 
         try:
-            content = prompt_file.read_text(encoding="utf-8")
-            self._cache[prompt_name] = content
-            logger.info(f"✅ 加载提示词: {prompt_name} ({len(content)} 字符)")
-            return content
-        except Exception as e:
-            logger.error(f"❌ 加载提示词失败: {prompt_name}, 错误: {e}")
+            return path.read_text(encoding="utf-8")
+        except Exception:
+            logger.exception(f"加载提示词失败: {name}")
             return None
-
-    def get_system_prompt(self) -> str:
-        """
-        获取系统提示词
-
-        如果文件不存在，返回默认提示词
-        """
-        prompt = self.load_prompt("system_prompt")
-
-        if prompt:
-            return prompt
-
-        # 默认提示词
-        return """You are an AI assistant. Please format your responses clearly and use proper markdown formatting where appropriate."""
-
-    def reload_prompt(self, prompt_name: str) -> bool:
-        """
-        重新加载提示词（清除缓存）
-
-        Args:
-            prompt_name: 提示词名称
-
-        Returns:
-            是否成功重新加载
-        """
-        if prompt_name in self._cache:
-            del self._cache[prompt_name]
-
-        content = self.load_prompt(prompt_name)
-        return content is not None
-
-    def clear_cache(self):
-        """清除所有缓存的提示词"""
-        self._cache.clear()
-        logger.info("🗑️ 提示词缓存已清空")
 
 
 # 全局单例
