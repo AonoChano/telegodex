@@ -50,6 +50,10 @@ class Conversation(Base):
     title = Column(String(500), nullable=True)  # 对话标题（自动生成）
     # Telegram topic / message_thread_id；普通私聊下为 NULL，相当于旧版的"全局会话"
     thread_id = Column(BigInteger, nullable=True)
+    # Codex app-server thread ID（与 Telegram thread_id 不同）
+    codex_thread_id = Column(String, nullable=True)
+    # Codex 会话文件路径
+    codex_thread_path = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     is_active = Column(Boolean, default=True)

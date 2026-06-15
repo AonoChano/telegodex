@@ -41,6 +41,14 @@ class Settings(BaseSettings):
     max_requests_per_minute: int = 20
     max_context_messages: int = 50  # 每个会话保留的最大消息数
 
+    # Codex CLI (optional — auto-detected if not set)
+    codex_executable_path: str | None = None
+
+    # Codex Daemon / Approval
+    codex_daemon_auto_start: bool = True
+    codex_daemon_max_restarts: int = 3
+    codex_approval_timeout: int = 60
+
     # AI Settings
     default_ai_provider: str = "openai"
     default_model: str = "gpt-4"
