@@ -471,8 +471,9 @@ async def handle_message(message: Message, context_manager: ContextManager, ai_r
         )
 
         # ---- 4) 持久化收尾：sendRichMessage ----
+        sent = False
         try:
-            success = await send_rich_message(
+            sent = await send_rich_message(
                 bot_token=bot_token,
                 chat_id=route.chat_id,
                 markdown_text=response_text,
@@ -481,16 +482,22 @@ async def handle_message(message: Message, context_manager: ContextManager, ai_r
                 business_connection_id=route.business_connection_id,
             )
 
-            if success:
+            if sent:
                 logger.info("Rich Message sent successfully")
             else:
                 logger.warning("Rich Messages unavailable, falling back to MarkdownV2")
                 formatted_content = format_markdown_v2(response_text)
-                await message.answer(
-                    formatted_content,
-                    parse_mode="MarkdownV2",
-                    **route.send_kwargs(),
-                )
+                try:
+                    await message.answer(
+                        formatted_content,
+                        parse_mode="MarkdownV2",
+                        **route.send_kwargs(),
+                    )
+                except Exception:
+                    await message.answer(
+                        response_text,
+                        **route.send_kwargs(),
+                    )
 
         except Exception as format_error:
             # 如果格式化失败，回退到纯文本

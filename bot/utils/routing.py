@@ -59,8 +59,9 @@ class TelegramRoute:
             kwargs["business_connection_id"] = self.business_connection_id
         if self.direct_messages_topic_id is not None:
             kwargs["direct_messages_topic_id"] = self.direct_messages_topic_id
-        if self.message_thread_id is not None:
-            kwargs["message_thread_id"] = self.message_thread_id
+        # NOTE: message_thread_id is intentionally excluded here.
+        # aiogram's Message.answer() and Message.reply() auto-include it
+        # for topic messages. Passing it again causes duplicate keyword error.
         return kwargs
 
     def draft_thread_id(self) -> int | None:

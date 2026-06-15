@@ -220,9 +220,9 @@ async def main():
     dp = Dispatcher()
 
     # 注册路由
+    dp.include_router(codex_router)
     dp.include_router(messages_router)
     dp.include_router(callbacks_router)
-    dp.include_router(codex_router)
 
     # 依赖注入中间件
     @dp.message.middleware()
