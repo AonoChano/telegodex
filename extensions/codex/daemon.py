@@ -243,3 +243,8 @@ class CodexDaemon:
 
 # Global singleton — initialized by the bot startup in main.py.
 codex_daemon = CodexDaemon()
+
+
+def get_codex_daemon() -> CodexDaemon:
+    """Return the global CodexDaemon singleton."""
+    return codex_daemon
