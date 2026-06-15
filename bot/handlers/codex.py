@@ -251,6 +251,16 @@ async def cmd_codex_v2(message: Message, context_manager: ContextManager) -> Non
     chat_id = route.chat_id
     user_id = message.from_user.id if message.from_user else 0
 
+    # Codex only works from the main chat (All), not inside conversation threads.
+    if route.message_thread_id is not None:
+        await message.answer(
+            "Codex is only available from the main chat screen.\n\n"
+            "Switch to <b>All</b> and send <code>/codex &lt;prompt&gt;</code> there.",
+            parse_mode="HTML",
+            **route.send_kwargs(),
+        )
+        return
+
     # Extract prompt.
     prompt = message.text or ""
     if prompt.startswith("/codex"):
