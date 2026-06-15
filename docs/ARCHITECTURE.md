@@ -64,11 +64,65 @@ chat surfaces, and route extraction is the compatibility boundary.
 
 The storage layer keeps user preferences and conversation messages. The short-term target is one conversation stream per Telegram AI chat topic. Private threaded AI chats use `message_thread_id`; channel direct messages topics use `direct_messages_topic_id`; plain private chats continue to use the default active conversation.
 
-## Codex Bridge Boundary
+## CodexBridge v2
 
-The future Codex bridge should live under `extensions/` and keep terminal control out of the Telegram handler. The handler should send user intent to a bridge service, then stream structured output back through Rich Markdown drafts and final Rich Messages.
+The Codex bridge lives under `extensions/codex/` and runs Codex CLI as a persistent `codex app-server` subprocess communicating via JSON-RPC 2.0 over stdio. Users trigger it with `/codex <prompt>` in Telegram.
 
-The bridge must expose command proposals, tool output, approval prompts, and file diffs as explicit Telegram-native blocks. Do not hide terminal actions inside plain prose.
+```text
+extensions/codex/
+├── __init__.py       Public exports (CodexDaemon, CodexSessionManager, etc.)
+├── daemon.py         Persistent app-server subprocess lifecycle
+├── jsonrpc.py        JSON-RPC 2.0 stdio transport (JSONL, no "jsonrpc" wrapper)
+├── session.py        Telegram chat_id → Codex threadId mapping
+├── approvals.py      Approval requests → Telegram inline buttons
+└── commands.py       Instruction prefix routing (/, !, @)
+```
+
+### Architecture
+
+```
+Telegram User
+     │ /codex prompt
+     ▼
+bot/handlers/codex.py ──── cmd_codex_v2()
+     │                           │
+     │  get_or_create_session()  │  start_turn()
+     ▼                           ▼
+CodexSessionManager ──────── CodexDaemon
+     │                           │
+     │  thread/start             │  JSON-RPC stdio
+     │  turn/start               │
+     ▼                           ▼
+Conversation (DB)          codex app-server
+     │                           │
+     │  codex_thread_id          │  streaming notifications
+     │                           ▼
+     └──────────────────── _stream_turn()
+                                 │
+                                 ▼
+                          sendRichMessageDraft
+                          sendRichMessage (final)
+```
+
+### Key Components
+
+- **CodexDaemon**: Manages the `codex app-server` subprocess lifecycle with auto-start, restart on crash (exponential backoff), and graceful shutdown (SIGTERM → SIGKILL).
+- **JsonRpcTransport**: Implements JSON-RPC 2.0 over stdio using newline-delimited JSON. Handles request/response matching, server notifications, and server requests.
+- **CodexSessionManager**: Maps Telegram `chat_id` to Codex `threadId`, persisted via `Conversation.codex_thread_id`. Supports session creation, resume, fork, and shell command execution.
+- **ApprovalHandler**: Converts `item/commandExecution/requestApproval` and `item/fileChange/requestApproval` server requests into Telegram inline button messages with Approve/Deny options. Auto-denies after configurable timeout (default 60s).
+- **Instruction Support**: `/codex /skill` lists available skills, `/codex !command` executes shell commands, `/codex @path` reads directory listings.
+
+### Streaming Output
+
+Turn output is streamed via Telegram Rich Message drafts. The handler accumulates `item/agentMessage/delta` notifications, flushes draft updates every 200 characters (up to 6 drafts per turn), and persists the final result with `sendRichMessage`.
+
+### Approval Flow
+
+1. Codex sends `item/commandExecution/requestApproval` or `item/fileChange/requestApproval`
+2. `_on_codex_server_request` formats the request as a Telegram message with inline Approve/Deny buttons
+3. Message is sent to the chat matching the Codex thread's `chat_id` (reverse lookup)
+4. User clicks a button → `handle_codex_approval` callback resolves the `ApprovalHandler`
+5. `ApprovalHandler` returns the decision to the app-server
 
 ## Documentation Rule
 

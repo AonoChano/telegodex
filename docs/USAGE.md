@@ -20,6 +20,7 @@ Telegodex currently runs as a Telegram AI bot with a workbench-oriented architec
 | `/clear` | Clear the current conversation history |
 | `/settings` | Open provider and model settings |
 | `/help` | Show help |
+| `/codex` | Run Codex CLI tasks through the app-server bridge |
 
 ## Provider Selection
 
@@ -49,7 +50,40 @@ Telegram's AI chatbot integration can place conversations in separate private ch
 
 When a provider supports `chat_stream()`, Telegodex streams temporary Rich Message drafts in private chats, then persists the complete answer with `sendRichMessage`. Drafts are previews, not stored messages. If Telegram rejects drafts, the bot skips the preview and still sends the final answer.
 
-## Operational Notes
+## CodexBridge
+
+Use `/codex <prompt>` to run Codex CLI tasks from Telegram. The bot runs a persistent `codex app-server` subprocess and communicates via JSON-RPC 2.0 over stdio. Each Telegram private chat gets its own Codex session (thread) with persistent context across turns.
+
+**Commands:**
+
+| Prefix | Usage | Purpose |
+|---|---|---|
+| (none) | `/codex <prompt>` | Send a prompt to Codex for code generation/analysis |
+| `/` | `/codex /<skill>` | List or invoke Codex skills |
+| `!` | `/codex !<command>` | Execute a shell command in the session |
+| `@` | `/codex @<path>` | List files in a directory |
+| `new` | `/codex new` | Start a fresh Codex session |
+
+**Examples:**
+
+```
+/codex Write a Python FastAPI endpoint for user login
+/codex /status
+/codex !ls -la
+/codex @src/
+/codex new
+```
+
+**Approvals:** When Codex wants to execute a command or modify a file, it sends an approval request with inline Approve/Deny buttons. Approvals auto-deny after 60 seconds (configurable via `CODEX_APPROVAL_TIMEOUT`).
+
+**Streaming:** Codex output is streamed as Rich Message drafts in private chats (up to 6 drafts per turn), then persisted as a final Rich Message.
+
+**Configuration:**
+
+- Codex CLI is auto-detected from PATH and common installation locations. Set `CODEX_EXECUTABLE_PATH` in `.env` only if auto-detection fails.
+- `CODEX_DAEMON_AUTO_START` (default: `true`) — start the app-server daemon on bot startup.
+- `CODEX_DAEMON_MAX_RESTARTS` (default: `3`) — max crash restart attempts with exponential backoff.
+- `CODEX_APPROVAL_TIMEOUT` (default: `60`) — seconds before auto-denying unresponded approvals.
 
 Telegram allows one active polling process per bot token. Run one Telegodex process per token. See [STARTUP.md](STARTUP.md) for the local lock and conflict behavior.
 
