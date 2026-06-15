@@ -13,7 +13,7 @@ from loguru import logger
 from config import settings
 from storage import Database, ContextManager
 from ai import AIRouter
-from bot.handlers import messages_router, callbacks_router
+from bot.handlers import messages_router, callbacks_router, codex_router
 
 
 class _InterceptHandler(logging.Handler):
@@ -222,6 +222,7 @@ async def main():
     # 注册路由
     dp.include_router(messages_router)
     dp.include_router(callbacks_router)
+    dp.include_router(codex_router)
 
     # 依赖注入中间件
     @dp.message.middleware()

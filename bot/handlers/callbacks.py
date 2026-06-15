@@ -12,6 +12,7 @@ from bot.keyboards import (
     get_confirmation_keyboard,
 )
 from ai import AIRouter
+from extensions.codex.approvals import ApprovalHandler
 
 router = Router()
 
@@ -160,3 +161,43 @@ async def handle_cancel(callback: CallbackQuery):
     """处理取消操作"""
     await callback.message.delete()
     await callback.answer("已取消")
+
+
+# ---------------------------------------------------------------------------
+# CodexBridge approval callbacks
+# ---------------------------------------------------------------------------
+
+@router.callback_query(lambda c: c.data and c.data.startswith("codex_approval:"))
+async def handle_codex_approval(callback: CallbackQuery):
+    """Handle Codex approval inline button callbacks.
+
+    Callback data format: ``codex_approval:{approval_id}:{decision}``
+    where decision is one of ``acceptOnce``, ``acceptForSession``, ``deny``.
+    """
+    from bot.handlers.codex import approval_handler
+
+    parts = callback.data.split(":", 2)
+    if len(parts) < 3:
+        await callback.answer("Invalid callback data", show_alert=True)
+        return
+
+    approval_id = parts[1]
+    decision = parts[2]
+
+    logger.info(f"Codex approval callback: id={approval_id} decision={decision}")
+
+    resolved = await approval_handler.resolve(approval_id, decision)
+    if resolved:
+        decision_label = {"acceptOnce": "Approved", "acceptForSession": "Approved (Session)", "deny": "Denied"}.get(decision, decision)
+        try:
+            # Edit the approval message to remove buttons and show result.
+            original_text = callback.message.text or callback.message.caption or ""
+            await callback.message.edit_text(
+                f"{original_text}\n\n**Result: {decision_label}**",
+                reply_markup=None,
+            )
+        except Exception as exc:
+            logger.warning(f"Failed to edit approval message: {exc}")
+        await callback.answer(f"{decision_label}")
+    else:
+        await callback.answer("Approval already timed out", show_alert=True)
