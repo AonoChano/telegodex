@@ -1,6 +1,6 @@
-from typing import Optional
-from datetime import datetime, timedelta
 from collections import defaultdict
+from datetime import datetime, timedelta
+
 from loguru import logger
 
 
@@ -19,7 +19,7 @@ class InMemoryRateLimiter:
         self.window_seconds = window_seconds
         self.requests = defaultdict(list)  # user_id -> [timestamp, ...]
 
-    def is_allowed(self, user_id: int) -> tuple[bool, Optional[int]]:
+    def is_allowed(self, user_id: int) -> tuple[bool, int | None]:
         """
         检查用户是否允许请求
 
@@ -72,7 +72,7 @@ class RedisRateLimiter:
         self.max_requests = max_requests
         self.window_seconds = window_seconds
 
-    async def is_allowed(self, user_id: int) -> tuple[bool, Optional[int]]:
+    async def is_allowed(self, user_id: int) -> tuple[bool, int | None]:
         """
         检查用户是否允许请求
 

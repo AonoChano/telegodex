@@ -1,4 +1,4 @@
-from typing import Set
+
 from loguru import logger
 
 
@@ -13,7 +13,7 @@ class AuthManager:
             admin_ids: 管理员用户 ID 列表
         """
         self.admin_ids = set(admin_ids)
-        self.blocked_users: Set[int] = set()
+        self.blocked_users: set[int] = set()
 
     def is_admin(self, user_id: int) -> bool:
         """检查是否为管理员"""

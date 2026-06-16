@@ -1,5 +1,5 @@
+from .auth import AuthManager, detect_sensitive_content, sanitize_input
 from .rate_limiter import InMemoryRateLimiter, RedisRateLimiter
-from .auth import AuthManager, sanitize_input, detect_sensitive_content
 
 __all__ = [
     "InMemoryRateLimiter",

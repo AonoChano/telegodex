@@ -1,7 +1,8 @@
-from pydantic_settings import BaseSettings, SettingsConfigDict
-from typing import List, Dict, Any
 import json
 import os
+from typing import Any
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -56,7 +57,7 @@ class Settings(BaseSettings):
     temperature: float = 0.7
 
     @property
-    def admin_ids(self) -> List[int]:
+    def admin_ids(self) -> list[int]:
         """解析管理员 ID 列表"""
         if not self.admin_user_ids:
             return []
@@ -75,7 +76,7 @@ class Settings(BaseSettings):
 
         return result
 
-    def get_ai_providers_config(self) -> Dict[str, Any]:
+    def get_ai_providers_config(self) -> dict[str, Any]:
         """
         获取所有 AI Provider 配置
         包含内置和自定义 Provider
@@ -106,7 +107,7 @@ class Settings(BaseSettings):
         # 加载自定义 Provider
         if os.path.exists(self.custom_providers_config):
             try:
-                with open(self.custom_providers_config, "r", encoding="utf-8") as f:
+                with open(self.custom_providers_config, encoding="utf-8") as f:
                     custom_config = json.load(f)
                     config.update(custom_config)
             except json.JSONDecodeError as e:

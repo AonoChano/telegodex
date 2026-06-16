@@ -3,6 +3,7 @@ import logging
 import os
 import sys
 from pathlib import Path
+
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.client.session.aiohttp import AiohttpSession
@@ -10,10 +11,10 @@ from aiogram.enums import ParseMode
 from aiogram.utils.backoff import BackoffConfig
 from loguru import logger
 
-from config import settings
-from storage import Database, ContextManager
 from ai import AIRouter
-from bot.handlers import messages_router, callbacks_router, codex_router
+from bot.handlers import callbacks_router, codex_router, history_router, messages_router, toolbar_router
+from config import settings
+from storage import ContextManager, Database
 
 
 class _InterceptHandler(logging.Handler):
@@ -150,7 +151,7 @@ def _acquire_polling_lock(bot_token: str):
 
     lock_file.seek(0)
     lock_file.truncate()
-    lock_file.write(f"pid={os.getpid()}\n".encode("utf-8"))
+    lock_file.write(f"pid={os.getpid()}\n".encode())
     lock_file.flush()
     return lock_file
 
@@ -188,6 +189,13 @@ async def main():
 
     logger.info(f"可用的 AI 服务商: {', '.join(ai_router.list_available_providers())}")
 
+    # 初始化 Orchestrator
+    from core.orchestrator import Orchestrator
+    orchestrator = Orchestrator(ai_router)
+    from bot.handlers import toolbar as toolbar_module
+    if orchestrator.session_manager is not None:
+        toolbar_module.set_session_manager(orchestrator.session_manager)
+
     bot_token = settings.telegram_bot_token
     if hasattr(bot_token, 'get_secret_value'):
         bot_token = bot_token.get_secret_value()
@@ -220,7 +228,9 @@ async def main():
     dp = Dispatcher()
 
     # 注册路由
+    dp.include_router(toolbar_router)
     dp.include_router(codex_router)
+    dp.include_router(history_router)
     dp.include_router(messages_router)
     dp.include_router(callbacks_router)
 
@@ -235,6 +245,7 @@ async def main():
                 max_context_messages=settings.max_context_messages
             )
             data["ai_router"] = ai_router
+            data["orchestrator"] = orchestrator
             return await handler(event, data)
 
     # 启动轮询

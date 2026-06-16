@@ -5,7 +5,6 @@
 """
 
 from pathlib import Path
-from typing import Optional
 
 from loguru import logger
 
@@ -76,7 +75,7 @@ class PromptManager:
     # 内部方法
     # ------------------------------------------------------------------
 
-    def _load(self, name: str) -> Optional[str]:
+    def _load(self, name: str) -> str | None:
         """加载单个提示词片段"""
         path = self._base_dir / f"{name}.md"
         if not path.exists():
@@ -94,7 +93,7 @@ class PromptManager:
 
 
 # 全局单例
-_prompt_manager: Optional[PromptManager] = None
+_prompt_manager: PromptManager | None = None
 
 
 def get_prompt_manager() -> PromptManager:

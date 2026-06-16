@@ -61,7 +61,7 @@ def create_provider_config():
     # 默认模型
     default_model = ""
     if models:
-        default_model = get_input(f"默认模型", models[0])
+        default_model = get_input("默认模型", models[0])
     else:
         default_model = get_input("默认模型（如果未指定模型列表，请填写）")
 
@@ -102,7 +102,7 @@ def save_config(config: dict, filename: str = "custom_providers.json"):
 
         if action == "1":
             # 合并配置
-            with open(filepath, "r", encoding="utf-8") as f:
+            with open(filepath, encoding="utf-8") as f:
                 existing_config = json.load(f)
             existing_config.update(config)
             config = existing_config
@@ -118,10 +118,10 @@ def save_config(config: dict, filename: str = "custom_providers.json"):
         json.dump(config, f, indent=2, ensure_ascii=False)
 
     print(f"\n✅ 配置已保存到: {filepath.absolute()}")
-    print(f"\n下一步：")
+    print("\n下一步：")
     print(f"  1. 检查配置: cat {filepath}")
     print(f"  2. 在 .env 中设置: CUSTOM_PROVIDERS_CONFIG={filepath}")
-    print(f"  3. 重启 Bot: python run.py")
+    print("  3. 重启 Bot: python run.py")
 
 
 def show_examples():
