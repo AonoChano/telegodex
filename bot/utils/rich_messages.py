@@ -17,7 +17,7 @@ import asyncio
 import itertools
 import json
 import threading
-from typing import Any, Dict
+from typing import Any
 
 import aiohttp
 from loguru import logger
@@ -99,16 +99,16 @@ def build_rich_markdown_payload(
     message_thread_id: int | None = None,
     direct_messages_topic_id: int | None = None,
     business_connection_id: str | None = None,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Build a sendRichMessage payload using InputRichMessage.markdown."""
-    rich_message: Dict[str, Any] = {"markdown": markdown_text}
+    rich_message: dict[str, Any] = {"markdown": markdown_text}
 
     if is_rtl is not None:
         rich_message["is_rtl"] = is_rtl
     if skip_entity_detection is not None:
         rich_message["skip_entity_detection"] = skip_entity_detection
 
-    payload: Dict[str, Any] = {
+    payload: dict[str, Any] = {
         "chat_id": chat_id,
         "rich_message": rich_message,
     }
@@ -193,10 +193,10 @@ def new_draft_id() -> int:
 
 
 async def _post_bot_method(
-    bot_token: str, method: str, payload: Dict[str, Any]
-) -> tuple[bool, str]:
+    bot_token: str, method: str, payload: dict[str, Any]
+) -> tuple[bool, str, Any | None]:
     """
-    共用底层：调一次 Telegram Bot API 并返回 ``(ok, description)``。
+    共用底层：调一次 Telegram Bot API 并返回 ``(ok, description, result)``。
 
     网络层异常走 :data:`RETRY_DELAYS` 退避序列。日志策略：
 
@@ -247,7 +247,7 @@ async def _post_bot_method(
         except Exception as e:
             # 非可重试异常：原样上报，不消耗重试预算
             logger.error(f"{method} raised {type(e).__name__}: {e!r}")
-            return False, f"{type(e).__name__}: {e}"
+            return False, f"{type(e).__name__}: {e}", None
 
         if result.get("ok"):
             if first_failure_logged:
@@ -255,16 +255,16 @@ async def _post_bot_method(
                     f"{method} recovered after {attempt} "
                     f"{'retry' if attempt == 1 else 'retries'}"
                 )
-            return True, ""
+            return True, "", result.get("result")
         # 业务层错误（4xx）不重试
-        return False, result.get("description", "Unknown error")
+        return False, result.get("description", "Unknown error"), None
 
     # 走到这里说明 RETRY_MAX_ATTEMPTS+1 次全部因网络异常失败
     logger.error(
         f"{method} permanently failed after {RETRY_MAX_ATTEMPTS} retries: "
         f"{type(last_exc).__name__ if last_exc else 'Unknown'}: {last_exc!r}"
     )
-    return False, f"NetworkError: {type(last_exc).__name__ if last_exc else 'Unknown'}: {last_exc}"
+    return False, f"NetworkError: {type(last_exc).__name__ if last_exc else 'Unknown'}: {last_exc}", None
 
 
 async def send_rich_message_draft(
@@ -286,13 +286,13 @@ async def send_rich_message_draft(
     if draft_id == 0:
         raise ValueError("draft_id must be non-zero")
 
-    rich_message: Dict[str, Any] = {"markdown": markdown_text}
+    rich_message: dict[str, Any] = {"markdown": markdown_text}
     if is_rtl is not None:
         rich_message["is_rtl"] = is_rtl
     if skip_entity_detection is not None:
         rich_message["skip_entity_detection"] = skip_entity_detection
 
-    payload: Dict[str, Any] = {
+    payload: dict[str, Any] = {
         "chat_id": chat_id,
         "draft_id": draft_id,
         "rich_message": rich_message,
@@ -300,7 +300,7 @@ async def send_rich_message_draft(
     if message_thread_id is not None:
         payload["message_thread_id"] = message_thread_id
 
-    ok, desc = await _post_bot_method(bot_token, "sendRichMessageDraft", payload)
+    ok, desc, _ = await _post_bot_method(bot_token, "sendRichMessageDraft", payload)
     if ok:
         logger.debug(
             f"Rich draft ok: chat_id={chat_id} thread={message_thread_id} "
@@ -325,7 +325,7 @@ async def send_message_draft(
     if draft_id == 0:
         raise ValueError("draft_id must be non-zero")
 
-    payload: Dict[str, Any] = {
+    payload: dict[str, Any] = {
         "chat_id": chat_id,
         "draft_id": draft_id,
         "text": text,
@@ -333,7 +333,7 @@ async def send_message_draft(
     if message_thread_id is not None:
         payload["message_thread_id"] = message_thread_id
 
-    ok, desc = await _post_bot_method(bot_token, "sendMessageDraft", payload)
+    ok, desc, _ = await _post_bot_method(bot_token, "sendMessageDraft", payload)
     if not ok:
         logger.warning(f"Plain draft failed: {desc}")
     return ok
@@ -357,7 +357,7 @@ class MarkdownToRichMessage:
     """
 
     @staticmethod
-    def convert(markdown_text: str) -> Dict[str, Any]:
+    def convert(markdown_text: str) -> dict[str, Any]:
         return {"markdown": markdown_text}
 
 
@@ -365,5 +365,5 @@ class RichMessageBuilder:
     """Compatibility shim for old imports."""
 
     @staticmethod
-    def create_markdown(markdown_text: str) -> Dict[str, Any]:
+    def create_markdown(markdown_text: str) -> dict[str, Any]:
         return {"markdown": markdown_text}

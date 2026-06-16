@@ -1,24 +1,24 @@
 import time
 
-from aiogram import Router, F
-from aiogram.types import Message
+from aiogram import F, Router
 from aiogram.filters import Command
+from aiogram.types import Message
 from loguru import logger
+from sqlalchemy import select
 
-from ai import AIRouter, Message as AIMessage, MessageRole
-from storage import ContextManager
+from ai import AIRouter, MessageRole
+from ai import Message as AIMessage
 from bot.keyboards import get_main_menu
-from bot.utils.markdown import format_markdown_v2
-from bot.utils.rich_messages import (
-    send_rich_message,
-    send_rich_message_draft,
-    send_message_draft,
-    new_draft_id,
-)
+from bot.telegram_draft import DraftStream
 from bot.utils.latex import normalize_rich_markdown_latex
+from bot.utils.markdown import format_markdown_v2
+from bot.utils.rich_messages import send_rich_message
 from bot.utils.routing import TelegramRoute
-from prompts import get_prompt_manager
 from config import settings
+from core.session import SessionData, SessionKey, session_manager
+from prompts import get_prompt_manager
+from storage import ContextManager
+from storage.models import Conversation
 
 router = Router()
 
@@ -39,72 +39,11 @@ DRAFT_MAX_CALLS_PER_ID = 6
 DRAFT_MIN_RESPONSE_CHARS = 80
 
 
-async def _try_draft(
-    bot_token: str,
-    chat_id: int | str,
-    text: str,
-    draft_id: int,
-    message_thread_id: int | None,
-    *,
-    use_rich: bool,
-    allow_rich: bool = True,
-) -> bool:
-    """
-    尝试推送一次草稿。
-
-    - ``use_rich=True`` 且 ``allow_rich=True``：先发 Rich 草稿，失败再降级到
-      纯文本草稿。
-    - ``use_rich=True`` 但 ``allow_rich=False``：本次响应内 Rich 已经失败过，
-      直接发纯文本草稿，避免反复换 draft_id 触发的反滥用保护。
-    - ``use_rich=False``：只发纯文本草稿。
-    """
-    if not text:
-        return False
-    if use_rich and allow_rich:
-        ok = await send_rich_message_draft(
-            bot_token=bot_token,
-            chat_id=chat_id,
-            markdown_text=text,
-            draft_id=draft_id,
-            message_thread_id=message_thread_id,
-        )
-        if ok:
-            return True
-        # Rich 草稿被拒：降级为纯文本草稿
-        return await send_message_draft(
-            bot_token=bot_token,
-            chat_id=chat_id,
-            text=text,
-            draft_id=draft_id,
-            message_thread_id=message_thread_id,
-        )
-    return await send_message_draft(
-        bot_token=bot_token,
-        chat_id=chat_id,
-        text=text,
-        draft_id=draft_id,
-        message_thread_id=message_thread_id,
-    )
-
-
-async def _stream_with_draft(
-    *,
-    bot_token: str,
-    chat_id: int | str,
-    message_thread_id: int | None,
-    full_text: str,
-    draft_id: int,
-    use_rich_draft: bool,
-) -> bool:
-    """一次性回灌历史流：用于 provider 不支持 chat_stream 的回退路径。"""
-    return await _try_draft(
-        bot_token=bot_token,
-        chat_id=chat_id,
-        text=full_text,
-        draft_id=draft_id,
-        message_thread_id=message_thread_id,
-        use_rich=use_rich_draft,
-    )
+async def _push_draft(stream: DraftStream | None, text: str) -> None:
+    """Wrapper around DraftStream.push with empty-text guard."""
+    if stream is None or not text:
+        return
+    await stream.push(text)
 
 
 def escape_markdown(text: str) -> str:
@@ -232,6 +171,127 @@ async def cmd_clear(message: Message, context_manager: ContextManager):
     )
 
 
+async def _load_session_data(
+    conversation: Conversation,
+    session_key: SessionKey,
+) -> SessionData:
+    """Load ``SessionData`` from *conversation* or memory."""
+    data = session_manager.get_session_data(session_key)
+    if data is None:
+        data = SessionData.from_dict(conversation.provider_sessions)
+        session_manager.set_session_data(session_key, data)
+    return data
+
+
+async def _save_session_data(
+    conversation: Conversation,
+    session_key: SessionKey,
+) -> None:
+    """Persist ``SessionData`` back to *conversation*."""
+    data = session_manager.get_session_data(session_key)
+    if data is not None:
+        conversation.provider_sessions = data.to_dict()
+
+
+async def _resolve_provider_conversation(
+    context_manager: ContextManager,
+    session_key: SessionKey,
+    session_data: SessionData,
+    user_id: int,
+    thread_id: int | None,
+    provider_name: str,
+) -> Conversation:
+    """Return the conversation for *provider_name*, creating one if needed.
+
+    Uses the provider bucket ``session_id`` when available so that switching
+    providers never loses context.
+    """
+    bucket = session_data.get_or_create_bucket(provider_name)
+
+    if bucket.session_id:
+        stmt = select(Conversation).where(Conversation.id == int(bucket.session_id))
+        result = await context_manager.session.execute(stmt)
+        conv = result.scalar_one_or_none()
+        if conv is not None:
+            if not conv.is_active:
+                conv.is_active = True
+            return conv
+
+    # No bucket or stale session_id: create a fresh conversation.
+    conv = await context_manager.create_new_conversation(user_id, thread_id=thread_id)
+    bucket.session_id = str(conv.id)
+    return conv
+
+
+@router.message(Command("model"))
+async def cmd_model(
+    message: Message,
+    context_manager: ContextManager,
+    ai_router: AIRouter,
+) -> None:
+    """Switch AI provider without losing other provider context."""
+    user_id = message.from_user.id
+    route = TelegramRoute.from_message(message)
+    thread_id = route.storage_thread_id
+    session_key = SessionKey.from_telegram_message(route.chat_id, route.message_thread_id)
+
+    prompt = message.text or ""
+    if prompt.startswith("/model"):
+        prompt = prompt[len("/model"):].strip()
+
+    if not prompt:
+        available = ai_router.list_available_providers()
+        lines = ["**Usage:** `/model <provider>`", "", "**Available providers:**"]
+        for name in available:
+            lines.append(f"- `{name}`")
+        await message.answer(
+            "\n".join(lines),
+            parse_mode="Markdown",
+            **route.send_kwargs(),
+        )
+        return
+
+    provider_name = prompt.lower()
+    if not ai_router.is_provider_available(provider_name):
+        await message.answer(
+            f"❌ Unknown provider: `{provider_name}`",
+            parse_mode="Markdown",
+            **route.send_kwargs(),
+        )
+        return
+
+    user = await context_manager.get_or_create_user(user_id)
+    conversation = await context_manager.get_or_create_conversation(
+        user_id, thread_id=thread_id
+    )
+
+    session_data = await _load_session_data(conversation, session_key)
+
+    # Save current provider bucket before switching.
+    if user.preferred_provider:
+        old_bucket = session_data.get_or_create_bucket(user.preferred_provider)
+        old_bucket.session_id = str(conversation.id)
+
+    # Switch active provider.
+    user.preferred_provider = provider_name
+    bucket = session_manager.set_active_provider(session_key, provider_name)
+
+    # Resolve or create the provider-specific conversation.
+    provider_conv = await _resolve_provider_conversation(
+        context_manager, session_key, session_data, user_id, thread_id, provider_name
+    )
+
+    await _save_session_data(provider_conv, session_key)
+    await context_manager.session.commit()
+
+    await message.answer(
+        f"✅ Switched to `{provider_name}`\\.\n"
+        f"_Messages in this thread are now isolated per provider\\._",
+        parse_mode="MarkdownV2",
+        **route.send_kwargs(),
+    )
+
+
 @router.message(F.text)
 async def handle_message(message: Message, context_manager: ContextManager, ai_router: AIRouter):
     """处理普通文本消息"""
@@ -260,11 +320,35 @@ async def handle_message(message: Message, context_manager: ContextManager, ai_r
         await message.answer("功能开发中...", **route.send_kwargs())
         return
 
-    # 获取用户和对话（按 topic 隔离）
+    # 获取用户和对话（按 topic + provider 隔离）
     user = await context_manager.get_or_create_user(user_id)
-    conversation = await context_manager.get_or_create_conversation(
+    session_key = SessionKey.from_telegram_message(route.chat_id, route.message_thread_id)
+
+    # Bootstrap session data from the current active conversation.
+    base_conv = await context_manager.get_or_create_conversation(
         user_id, thread_id=thread_id
     )
+    session_data = await _load_session_data(base_conv, session_key)
+
+    provider_name = user.preferred_provider or "openai"
+    provider = ai_router.get_provider(provider_name)
+    if not provider:
+        provider = ai_router.get_default_provider()
+
+    if not provider:
+        await message.answer(
+            "❌ 没有可用的 AI 服务商，请检查配置",
+            **route.send_kwargs(),
+        )
+        return
+
+    # Resolve the provider-isolated conversation.
+    conversation = await _resolve_provider_conversation(
+        context_manager, session_key, session_data, user_id, thread_id, provider_name
+    )
+
+    # Ensure the base conversation also carries the latest session data.
+    await _save_session_data(conversation, session_key)
 
     # 添加用户消息到历史
     await context_manager.add_message(
@@ -275,18 +359,6 @@ async def handle_message(message: Message, context_manager: ContextManager, ai_r
 
     # 获取对话历史
     history = await context_manager.get_conversation_history(conversation.id)
-
-    # 选择 AI Provider
-    provider = ai_router.get_provider(user.preferred_provider)
-    if not provider:
-        provider = ai_router.get_default_provider()
-
-    if not provider:
-        await message.answer(
-            "❌ 没有可用的 AI 服务商，请检查配置",
-            **route.send_kwargs(),
-        )
-        return
 
     try:
         # 发送 "正在输入..." 状态
@@ -314,7 +386,15 @@ async def handle_message(message: Message, context_manager: ContextManager, ai_r
 
         # 仅私有 chat 支持 draft API；其它场景（群组/频道）跳过预览
         use_draft = message.chat.type == "private"
-        draft_id = new_draft_id() if use_draft else 0
+        stream = DraftStream(
+            bot_token=bot_token,
+            chat_id=route.chat_id,
+            message_thread_id=route.draft_thread_id(),
+            direct_messages_topic_id=route.direct_messages_topic_id,
+            business_connection_id=route.business_connection_id,
+            use_rich=True,
+            max_draft_calls=DRAFT_MAX_CALLS_PER_ID,
+        ) if use_draft else None
         model_name = user.preferred_model
         temperature = float(user.temperature or 0.7)
 
@@ -322,57 +402,14 @@ async def handle_message(message: Message, context_manager: ContextManager, ai_r
         response_model = model_name
         response_tokens = None
         stream_used = False
-        # 本次响应内的草稿状态机：
-        # - rich_ok：是否在本次响应中成功推过 rich 草稿
-        # - rich_disabled：rich 草稿连续失败后置 True，本轮内不再尝试 rich
-        # - draft_call_count：累计已推次数（占位 + 内容），封顶 DRAFT_MAX_CALLS_PER_ID
-        rich_ok = False
-        rich_disabled = False
-        draft_call_count = 0
-
-        async def _push_draft(text: str, *, use_rich: bool) -> None:
-            """包一层 _try_draft，负责更新 rich_disabled / draft_call_count。"""
-            nonlocal rich_ok, rich_disabled, draft_call_count
-            if not use_draft or not text or draft_call_count >= DRAFT_MAX_CALLS_PER_ID:
-                return
-            ok = await _try_draft(
-                bot_token=bot_token,
-                chat_id=route.chat_id,
-                text=text,
-                draft_id=draft_id,
-                message_thread_id=route.draft_thread_id(),
-                use_rich=use_rich,
-                allow_rich=not rich_disabled,
-            )
-            draft_call_count += 1
-            if use_rich and ok:
-                rich_ok = True
-            elif use_rich and not ok and not rich_disabled:
-                # 第一次 rich 失败：降级为纯文本草稿，且本轮不再试 rich
-                rich_disabled = True
-                if not text:
-                    return
-                ok2 = await _try_draft(
-                    bot_token=bot_token,
-                    chat_id=route.chat_id,
-                    text=text,
-                    draft_id=draft_id,
-                    message_thread_id=route.draft_thread_id(),
-                    use_rich=False,
-                )
-                if not ok2:
-                    # 连纯文本都失败（多半被服务器拒），整个草稿阶段直接放弃
-                    logger.warning(
-                        f"Plain draft also failed, abandoning draft for this response"
-                    )
 
         # ---- 1) 优先尝试流式 ----
         try:
             buffer = ""
             last_flush = time.monotonic()
-            if use_draft:
+            if stream is not None:
                 # 推送占位草稿（让用户立即看到"思考中"）
-                await _push_draft("💭 …", use_rich=False)
+                await stream.push("💭 …", force_plain=True)
 
             async for chunk in provider.chat_stream(
                 messages=messages_with_system,
@@ -393,27 +430,26 @@ async def handle_message(message: Message, context_manager: ContextManager, ai_r
                 ):
                     if len(response_text) >= DRAFT_MIN_RESPONSE_CHARS:
                         await _push_draft(
+                            stream,
                             normalize_rich_markdown_latex(
                                 response_text[-DRAFT_MAX_CHARS:]
                             ),
-                            use_rich=True,
                         )
                     buffer = ""
                     last_flush = now
 
-            # 流结束：若响应已经够长且本轮尚未达到调用上限，推送一次最终草稿
+            # 流结束：若响应已经够长，推送一次最终草稿
             if (
                 stream_used
-                and use_draft
+                and stream is not None
                 and response_text
                 and len(response_text) >= DRAFT_MIN_RESPONSE_CHARS
-                and draft_call_count < DRAFT_MAX_CALLS_PER_ID
             ):
                 await _push_draft(
+                    stream,
                     normalize_rich_markdown_latex(
                         response_text[-DRAFT_MAX_CHARS:]
                     ),
-                    use_rich=True,
                 )
         except Exception as stream_err:
             logger.warning(
@@ -421,9 +457,6 @@ async def handle_message(message: Message, context_manager: ContextManager, ai_r
             )
             stream_used = False
             response_text = ""
-            draft_call_count = 0
-            rich_disabled = False
-            rich_ok = False
 
         # ---- 2) 流式失败 / 没拿到内容则回退非流式 ----
         if not stream_used:
@@ -440,15 +473,15 @@ async def handle_message(message: Message, context_manager: ContextManager, ai_r
             )
             # 非流式时尝试一次草稿，让用户在持久化前先看到完整预览
             if (
-                use_draft
+                stream is not None
                 and response_text
                 and len(response_text) >= DRAFT_MIN_RESPONSE_CHARS
             ):
                 await _push_draft(
+                    stream,
                     normalize_rich_markdown_latex(
                         response_text[-DRAFT_MAX_CHARS:]
                     ),
-                    use_rich=True,
                 )
 
         response_text = normalize_rich_markdown_latex(response_text)
@@ -470,17 +503,30 @@ async def handle_message(message: Message, context_manager: ContextManager, ai_r
             tokens_used=response_tokens,
         )
 
-        # ---- 4) 持久化收尾：sendRichMessage ----
+        # Update provider bucket stats.
+        session_manager.update_provider_stats(
+            session_key,
+            provider_name,
+            message_count=1,
+            tokens=response_tokens or 0,
+        )
+        await _save_session_data(conversation, session_key)
+        await context_manager.session.commit()
+
+        # ---- 4) 持久化收尾 ----
         sent = False
         try:
-            sent = await send_rich_message(
-                bot_token=bot_token,
-                chat_id=route.chat_id,
-                markdown_text=response_text,
-                message_thread_id=route.message_thread_id,
-                direct_messages_topic_id=route.direct_messages_topic_id,
-                business_connection_id=route.business_connection_id,
-            )
+            if stream is not None:
+                sent = await stream.finalize(response_text)
+            else:
+                sent = await send_rich_message(
+                    bot_token=bot_token,
+                    chat_id=route.chat_id,
+                    markdown_text=response_text,
+                    message_thread_id=route.message_thread_id,
+                    direct_messages_topic_id=route.direct_messages_topic_id,
+                    business_connection_id=route.business_connection_id,
+                )
 
             if sent:
                 logger.info("Rich Message sent successfully")

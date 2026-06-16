@@ -14,7 +14,6 @@ LaTeX 符号归一化：把 AI 输出的 \\command 形式替换成等价的 Unic
 from __future__ import annotations
 
 import re
-from typing import List, Tuple
 
 # 常用 LaTeX → Unicode 映射。覆盖希腊字母 / 常用算子 / 关系 / 箭头 / 集合
 # / 逻辑符号，按长度倒序让最长匹配先跑。
@@ -159,7 +158,7 @@ LATEX_REPLACEMENTS: dict[str, str] = {
 }
 
 # 预编译正则：命令后面必须不是字母 / 数字，避免误伤如 \textbar 这种。
-_COMPILED_PATTERNS: List[Tuple[re.Pattern, str]] = [
+_COMPILED_PATTERNS: list[tuple[re.Pattern, str]] = [
     (re.compile(re.escape(cmd) + r"(?![A-Za-z0-9])"), repl)
     for cmd, repl in sorted(
         LATEX_REPLACEMENTS.items(), key=lambda kv: len(kv[0]), reverse=True
@@ -177,7 +176,7 @@ def normalize_latex(text: str) -> str:
     if not text:
         return text
 
-    protected: List[Tuple[str, str]] = []
+    protected: list[tuple[str, str]] = []
 
     def protect(match, prefix: str) -> str:
         placeholder = f"\x00LATEX{prefix}{len(protected)}\x00"
@@ -210,7 +209,7 @@ def normalize_rich_markdown_latex(text: str) -> str:
     if not text:
         return text
 
-    protected: List[Tuple[str, str]] = []
+    protected: list[tuple[str, str]] = []
 
     def protect(match, prefix: str) -> str:
         placeholder = f"\x00RICHLATEX{prefix}{len(protected)}\x00"

@@ -2,116 +2,106 @@
 
 Routes user prompts through the JSON-RPC app-server, streams results via
 draft messages, and persists final output as a Rich Message.
+
+Telegram-specific layer: delegates all business logic to the
+:class:`core.orchestrator.Orchestrator`.
 """
 
 from __future__ import annotations
 
-import asyncio
+import contextlib
+import uuid
 from typing import Any
 
-from aiogram import Bot, Router
-from aiogram.filters import Command
-from aiogram.types import Message
+from aiogram import Bot, F, Router
+from aiogram.filters import BaseFilter, Command
+from aiogram.types import (
+    BufferedInputFile,
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+)
 from loguru import logger
 
-from bot.utils.rich_messages import (
-    send_rich_message,
-    send_rich_message_draft,
-    send_message_draft,
-    new_draft_id,
-)
+from bot.handlers import toolbar as toolbar_handler
+from bot.streaming import ReactionTracker
+from bot.telegram_draft import DraftStream
+from bot.utils.rich_messages import send_rich_message
 from bot.utils.routing import TelegramRoute
 from config import settings
-from extensions.codex.approvals import ApprovalHandler
-from extensions.codex.commands import (
-    parse_instruction_prefix,
-    list_skills,
-    list_directory,
-    format_slash_suggestions,
-    format_file_suggestions,
-)
+from core.orchestrator import Orchestrator, StreamingCallbacks
+from core.session import SessionKey, session_manager
+from extensions.codex.commands import parse_instruction_prefix
 from extensions.codex.daemon import codex_daemon
-from extensions.codex.session import CodexSessionManager
-from storage import ContextManager
+from utils.screenshot import send_screenshot_to_chat
 
 router = Router(name="codex")
 
 # Draft limits for codex streaming.
 DRAFT_FLUSH_CHARS = 200
-DRAFT_MAX_CALLS_PER_ID = 6
-
-# Global session manager and approval handler.
-session_manager = CodexSessionManager(codex_daemon)
-approval_handler = ApprovalHandler()
 
 # Bot instance stored for approval message routing.
 _current_bot: Bot | None = None
+
+# Global Orchestrator reference for transport-level approval callbacks.
+_global_orch: Orchestrator | None = None
+
+
+def _ensure_global_orch(orchestrator: Orchestrator) -> None:
+    """Cache the Orchestrator instance and wire approval UI sender."""
+    global _global_orch
+    if _global_orch is None:
+        _global_orch = orchestrator
+        orchestrator.set_approval_ui_sender(_approval_ui_sender)
+
+
+async def _approval_ui_sender(
+    method: str, params: dict[str, Any]
+) -> None:
+    """Send approval requests to Telegram using the cached bot instance."""
+    if _current_bot is None or _global_orch is None:
+        return
+    sm = _global_orch.session_manager
+    if sm is None:
+        return
+    thread_id = params.get("threadId", "")
+    session_key = sm.reverse_lookup(thread_id)
+    if session_key is None:
+        return
+    approval_id = params.get("approvalId", params.get("itemId", "unknown"))
+    if method == "item/commandExecution/requestApproval":
+        text = _global_orch.approval_handler.format_command_approval_markdown(
+            approval_id, params
+        )
+    else:
+        text = _global_orch.approval_handler.format_file_change_approval_markdown(
+            approval_id, params
+        )
+    keyboard = _global_orch.approval_handler.build_approval_keyboard(
+        approval_id, params
+    )
+    topic_id = sm.get_topic_id(thread_id)
+    try:
+        await _current_bot.send_message(
+            chat_id=session_key.chat_id,
+            text=text,
+            reply_markup=keyboard,
+            message_thread_id=topic_id,
+        )
+    except Exception as exc:
+        logger.warning(
+            f"Codex: failed to send approval message to {session_key}: {exc}"
+        )
+
+
+def _bot_token() -> str:
+    return settings.telegram_bot_token
 
 
 # ---------------------------------------------------------------------------
 # Forum topic helpers
 # ---------------------------------------------------------------------------
-
-
-async def _ensure_codex_forum_topic(
-    message: Message,
-    chat_id: int | str,
-    context_manager: ContextManager,
-    codex_thread_id: str,
-) -> int | None:
-    """Create a dedicated forum topic for this Codex session if needed.
-
-    Returns the ``message_thread_id`` of the topic, or ``None`` if creation
-    fails or the chat is not a forum.
-    """
-    db = context_manager.session
-    from sqlalchemy import select
-    from storage.models import Conversation
-
-    user_id = message.from_user.id if message.from_user else 0
-
-    # Check if an active conversation with a thread_id already exists.
-    stmt = select(Conversation).where(
-        Conversation.user_id == user_id,
-        Conversation.codex_thread_id == codex_thread_id,
-    )
-    result = await db.execute(stmt)
-    conv = result.scalars().first()
-
-    if conv and conv.thread_id is not None:
-        return conv.thread_id
-
-    # Create forum topic.
-    try:
-        topic = await message.bot.create_forum_topic(
-            chat_id=chat_id,
-            name=f"Codex: {codex_thread_id[:12]}...",
-        )
-        topic_id = topic.message_thread_id
-        logger.info(
-            f"Codex: created forum topic {topic_id} for thread {codex_thread_id}"
-        )
-
-        if conv is not None:
-            conv.thread_id = topic_id
-        else:
-            # Find any conversation for this codex thread.
-            stmt = select(Conversation).where(
-                Conversation.codex_thread_id == codex_thread_id,
-            )
-            result = await db.execute(stmt)
-            conv = result.scalars().first()
-            if conv:
-                conv.thread_id = topic_id
-
-        await db.commit()
-        return topic_id
-    except Exception as exc:
-        logger.warning(f"Codex: failed to create forum topic: {exc}")
-        # Not a forum or bot lacks permission — fall back to main chat.
-        if conv and conv.thread_id is not None:
-            return conv.thread_id
-        return None
 
 
 def _codex_send_kwargs(route: TelegramRoute, topic_id: int | None) -> dict[str, Any]:
@@ -122,196 +112,209 @@ def _codex_send_kwargs(route: TelegramRoute, topic_id: int | None) -> dict[str, 
     return kwargs
 
 
-# ---------------------------------------------------------------------------
-# JSON-RPC Notification bridge
-# ---------------------------------------------------------------------------
+async def _codex_reply(
+    message: Message,
+    text: str,
+    route: TelegramRoute,
+    topic_id: int | None,
+    **kwargs: Any,
+) -> None:
+    """Send a reply routed to the Codex topic.
 
-_NOTIFICATION_QUEUES: dict[int | str, asyncio.Queue[tuple[str, dict[str, Any]]]] = {}
-
-
-async def _on_codex_notification(method: str, params: dict[str, Any]) -> None:
-    """Global notification handler: route to the correct chat_id queue.
-
-    Notifications are fanned out to all active session queues. In a
-    multi-user setup, the handler routes by looking up thread_id from params.
+    Uses ``bot.send_message`` directly to avoid ``message.answer()``
+    auto-including ``message_thread_id`` when the message originated from
+    a different topic.
     """
-    thread_id = params.get("threadId", "")
-    logger.debug(f"Codex notification: {method} thread={thread_id}")
-
-    # Fan out to all registered queues (simplified: send to all).
-    for queue in list(_NOTIFICATION_QUEUES.values()):
-        try:
-            queue.put_nowait((method, params))
-        except asyncio.QueueFull:
-            pass
-
-
-async def _on_codex_server_request(method: str, params: dict[str, Any]) -> dict[str, Any] | None:
-    """Global server request handler: send approval messages, then delegate to ApprovalHandler."""
-    # Send approval message to Telegram if we know the target chat.
-    if method in ("item/commandExecution/requestApproval", "item/fileChange/requestApproval"):
-        thread_id = params.get("threadId", "")
-        chat_id = session_manager.reverse_lookup(thread_id)
-        if chat_id is not None and _current_bot is not None:
-            approval_id = params.get("approvalId", params.get("itemId", "unknown"))
-            if method == "item/commandExecution/requestApproval":
-                text = ApprovalHandler.format_command_approval_markdown(approval_id, params)
-            else:
-                text = ApprovalHandler.format_file_change_approval_markdown(approval_id, params)
-            keyboard = ApprovalHandler.build_approval_keyboard(approval_id)
-            try:
-                await _current_bot.send_message(
-                    chat_id=chat_id,
-                    text=text,
-                    reply_markup=keyboard,
-                )
-            except Exception as exc:
-                logger.warning(f"Codex: failed to send approval message to chat_id={chat_id}: {exc}")
-        else:
-            logger.warning(
-                f"Codex: cannot route approval request — "
-                f"no chat_id found for thread_id={thread_id} (bot={_current_bot is not None})"
-            )
-
-    return await approval_handler.handle_server_request(method, params)
+    merged = _codex_send_kwargs(route, topic_id)
+    merged.update(kwargs)
+    bot = message.bot
+    if bot is None:
+        return
+    await bot.send_message(
+        chat_id=route.chat_id,
+        text=text,
+        **merged,
+    )
 
 
-# Register notification handlers on the daemon transport.
-def _register_transport_handlers() -> None:
-    transport = codex_daemon.transport
-    if transport is not None:
-        transport._on_notification = _on_codex_notification
-        transport._on_server_request = _on_codex_server_request
+async def _is_codex_bound_topic(
+    thread_id: int,
+    context_manager: Any,
+) -> bool:
+    """Check whether a Telegram thread is bound to a Codex session."""
+    from sqlalchemy import or_, select
+
+    from storage.models import Conversation
+
+    db = context_manager.session
+    stmt = select(Conversation).where(
+        or_(
+            Conversation.thread_id == thread_id,
+            Conversation.topic_id == thread_id,
+        ),
+        Conversation.codex_thread_id.isnot(None),
+        Conversation.is_active.is_(True),
+    )
+    result = await db.execute(stmt)
+    return result.scalars().first() is not None
 
 
 # ---------------------------------------------------------------------------
-# Streaming helpers
+# Shared prompt executor (Telegram-specific UI layer)
 # ---------------------------------------------------------------------------
 
 
-def _bot_token() -> str:
-    token = settings.telegram_bot_token
-    if hasattr(token, "get_secret_value"):
-        return token.get_secret_value()
-    return token
-
-
-async def _stream_turn(
+async def _execute_codex_prompt(
     message: Message,
     route: TelegramRoute,
-    chat_id: int | str,
-    session,
-    topic_id: int | None = None,
-) -> str:
-    """Stream turn output via draft messages. Returns the final markdown text."""
-    bot_token = _bot_token()
-    use_draft = message.chat.type == "private"
-    draft_id = new_draft_id() if use_draft else 0
-    draft_call_count = 0
-    full_text_parts: list[str] = []
+    context_manager: Any,
+    orchestrator: Orchestrator,
+    prompt: str,
+) -> None:
+    """Execute a Codex chat prompt and stream results back via Telegram."""
+    global _current_bot
+    bot = message.bot
+    if bot is None:
+        return
+    _current_bot = bot
 
-    # Use forum topic thread_id if available, otherwise route's thread_id.
-    thread_id = topic_id if topic_id is not None else route.draft_thread_id()
+    session_key = SessionKey.from_telegram_message(
+        route.chat_id, route.message_thread_id
+    )
+    user_id = message.from_user.id if message.from_user else 0
 
-    # Create a notification queue for this turn.
-    queue: asyncio.Queue[tuple[str, dict[str, Any]]] = asyncio.Queue()
-    _NOTIFICATION_QUEUES[chat_id] = queue
+    # Send typing indicator.
+    await bot.send_chat_action(
+        chat_id=route.chat_id,
+        action="typing",
+        message_thread_id=route.message_thread_id,
+        business_connection_id=route.business_connection_id,
+    )
 
-    async def _push_draft(text: str) -> None:
-        nonlocal draft_call_count
-        if not use_draft or not text or draft_call_count >= DRAFT_MAX_CALLS_PER_ID:
-            return
-        ok = await send_rich_message_draft(
-            bot_token=bot_token,
+    topic_id = route.message_thread_id
+
+    # Send a "Stop" inline button for this turn.
+    stop_msg = None
+    try:
+        stop_msg = await bot.send_message(
             chat_id=route.chat_id,
-            markdown_text=text,
-            draft_id=draft_id,
-            message_thread_id=thread_id,
+            text="_Codex is working..._",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text="Stop generating",
+                            callback_data=f"codex_stop|{session_key.to_string()}",
+                        )
+                    ]
+                ]
+            ),
+            message_thread_id=topic_id,
+            parse_mode="Markdown",
         )
-        if not ok:
-            await send_message_draft(
-                bot_token=bot_token,
-                chat_id=route.chat_id,
-                text=text,
-                draft_id=draft_id,
-                message_thread_id=thread_id,
-            )
-        draft_call_count += 1
+    except Exception as exc:
+        logger.debug(f"Codex: failed to send stop button: {exc}")
 
     try:
-        while True:
-            try:
-                method, params = await asyncio.wait_for(
-                    queue.get(), timeout=120.0
-                )
-            except asyncio.TimeoutError:
-                logger.warning(f"Codex turn timeout for chat_id={chat_id}")
-                await session_manager.cancel_turn(chat_id)
-                full_text_parts.append("\n\n_Codex turn timed out._")
-                break
+        await toolbar_handler.send_toolbar(
+            bot,
+            session_key=session_key,
+            message_thread_id=topic_id,
+        )
+    except Exception as exc:
+        logger.debug(f"Codex: failed to send toolbar: {exc}")
 
-            if method == "turn/completed":
-                # Final turn notification — add usage footer.
-                turn = params.get("turn", {})
-                usage = turn.get("usage", {})
-                if usage:
-                    footer = (
-                        f"\n\n---\n"
-                        f"Input: {usage.get('inputTokens', 0)} | "
-                        f"Output: {usage.get('outputTokens', 0)} | "
-                        f"Cache: {usage.get('cachedInputTokens', 0)}"
-                    )
-                    full_text_parts.append(footer)
-                    await _push_draft("".join(full_text_parts))
-                session.turn_completed.set()
-                break
+    use_draft = message.chat.type == "private"
+    stream = DraftStream(
+        bot_token=_bot_token(),
+        chat_id=route.chat_id,
+        message_thread_id=topic_id,
+        direct_messages_topic_id=route.direct_messages_topic_id,
+        business_connection_id=route.business_connection_id,
+        use_rich=True,
+    ) if use_draft else None
 
-            elif method == "item/agentMessage/delta":
-                delta = params.get("delta", "")
-                if delta:
-                    full_text_parts.append(delta)
-                    accumulated = "".join(full_text_parts)
-                    await session_manager.stream_accumulate(chat_id, delta)
-                    # Flush draft every DRAFT_FLUSH_CHARS chars.
-                    if len(accumulated) % DRAFT_FLUSH_CHARS < len(delta):
-                        await _push_draft(accumulated)
+    reaction_tracker = None
+    if stop_msg is not None:
+        reaction_tracker = ReactionTracker(
+            bot, stop_msg.chat.id, stop_msg.message_id
+        )
+        try:
+            await reaction_tracker.set_state("thinking")
+        except Exception as exc:
+            logger.debug(f"Codex: failed to set initial reaction: {exc}")
 
-            elif method == "item/started":
-                item_type = params.get("item", {}).get("type", "")
-                label = params.get("item", {}).get("label", "")
-                if item_type == "command_execution":
-                    cmd = params.get("item", {}).get("command", "")
-                    block = f"\n\n+ + + Exec: `{cmd}`"
-                    if label:
-                        block += f" ({label})"
-                    block += "\n"
-                    full_text_parts.append(block)
-                    await _push_draft("".join(full_text_parts))
-                elif item_type == "reasoning":
-                    block = "\n\n+ + + Thinking..."
-                    full_text_parts.append(block)
+    last_flush_len = 0
+    full_accumulated = ""
 
-            elif method == "item/completed":
-                item_type = params.get("item", {}).get("type", "")
-                if item_type == "command_execution":
-                    exit_code = params.get("item", {}).get("exitCode", "")
-                    output = params.get("item", {}).get("output", "")
-                    block = f"\nExit code: {exit_code}"
-                    if output:
-                        block += f"\n```\n{output}\n```"
-                    block += "\n"
-                    full_text_parts.append(block)
-                    await _push_draft("".join(full_text_parts))
+    async def _on_text_delta(delta: str, accumulated: str) -> None:
+        nonlocal last_flush_len, full_accumulated
+        full_accumulated = accumulated
+        if reaction_tracker is not None:
+            await reaction_tracker.set_state("editing")
+        if stream is None:
+            return
+        if len(accumulated) - last_flush_len >= DRAFT_FLUSH_CHARS:
+            await stream.push(accumulated)
+            last_flush_len = len(accumulated)
 
-            elif method == "error":
-                error_msg = params.get("message", "Unknown error")
-                full_text_parts.append(f"\n\n_ERROR: {error_msg}_")
-                await _push_draft("".join(full_text_parts))
+    async def _on_item_started(item_type: str, item: dict[str, Any]) -> None:
+        if reaction_tracker is not None:
+            await reaction_tracker.on_codex_event("item/started", item_type)
 
+    async def _on_turn_completed(turn: dict[str, Any], final_text: str) -> None:
+        if reaction_tracker is not None:
+            await reaction_tracker.set_state("done")
+
+    callbacks = StreamingCallbacks(
+        on_text_delta=_on_text_delta,
+        on_item_started=_on_item_started,
+        on_turn_completed=_on_turn_completed,
+    )
+
+    try:
+        final_text = await orchestrator.handle_message_streaming(
+            key=session_key,
+            text=prompt,
+            db=context_manager.session,
+            user_id=user_id,
+            callbacks=callbacks,
+        )
+
+        toolbar_handler.set_last_reply(session_key, final_text)
+
+        # Persist final result.
+        if stream is not None:
+            success = await stream.finalize(final_text)
+        else:
+            success = await send_rich_message(
+                bot_token=_bot_token(),
+                chat_id=route.chat_id,
+                markdown_text=final_text,
+                message_thread_id=topic_id,
+                direct_messages_topic_id=route.direct_messages_topic_id,
+                business_connection_id=route.business_connection_id,
+            )
+        if not success:
+            await _codex_reply(
+                message, final_text, route, topic_id,
+            )
+
+    except Exception as exc:
+        logger.exception("Codex: turn failed")
+        await _codex_reply(
+            message, f"Codex error: {exc}", route, topic_id,
+        )
     finally:
-        _NOTIFICATION_QUEUES.pop(chat_id, None)
-
-    return "".join(full_text_parts).strip()
+        # Remove the stop button message.
+        if stop_msg is not None:
+            try:
+                await bot.delete_message(
+                    chat_id=stop_msg.chat.id,
+                    message_id=stop_msg.message_id,
+                )
+            except Exception as exc:
+                logger.debug(f"Codex: failed to delete stop button: {exc}")
 
 
 # ---------------------------------------------------------------------------
@@ -320,38 +323,60 @@ async def _stream_turn(
 
 
 @router.message(Command("codex"))
-async def cmd_codex_v2(message: Message, context_manager: ContextManager) -> None:
+async def cmd_codex_v2(
+    message: Message,
+    context_manager: Any,
+    orchestrator: Orchestrator,
+) -> None:
     """Handle /codex <prompt> with the persistent app-server architecture."""
     global _current_bot
-    _current_bot = message.bot
+    bot = message.bot
+    if bot is None:
+        return
+    _current_bot = bot
 
     route = TelegramRoute.from_message(message)
     chat_id = route.chat_id
     user_id = message.from_user.id if message.from_user else 0
+    session_key = SessionKey.from_telegram_message(
+        chat_id, route.message_thread_id
+    )
 
     # Codex only works from the main chat (All), not inside conversation threads.
     if route.message_thread_id is not None:
-        await message.answer(
-            "Codex is only available from the main chat screen.\n\n"
-            "Switch to <b>All</b> and send <code>/codex &lt;prompt&gt;</code> there.",
-            parse_mode="HTML",
-            **route.send_kwargs(),
+        is_bound = await _is_codex_bound_topic(
+            route.message_thread_id, context_manager
         )
-        return
-
-    # Extract prompt.
-    prompt = message.text or ""
-    if prompt.startswith("/codex"):
-        prompt = prompt[len("/codex"):].strip()
+        if not is_bound:
+            await message.answer(
+                "Codex is only available from the main chat screen.\n\n"
+                "Switch to <b>All</b> and send <code>/codex &lt;prompt&gt;</code> there.",
+                parse_mode="HTML",
+                **route.send_kwargs(),
+            )
+            return
+        # In a Codex-bound topic — prompt is the full message text.
+        prompt = message.text or ""
+    else:
+        # In main chat — extract prompt after /codex
+        prompt = message.text or ""
+        if prompt.startswith("/codex"):
+            prompt = prompt[len("/codex"):].strip()
 
     if not prompt:
         await message.answer(
             "<b>Usage:</b> <code>/codex &lt;prompt&gt;</code>\n\n"
             "<b>Commands:</b>\n"
-            "- <code>/codex /status</code> — Show Codex configuration\n"
+            "- <code>/codex status</code> — Show session status\n"
+            "- <code>/codex cd &lt;path&gt;</code> — Change working directory\n"
+            "- <code>/codex pwd</code> — Show working directory\n"
+            "- <code>/codex threads</code> — List sessions\n"
+            "- <code>/codex archive</code> — Archive current session\n"
+            "- <code>/codex switch &lt;id&gt;</code> — Switch session\n"
             "- <code>/codex !command</code> — Execute shell command\n"
             "- <code>/codex @path</code> — Read file at path\n"
-            "- <code>/codex new</code> — Start a fresh session\n\n"
+            "- <code>/codex new</code> — Start a fresh session\n"
+            "- <code>/screenshot</code> — Capture terminal screenshot\n\n"
             "<b>Example:</b> <code>/codex list all Python files</code>",
             parse_mode="HTML",
             **route.send_kwargs(),
@@ -366,140 +391,418 @@ async def cmd_codex_v2(message: Message, context_manager: ContextManager) -> Non
         )
         return
 
-    # Ensure transport handlers are registered.
-    _register_transport_handlers()
+    orchestrator.ensure_transport_handlers()
+    _ensure_global_orch(orchestrator)
 
-    # Parse instruction prefix.
+    # Delegate sub-command routing and execution to the Orchestrator.
+    # For non-streaming results we just send the returned text.
+    # For streaming results (_execute_codex_prompt) the Orchestrator provides
+    # callbacks and the handler manages DraftStream.
     prefix, rest = parse_instruction_prefix(prompt)
 
-    # --- /codex new ---
-    if prompt.strip().lower() == "new":
-        try:
-            session = await session_manager.new_session(chat_id)
-            topic_id = await _ensure_codex_forum_topic(
-                message, chat_id, context_manager, session.thread_id
-            )
-            topic_info = " — started in this topic" if topic_id else ""
-            await message.answer(
-                f"Started a new Codex session.\nThread: `{session.thread_id}`{topic_info}",
-                **_codex_send_kwargs(route, topic_id),
-            )
-        except Exception as exc:
-            logger.exception("Codex: failed to start new session")
-            await message.answer(
-                f"Failed to start new session: {exc}",
-                **route.send_kwargs(),
-            )
-        return
-
-    # --- /codex /slash command ---
-    if prefix == "slash":
-        transport = codex_daemon.transport
-        if transport is None:
-            await message.answer(
-                "Codex daemon is not ready.", **route.send_kwargs()
-            )
-            return
-
-        # Show skill suggestions as draft.
-        skills = await list_skills(transport)
-        suggestion_text = format_slash_suggestions(skills)
-        await message.answer(suggestion_text, **route.send_kwargs())
-        return
-
-    # --- /codex !shell command ---
-    if prefix == "shell":
-        try:
-            session = await session_manager.get_or_create_session(
-                db=context_manager.session,
-                chat_id=chat_id,
-                user_id=user_id,
-            )
-        except Exception as exc:
-            logger.exception("Codex: session creation failed")
-            await message.answer(
-                f"Session error: {exc}", **route.send_kwargs()
-            )
-            return
-
-        await session_manager.execute_shell(chat_id, rest)
-        await message.answer(
-            f"Executing: `{rest}`", **route.send_kwargs()
-        )
-        return
-
-    # --- /codex @file path ---
-    if prefix == "file":
-        transport = codex_daemon.transport
-        if transport is None:
-            await message.answer(
-                "Codex daemon is not ready.", **route.send_kwargs()
-            )
-            return
-
-        # Read directory for matching files.
-        entries = await list_directory(transport, rest or ".")
-        suggestion_text = format_file_suggestions(entries)
-        await message.answer(suggestion_text, **route.send_kwargs())
-        return
-
-    # --- Normal chat prompt ---
-    # Send typing indicator.
-    await message.bot.send_chat_action(
-        chat_id=route.chat_id,
-        action="typing",
-        message_thread_id=route.message_thread_id,
-        business_connection_id=route.business_connection_id,
+    # Determine if this should be treated as a streaming prompt or a command.
+    stripped = prompt.strip().lower()
+    is_prompt = (
+        stripped not in {
+            "new", "status", "pwd", "threads", "archive",
+        }
+        and not stripped.startswith("cd ")
+        and not stripped.startswith("switch ")
+        and prefix not in {"slash", "file"}
     )
 
-    # Get or create session.
+    if is_prompt:
+        await _execute_codex_prompt(
+            message, route, context_manager, orchestrator, prompt
+        )
+        return
+
+    # Non-streaming command — use Orchestrator.handle_message.
     try:
-        session = await session_manager.get_or_create_session(
+        result_text = await orchestrator.handle_message(
+            key=session_key,
+            text=f"/codex {prompt}",
             db=context_manager.session,
-            chat_id=chat_id,
             user_id=user_id,
         )
-    except Exception as exc:
-        logger.exception("Codex: session creation failed")
         await message.answer(
-            f"Failed to initialize Codex session: {exc}",
+            result_text,
+            parse_mode="Markdown",
+            **route.send_kwargs(),
+        )
+    except Exception as exc:
+        logger.exception("Codex: command execution failed")
+        await message.answer(
+            f"Codex error: {exc}",
+            **route.send_kwargs(),
+        )
+
+
+# ---------------------------------------------------------------------------
+# Codex-bound topic message handler
+# ---------------------------------------------------------------------------
+
+
+class IsCodexBoundTopic(BaseFilter):
+    """Filter: matches text messages inside any forum topic (not main chat).
+
+    The actual Codex-binding check is performed in the handler so that
+    aiogram dependency injection (``context_manager``) is available there.
+    Non-bound topics simply return early and the update propagates to the
+    next handler (e.g. the generic AI chat handler).
+    """
+
+    async def __call__(self, message: Message) -> bool:
+        if message.message_thread_id is None:
+            return False
+        if message.text is None:
+            return False
+        # Let /codex commands pass through to the command handler.
+        return not message.text.strip().startswith("/codex")
+
+
+@router.message(F.text, IsCodexBoundTopic())
+async def handle_codex_topic_message(
+    message: Message,
+    context_manager: Any,
+    orchestrator: Orchestrator,
+) -> None:
+    """Handle regular text messages inside a Codex-bound forum topic.
+
+    Routes the message directly to the Codex session bound to this topic
+    without requiring the /codex prefix.
+    """
+    route = TelegramRoute.from_message(message)
+    prompt = (message.text or "").strip()
+
+    if not prompt:
+        return
+
+    # Verify this topic is actually bound to a Codex session.
+    topic_id = message.message_thread_id
+    if topic_id is None:
+        return
+    is_bound = await _is_codex_bound_topic(topic_id, context_manager)
+    if not is_bound:
+        # Not a Codex topic — let the update propagate to the next handler.
+        return
+
+    # Check daemon readiness.
+    if not codex_daemon.is_alive():
+        await _codex_reply(
+            message,
+            "Codex daemon is not running. Please restart the bot.",
+            route,
+            route.message_thread_id,
+        )
+        return
+
+    orchestrator.ensure_transport_handlers()
+    _ensure_global_orch(orchestrator)
+
+    # Route the message as a Codex prompt.
+    await _execute_codex_prompt(
+        message, route, context_manager, orchestrator, prompt
+    )
+
+
+# ---------------------------------------------------------------------------
+# /model command handler
+# ---------------------------------------------------------------------------
+
+
+@router.message(Command("model"))
+async def cmd_model(
+    message: Message,
+    context_manager: ContextManager,
+    orchestrator: Orchestrator,
+) -> None:
+    """Switch AI provider without losing other provider context."""
+    from bot.handlers.messages import (
+        _load_session_data,
+        _resolve_provider_conversation,
+        _save_session_data,
+    )
+
+    user_id = message.from_user.id
+    route = TelegramRoute.from_message(message)
+    thread_id = route.storage_thread_id
+    session_key = SessionKey.from_telegram_message(
+        route.chat_id, route.message_thread_id
+    )
+
+    prompt = message.text or ""
+    if prompt.startswith("/model"):
+        prompt = prompt[len("/model"):].strip()
+
+    if not prompt:
+        available = orchestrator.providers.list_available()
+        lines = ["**Usage:** `/model <provider>`", "", "**Available providers:**"]
+        for name in available:
+            lines.append(f"- `{name}`")
+        await message.answer(
+            "\n".join(lines),
+            parse_mode="Markdown",
             **route.send_kwargs(),
         )
         return
 
-    # Ensure a dedicated forum topic exists for this Codex session.
-    topic_id = await _ensure_codex_forum_topic(
-        message, chat_id, context_manager, session.thread_id
+    provider_name = prompt.lower()
+    if provider_name not in orchestrator.providers.list_available():
+        await message.answer(
+            f"❌ Unknown provider: `{provider_name}`",
+            parse_mode="Markdown",
+            **route.send_kwargs(),
+        )
+        return
+
+    user = await context_manager.get_or_create_user(user_id)
+    conversation = await context_manager.get_or_create_conversation(
+        user_id, thread_id=thread_id
     )
 
-    try:
-        # Start the turn.
-        await session_manager.start_turn(chat_id, prompt)
+    session_data = await _load_session_data(conversation, session_key)
 
-        # Stream the output into the forum topic.
-        final_text = await _stream_turn(message, route, chat_id, session, topic_id)
+    # Save current provider bucket before switching.
+    if user.preferred_provider:
+        old_bucket = session_data.get_or_create_bucket(user.preferred_provider)
+        old_bucket.session_id = str(conversation.id)
 
-        if not final_text:
-            final_text = "Codex completed with no output."
+    # Switch active provider.
+    user.preferred_provider = provider_name
+    bucket = session_manager.set_active_provider(session_key, provider_name)
 
-        # Persist final result.
-        success = await send_rich_message(
-            bot_token=_bot_token(),
-            chat_id=route.chat_id,
-            markdown_text=final_text,
-            message_thread_id=topic_id,
-            direct_messages_topic_id=route.direct_messages_topic_id,
-            business_connection_id=route.business_connection_id,
-        )
-        if not success:
-            await message.answer(
-                final_text,
-                **_codex_send_kwargs(route, topic_id),
-            )
+    # Resolve or create the provider-specific conversation.
+    provider_conv = await _resolve_provider_conversation(
+        context_manager, session_key, session_data, user_id, thread_id, provider_name
+    )
 
-    except Exception as exc:
-        logger.exception("Codex: turn failed")
+    await _save_session_data(provider_conv, session_key)
+    await context_manager.session.commit()
+
+    await message.answer(
+        f"✅ Switched to `{provider_name}`\\.\n"
+        f"_Messages in this thread are now isolated per provider\\._",
+        parse_mode="MarkdownV2",
+        **route.send_kwargs(),
+    )
+
+
+# ---------------------------------------------------------------------------
+# /shell command handler
+# ---------------------------------------------------------------------------
+
+
+@router.message(Command("shell"))
+async def cmd_shell(
+    message: Message,
+    orchestrator: Orchestrator,
+) -> None:
+    """Handle /shell <command> as a standalone alternative to the ! prefix."""
+    route = TelegramRoute.from_message(message)
+    session_key = SessionKey.from_telegram_message(
+        route.chat_id, route.message_thread_id
+    )
+    prompt = message.text or ""
+    if prompt.startswith("/shell"):
+        prompt = prompt[len("/shell"):].strip()
+
+    if not prompt:
         await message.answer(
-            f"Codex error: {exc}",
-            **_codex_send_kwargs(route, topic_id),
+            "Usage: `/shell <command>`",
+            parse_mode="Markdown",
+            **route.send_kwargs(),
         )
+        return
+
+    _ensure_global_orch(orchestrator)
+
+    if orchestrator.shell_is_dangerous(prompt):
+        approval_id = str(uuid.uuid4())
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="▶ Yes",
+                        callback_data=f"shell_approve:{approval_id}:confirm",
+                    ),
+                    InlineKeyboardButton(
+                        text="✕ Cancel",
+                        callback_data=f"shell_approve:{approval_id}:cancel",
+                    ),
+                ]
+            ]
+        )
+        orchestrator.pending_shell_commands[approval_id] = {
+            "command": prompt,
+            "message": message,
+            "route": route,
+            "session_key": session_key,
+        }
+        await message.answer(
+            f"Dangerous command detected:\n```\n{prompt}\n```\n"
+            "Do you want to execute it?",
+            reply_markup=keyboard,
+            parse_mode="Markdown",
+            **route.send_kwargs(),
+        )
+        return
+
+    await _execute_shell_telegram(message, route, orchestrator, prompt, session_key)
+
+
+async def _execute_shell_telegram(
+    message: Message,
+    route: TelegramRoute,
+    orchestrator: Orchestrator,
+    command: str,
+    session_key: SessionKey,
+) -> None:
+    """Execute a shell command and send the result back to the user."""
+    status_msg = await message.answer(
+        f"Executing: `{command}`",
+        parse_mode="Markdown",
+        **route.send_kwargs(),
+    )
+    try:
+        result = await orchestrator.shell_provider.execute(
+            command, session_id=session_key.to_string()
+        )
+        output = result["stdout"]
+        stderr = result["stderr"]
+        returncode = result["returncode"]
+
+        lines: list[str] = []
+        if output:
+            lines.append(output)
+        if stderr:
+            lines.append(f"[stderr]\n{stderr}")
+        lines.append(f"\nExit code: {returncode}")
+
+        full_text = "\n".join(lines).strip()
+        toolbar_handler.set_last_reply(session_key, full_text)
+        if len(full_text) > 4096:
+            file_bytes = full_text.encode("utf-8")
+            await status_msg.delete()
+            await message.answer_document(
+                document=BufferedInputFile(file_bytes, filename="shell_output.txt"),
+                caption=f"Output for: `{command}`",
+                parse_mode="Markdown",
+                **route.send_kwargs(),
+            )
+        else:
+            text = f"```\n{full_text}\n```"
+            await status_msg.edit_text(text, parse_mode="Markdown")
+    except TimeoutError:
+        await status_msg.edit_text(
+            f"Command timed out after 30 seconds:\n```\n{command}\n```",
+            parse_mode="Markdown",
+        )
+    except Exception as exc:
+        logger.exception("Shell command execution failed")
+        await status_msg.edit_text(
+            f"Error executing command:\n```\n{exc}\n```",
+            parse_mode="Markdown",
+        )
+
+
+# ---------------------------------------------------------------------------
+# Inline button callbacks
+# ---------------------------------------------------------------------------
+
+
+@router.callback_query(F.data.startswith("codex_stop|"))
+async def handle_codex_stop_callback(
+    callback_query: CallbackQuery,
+    orchestrator: Orchestrator,
+) -> None:
+    """Handle the 'Stop generating' inline button."""
+    data = callback_query.data
+    if data is None:
+        await callback_query.answer("Invalid stop request.", show_alert=True)
+        return
+    try:
+        _, session_key_str = data.split("|", 1)
+        session_key = SessionKey.from_string(session_key_str)
+    except ValueError:
+        await callback_query.answer("Invalid stop request.", show_alert=True)
+        return
+
+    sm = orchestrator.session_manager
+    if sm is not None and sm.is_turn_active(session_key):
+        await sm.cancel_turn(session_key)
+        await callback_query.answer("Turn interrupted.", show_alert=False)
+        msg = callback_query.message
+        if isinstance(msg, Message):
+            with contextlib.suppress(Exception):
+                await msg.edit_text("_Interrupted._")
+    else:
+        await callback_query.answer("No active turn.", show_alert=False)
+
+
+@router.callback_query(F.data.startswith("shell_approve:"))
+async def handle_shell_approve_callback(
+    callback_query: CallbackQuery,
+    orchestrator: Orchestrator,
+) -> None:
+    """Handle shell approval inline button callbacks."""
+    data = callback_query.data
+    if data is None:
+        await callback_query.answer("Invalid callback data", show_alert=True)
+        return
+    parts = data.split(":", 2)
+    if len(parts) < 3:
+        await callback_query.answer("Invalid callback data", show_alert=True)
+        return
+
+    approval_id = parts[1]
+    decision = parts[2]
+    pending = orchestrator.pending_shell_commands.pop(approval_id, None)
+
+    if pending is None:
+        await callback_query.answer(
+            "Request expired or already handled.", show_alert=True
+        )
+        return
+
+    command = pending["command"]
+    message = pending["message"]
+    route = pending["route"]
+    session_key = pending["session_key"]
+
+    msg = callback_query.message
+    if not isinstance(msg, Message):
+        await callback_query.answer("Message unavailable.", show_alert=True)
+        return
+
+    if decision == "cancel":
+        with contextlib.suppress(Exception):
+            await msg.edit_text(
+                f"Cancelled:\n```\n{command}\n```",
+                parse_mode="Markdown",
+            )
+        await callback_query.answer("Cancelled")
+        return
+
+    # decision == "confirm"
+    with contextlib.suppress(Exception):
+        await msg.edit_text(
+            f"Confirmed. Executing:\n```\n{command}\n```",
+            parse_mode="Markdown",
+        )
+    await callback_query.answer("Executing...")
+    await _execute_shell_telegram(
+        message, route, orchestrator, command, session_key
+    )
+
+
+# ---------------------------------------------------------------------------
+# /screenshot command handler
+# ---------------------------------------------------------------------------
+
+
+@router.message(Command("screenshot"))
+async def cmd_screenshot(message: Message) -> None:
+    """Capture the terminal window and send it as a photo."""
+    route = TelegramRoute.from_message(message)
+    await send_screenshot_to_chat(message, route)

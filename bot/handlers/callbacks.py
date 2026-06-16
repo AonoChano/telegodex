@@ -1,18 +1,16 @@
 from aiogram import Router
 from aiogram.types import CallbackQuery
-from sqlalchemy import select
 from loguru import logger
+from sqlalchemy import select
 
-from storage import ContextManager, User
-from bot.keyboards import (
-    get_provider_selector,
-    get_model_selector,
-    get_settings_menu,
-    get_conversation_list_keyboard,
-    get_confirmation_keyboard,
-)
 from ai import AIRouter
-from extensions.codex.approvals import ApprovalHandler
+from bot.keyboards import (
+    get_confirmation_keyboard,
+    get_model_selector,
+    get_provider_selector,
+    get_settings_menu,
+)
+from storage import ContextManager, User
 
 router = Router()
 
@@ -188,7 +186,15 @@ async def handle_codex_approval(callback: CallbackQuery):
 
     resolved = await approval_handler.resolve(approval_id, decision)
     if resolved:
-        decision_label = {"acceptOnce": "Approved", "acceptForSession": "Approved (Session)", "deny": "Denied"}.get(decision, decision)
+        decision_label = {
+            "Accept": "Approved",
+            "AcceptForSession": "Approved (Session)",
+            "Decline": "Denied",
+            "Cancel": "Cancelled",
+            "acceptOnce": "Approved",
+            "acceptForSession": "Approved (Session)",
+            "deny": "Denied",
+        }.get(decision, decision)
         try:
             # Edit the approval message to remove buttons and show result.
             original_text = callback.message.text or callback.message.caption or ""

@@ -13,7 +13,6 @@ _ * [ ] ( ) ~ ` > # + - = | { } . !
 """
 
 import re
-from typing import List, Tuple
 
 
 def format_markdown_v2(text: str) -> str:
@@ -50,7 +49,7 @@ def format_markdown_v2(text: str) -> str:
     SPECIAL_CHARS = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
 
     # 保护的 Markdown 结构（使用 \x00 作为占位符，这是不可打印字符，不会被转义）
-    protected: List[Tuple[str, str]] = []  # (placeholder, original)
+    protected: list[tuple[str, str]] = []  # (placeholder, original)
 
     def protect(match, prefix):
         """保护一个 Markdown 结构"""
@@ -79,7 +78,7 @@ def format_markdown_v2(text: str) -> str:
         inner_v2 = format_markdown_v2(inner)
 
         # 重新保护代码块（多行原子），避免被按行 split 切碎
-        bq_protected: List[Tuple[str, str]] = []
+        bq_protected: list[tuple[str, str]] = []
 
         def _protect_codeblock_in_bq(m2: re.Match) -> str:
             placeholder = f"\x00EXPBQCODEBLOCK{len(bq_protected)}\x00"
@@ -256,7 +255,7 @@ def format_markdown_v2(text: str) -> str:
                 quote_text = quote_match.group(1)
                 for char in SPECIAL_CHARS:
                     if char != '>':
-                        quote_text = quote_text.replace(char, f'\{char}')
+                        quote_text = quote_text.replace(char, rf'\{char}')
                 text = text.replace(placeholder, f'> {quote_text}' if quote_text else '>')
 
         elif 'TODO' in placeholder:
@@ -265,8 +264,8 @@ def format_markdown_v2(text: str) -> str:
                 task_text = todo_match.group(1)
                 for char in SPECIAL_CHARS:
                     if char not in ['-', '[', ']']:
-                        task_text = task_text.replace(char, f'\{char}')
-                text = text.replace(placeholder, f'\- \[ \] {task_text}')
+                        task_text = task_text.replace(char, rf'\{char}')
+                text = text.replace(placeholder, rf'\- \[ \] {task_text}')
 
         elif 'DONE' in placeholder:
             done_match = re.match(r'^-\s*\[x\]\s*(.*)$', original)
@@ -274,8 +273,8 @@ def format_markdown_v2(text: str) -> str:
                 task_text = done_match.group(1)
                 for char in SPECIAL_CHARS:
                     if char not in ['-', '[', ']', 'x']:
-                        task_text = task_text.replace(char, f'\{char}')
-                text = text.replace(placeholder, f'\- \[x\] {task_text}')
+                        task_text = task_text.replace(char, rf'\{char}')
+                text = text.replace(placeholder, rf'\- \[x\] {task_text}')
 
         elif 'EXPBQ' in placeholder:
             # <blockquote expandable> 已经在步骤 -1 转成 **>... + || 结尾

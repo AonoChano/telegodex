@@ -1,5 +1,5 @@
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
-from typing import List
+
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
 
 
 def get_main_menu() -> ReplyKeyboardMarkup:
@@ -14,7 +14,7 @@ def get_main_menu() -> ReplyKeyboardMarkup:
     return keyboard
 
 
-def get_provider_selector(available_providers: List[str], current_provider: str) -> InlineKeyboardMarkup:
+def get_provider_selector(available_providers: list[str], current_provider: str) -> InlineKeyboardMarkup:
     """AI 服务商选择器"""
     buttons = []
 
@@ -39,7 +39,7 @@ def get_provider_selector(available_providers: List[str], current_provider: str)
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def get_model_selector(provider: str, models: List[str], current_model: str | None) -> InlineKeyboardMarkup:
+def get_model_selector(provider: str, models: list[str], current_model: str | None) -> InlineKeyboardMarkup:
     """模型选择器"""
     buttons = []
 

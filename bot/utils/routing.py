@@ -31,7 +31,7 @@ class TelegramRoute:
     business_connection_id: str | None = None
 
     @classmethod
-    def from_message(cls, message: Message) -> "TelegramRoute":
+    def from_message(cls, message: Message) -> TelegramRoute:
         direct_topic = getattr(message, "direct_messages_topic", None)
         if direct_topic is None:
             direct_topic = _extra(message, "direct_messages_topic")
