@@ -1,7 +1,7 @@
 ---
 title: Anthropic API Compatibility
 category: reference
-last_updated: 2026-06-14
+last_updated: 2026-06-16
 relevance: medium
 summary: DeepSeek and other providers supporting Anthropic-compatible API format
 related: [CUSTOM_PROVIDERS.md, MODELS.md]
@@ -22,11 +22,11 @@ DeepSeek 提供两种 API 格式：
    - 使用标准 OpenAI SDK
 
 2. **Anthropic 兼容格式**
-   - Base URL: `https://api.deepseek.com`（相同域名，通过 SDK 自动识别）
+   - Base URL: `https://api.deepseek.com/anthropic`
    - 支持 Anthropic Messages API
    - 适用于 Claude Code、Cline 等工具
 
-**官方文档**: [DeepSeek Anthropic API](https://api-docs.deepseek.com/zh-cn/guides/anthropic_api)
+**官方文档**: [DeepSeek Anthropic API](https://api-docs.deepseek.com/guides/anthropic_api)
 
 ---
 
@@ -52,7 +52,7 @@ DEEPSEEK_API_KEY=sk-...
   "deepseek_anthropic": {
     "type": "openai_compatible",
     "api_key": "sk-...",
-    "base_url": "https://api.deepseek.com",
+    "base_url": "https://api.deepseek.com/anthropic",
     "models": ["deepseek-v4-pro", "deepseek-v4-flash"],
     "default_model": "deepseek-v4-pro"
   }
@@ -60,8 +60,7 @@ DEEPSEEK_API_KEY=sk-...
 ```
 
 **说明**：
-- DeepSeek 的 Anthropic 兼容接口与 OpenAI 格式使用相同的 Base URL
-- SDK 会根据请求格式自动识别 API 类型
+- DeepSeek 的 Anthropic 兼容接口使用独立的 Base URL：`https://api.deepseek.com/anthropic`
 - 两种格式功能完全一致，可按需选择
 
 ---
@@ -74,7 +73,7 @@ DEEPSEEK_API_KEY=sk-...
 {
   "provider": "anthropic",
   "apiKey": "sk-...",
-  "baseURL": "https://api.deepseek.com",
+  "baseURL": "https://api.deepseek.com/anthropic",
   "model": "deepseek-v4-pro"
 }
 ```
@@ -87,7 +86,7 @@ DEEPSEEK_API_KEY=sk-...
   "deepseek_from_claude_code": {
     "type": "openai_compatible",
     "api_key": "sk-...",
-    "base_url": "https://api.deepseek.com",
+    "base_url": "https://api.deepseek.com/anthropic",
     "models": ["deepseek-v4-pro"],
     "default_model": "deepseek-v4-pro"
   }
@@ -105,6 +104,22 @@ DEEPSEEK_API_KEY=sk-...
 1. **检查官方文档**：搜索 "Anthropic API" 或 "Claude API compatibility"
 2. **测试兼容性**：使用自定义 Provider 配置测试
 3. **提交 Issue**：如发现其他服务商支持，欢迎反馈
+
+---
+
+## 模型映射
+
+DeepSeek 的 Anthropic 兼容接口会自动映射 Claude 模型名称：
+
+| Claude 模型前缀 | 映射到 DeepSeek 模型 |
+|----------------|---------------------|
+| `claude-opus-*` | `deepseek-v4-pro[1m]` |
+| `claude-sonnet-*` | `deepseek-v4-flash` |
+| `claude-haiku-*` | `deepseek-v4-flash` |
+
+**注意**：当传入不支持的模型名时，API 后端会自动映射到 `deepseek-v4-flash`。
+
+这使得在 Claude Desktop APP 的开发者模式下，只需修改 `base_url` 和 `api_key` 即可接入 DeepSeek 模型。
 
 ---
 
@@ -170,8 +185,8 @@ A: 目前官方文档仅 DeepSeek 明确支持，其他服务商待验证。
 ---
 
 **参考资源**：
-- [DeepSeek Anthropic API 文档](https://api-docs.deepseek.com/zh-cn/guides/anthropic_api)
+- [DeepSeek Anthropic API 文档](https://api-docs.deepseek.com/guides/anthropic_api)
 - [Anthropic Messages API](https://docs.anthropic.com/en/api/messages)
 - [Claude Code 文档](https://docs.anthropic.com/en/docs/claude-code)
 
-**更新时间**: 2026-06-14
+**更新时间**: 2026-06-16

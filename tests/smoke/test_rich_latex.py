@@ -1,7 +1,8 @@
 """Smoke tests for rich markdown LaTeX normalization."""
 
-import _bootstrap  # noqa: F401
 import sys
+
+import _bootstrap  # noqa: F401
 
 from bot.utils.latex import normalize_rich_markdown_latex
 

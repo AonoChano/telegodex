@@ -1,21 +1,20 @@
 """冒烟：bot.utils.rich_messages 的重试与降级行为。"""
-import _bootstrap  # noqa: F401
 import asyncio
 import json
 import sys
 import time
-from contextlib import asynccontextmanager
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock
 
+import _bootstrap  # noqa: F401
 import aiohttp
 
 from bot.utils import rich_messages
 from bot.utils.rich_messages import (
-    _post_bot_method,
-    close_shared_session,
     RETRY_DELAYS,
     RETRY_MAX_ATTEMPTS,
     RETRYABLE_EXCEPTIONS,
+    _post_bot_method,
+    close_shared_session,
 )
 
 

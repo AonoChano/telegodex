@@ -1,8 +1,8 @@
 """Smoke tests for Telegram native AI routing helpers."""
 
-import _bootstrap  # noqa: F401
 import sys
 
+import _bootstrap  # noqa: F401
 from aiogram.types import Message
 
 from bot.utils.routing import TelegramRoute

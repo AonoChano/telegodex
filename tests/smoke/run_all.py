@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
-import os
 from pathlib import Path
-
 
 ROOT = Path(__file__).resolve().parents[2]
 TESTS = [

@@ -4,8 +4,10 @@
 直接交给 Telegram 渲染。只有当 sendRichMessage 失败回退到 MarkdownV2 时，才需要
 format_markdown_v2 把 HTML 标签转成 MarkdownV2 的 **>... + || 结尾 形式。
 """
-import _bootstrap  # noqa: F401
 import sys
+
+import _bootstrap  # noqa: F401
+
 from bot.utils.markdown import format_markdown_v2
 
 
