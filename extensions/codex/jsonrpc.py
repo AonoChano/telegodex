@@ -7,9 +7,11 @@ Newline-delimited JSON, no ``"jsonrpc":"2.0"`` wrapper.  See:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable
+from typing import Any
 
 from loguru import logger
 
@@ -72,10 +74,8 @@ class JsonRpcTransport:
         """Stop the reader and cancel all pending futures."""
         if self._reader_task is not None:
             self._reader_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._reader_task
-            except asyncio.CancelledError:
-                pass
             self._reader_task = None
 
         for pending in self._pending.values():

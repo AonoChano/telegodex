@@ -9,15 +9,14 @@ Lifecycle:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import shutil
-from dataclasses import dataclass
-from typing import Any
 
 from loguru import logger
 
 from config import settings
-from extensions.codex.jsonrpc import JsonRpcError, JsonRpcTransport
+from extensions.codex.jsonrpc import JsonRpcTransport
 
 _SIGKILL_TIMEOUT = 3.0
 _RESTART_BACKOFFS = [1.0, 2.0, 4.0]
@@ -176,7 +175,7 @@ class CodexDaemon:
         """Wait until the daemon has completed startup."""
         try:
             await asyncio.wait_for(self._startup_done.wait(), timeout=timeout)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             raise RuntimeError("CodexDaemon did not become ready within timeout")
 
     def on_shutdown(self) -> asyncio.Event:
@@ -192,10 +191,8 @@ class CodexDaemon:
     async def _cleanup(self) -> None:
         """Release transport and proc references."""
         if self.transport is not None:
-            try:
+            with contextlib.suppress(Exception):
                 await self.transport.close()
-            except Exception:
-                pass
             self.transport = None
         self._proc = None
 
@@ -215,7 +212,7 @@ class CodexDaemon:
         try:
             await asyncio.wait_for(proc.wait(), timeout=_SIGKILL_TIMEOUT)
             logger.info("CodexDaemon: process exited cleanly")
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning("CodexDaemon: SIGTERM timed out, sending SIGKILL")
             try:
                 proc.kill()

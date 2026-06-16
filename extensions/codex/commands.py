@@ -36,7 +36,8 @@ async def list_skills(transport: Any) -> list[dict[str, Any]]:
     """Call ``skills/list`` and return the list of available skills."""
     try:
         resp = await transport.send_request("skills/list", {})
-        return resp.get("skills", [])
+        skills: list[dict[str, Any]] = resp.get("skills", [])
+        return skills
     except Exception as exc:
         logger.warning(f"Commands: skills/list failed: {exc}")
         return []
@@ -46,7 +47,8 @@ async def list_directory(transport: Any, path: str) -> list[dict[str, Any]]:
     """Call ``fs/readDirectory`` and return directory entries."""
     try:
         resp = await transport.send_request("fs/readDirectory", {"path": path})
-        return resp.get("entries", [])
+        entries: list[dict[str, Any]] = resp.get("entries", [])
+        return entries
     except Exception as exc:
         logger.warning(f"Commands: fs/readDirectory({path}) failed: {exc}")
         return []

@@ -8,9 +8,11 @@ user's decision.  A 60-second timeout automatically denies unanswered requests.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from dataclasses import dataclass, field
 from typing import Any
 
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from loguru import logger
 
 from config import settings
@@ -40,6 +42,8 @@ class ApprovalHandler:
         self._transport_getter = transport_getter
         self._pending: dict[str | int, _PendingApproval] = {}
         self._timeout: float = float(settings.codex_approval_timeout)
+        # Cache of items by item_id for looking up diffs during approval.
+        self._item_cache: dict[str, dict[str, Any]] = {}
 
     async def handle_server_request(
         self,
@@ -69,7 +73,6 @@ class ApprovalHandler:
         """
         approval_id = params.get("approvalId", params.get("itemId", "unknown"))
         command = params.get("command", "unknown command")
-        cwd = params.get("cwd", "")
 
         logger.info(
             f"ApprovalHandler: command approval "
@@ -90,10 +93,8 @@ class ApprovalHandler:
             await pending.event.wait()
         finally:
             timeout_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await timeout_task
-            except asyncio.CancelledError:
-                pass
 
         # Build response.
         decision = pending.decision or "deny"
@@ -124,14 +125,16 @@ class ApprovalHandler:
             await pending.event.wait()
         finally:
             timeout_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await timeout_task
-            except asyncio.CancelledError:
-                pass
 
         decision = pending.decision or "deny"
         del self._pending[approval_id]
         return {"decision": decision}
+
+    def cache_item(self, item_id: str, item: dict[str, Any]) -> None:
+        """Cache an item for later lookup during approval formatting."""
+        self._item_cache[item_id] = item
 
     async def resolve(
         self,
@@ -164,7 +167,7 @@ class ApprovalHandler:
                 f"ApprovalHandler: auto-denying approval {approval_id} "
                 f"(timeout {self._timeout}s)"
             )
-            pending.decision = "deny"
+            pending.decision = "Decline"
             pending.event.set()
 
     # ------------------------------------------------------------------
@@ -193,43 +196,62 @@ class ApprovalHandler:
 
         return "\n".join(lines)
 
-    @staticmethod
     def format_file_change_approval_markdown(
+        self,
         approval_id: str | int,
         params: dict[str, Any],
     ) -> str:
         """Format a file change approval as Rich Markdown."""
-        path = params.get("path", "unknown")
-        diff = params.get("diff", "")
+        item_id = params.get("itemId", "")
+        item = self._item_cache.get(item_id, {})
+        changes = item.get("changes", [])
 
-        lines = [
-            "**Codex wants to modify a file:**",
-            "",
-            f"Path: `{path}`",
-        ]
-        if diff:
-            lines.append(f"```diff\n{diff}\n```")
+        lines = ["**Codex wants to modify a file:**", ""]
+        if changes:
+            for change in changes:
+                path = change.get("path", "unknown")
+                diff = change.get("diff", "")
+                lines.append(f"Path: `{path}`")
+                if diff:
+                    lines.append(f"```diff\n{diff}\n```")
+                lines.append("")
+        else:
+            lines.append("_No diff available (file change details not cached)._")
 
         return "\n".join(lines)
 
-    @staticmethod
-    def build_approval_keyboard(approval_id: str | int) -> dict[str, Any]:
-        """Build an inline keyboard with Approve/Deny buttons."""
-        return {
-            "inline_keyboard": [
-                [
-                    {
-                        "text": "Approve",
-                        "callback_data": f"codex_approval:{approval_id}:acceptOnce",
-                    },
-                    {
-                        "text": "Approve (Session)",
-                        "callback_data": f"codex_approval:{approval_id}:acceptForSession",
-                    },
-                    {
-                        "text": "Deny",
-                        "callback_data": f"codex_approval:{approval_id}:deny",
-                    },
-                ]
-            ]
+    def build_approval_keyboard(
+        self,
+        approval_id: str | int,
+        params: dict[str, Any] | None = None,
+    ) -> InlineKeyboardMarkup:
+        """Build an inline keyboard with Approve/Deny buttons.
+
+        Adapts to ``available_decisions`` from the app-server when provided.
+        """
+        params = params or {}
+        available = params.get("availableDecisions", [])
+        if not available:
+            # Default: show all options.
+            available = ["Accept", "AcceptForSession", "Decline"]
+
+        decision_map = {
+            "Accept": ("Approve", "Accept"),
+            "AcceptForSession": ("Approve (Session)", "AcceptForSession"),
+            "Decline": ("Deny", "Decline"),
+            "Cancel": ("Cancel", "Cancel"),
         }
+
+        buttons: list[InlineKeyboardButton] = []
+        for decision in available:
+            label, callback_value = decision_map.get(
+                decision, (decision, decision.lower())
+            )
+            buttons.append(
+                InlineKeyboardButton(
+                    text=label,
+                    callback_data=f"codex_approval:{approval_id}:{callback_value}",
+                )
+            )
+
+        return InlineKeyboardMarkup(inline_keyboard=[buttons])

@@ -5,14 +5,15 @@ Claude Code 扩展接口预留
 参考: https://docs.anthropic.com/en/docs/claude-code/sdk/sdk-overview
 """
 
-from typing import Optional, List, Dict
+from typing import Dict, List, Optional
+
 from loguru import logger
 
 
 class ClaudeCodeExtension:
     """Claude Code 集成扩展"""
 
-    def __init__(self, api_key: Optional[str] = None):
+    def __init__(self, api_key: str | None = None):
         self.api_key = api_key
         self.enabled = False
 
@@ -27,7 +28,7 @@ class ClaudeCodeExtension:
     async def execute_task(
         self,
         instruction: str,
-        context: Optional[Dict] = None
+        context: dict | None = None
     ) -> str:
         """
         执行代码任务
@@ -48,7 +49,7 @@ class ClaudeCodeExtension:
 
         return "Claude Code 功能开发中..."
 
-    async def analyze_code(self, code: str, language: str = "python") -> Dict:
+    async def analyze_code(self, code: str, language: str = "python") -> dict:
         """
         分析代码质量
 
@@ -90,7 +91,7 @@ class ClaudeCodeExtension:
 
         return "代码重构功能开发中..."
 
-    async def debug_code(self, code: str, error: str, context: Optional[List[str]] = None) -> str:
+    async def debug_code(self, code: str, error: str, context: list[str] | None = None) -> str:
         """
         调试代码
 
