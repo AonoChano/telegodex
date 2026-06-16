@@ -1,8 +1,9 @@
-from typing import List, AsyncIterator
+from collections.abc import AsyncIterator
+
 import google.generativeai as genai
 from loguru import logger
 
-from .base import BaseAIProvider, Message, AIResponse, MessageRole
+from .base import AIResponse, BaseAIProvider, Message, MessageRole
 
 
 class GoogleProvider(BaseAIProvider):
@@ -15,7 +16,7 @@ class GoogleProvider(BaseAIProvider):
 
     async def chat(
         self,
-        messages: List[Message],
+        messages: list[Message],
         model: str | None = None,
         temperature: float = 0.7,
         max_tokens: int = 4096,
@@ -68,7 +69,7 @@ class GoogleProvider(BaseAIProvider):
 
     async def chat_stream(
         self,
-        messages: List[Message],
+        messages: list[Message],
         model: str | None = None,
         temperature: float = 0.7,
         max_tokens: int = 4096,
@@ -110,7 +111,7 @@ class GoogleProvider(BaseAIProvider):
             logger.error(f"Google Stream 失败: {e}")
             raise
 
-    def get_available_models(self) -> List[str]:
+    def get_available_models(self) -> list[str]:
         """获取可用模型列表"""
         return [
             "gemini-2.0-flash-exp",

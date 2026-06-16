@@ -1,20 +1,21 @@
-from typing import Dict, Type, Any
+from typing import Any
+
 from loguru import logger
 
-from .base import BaseAIProvider
-from .openai_provider import OpenAIProvider
 from .anthropic_provider import AnthropicProvider
-from .google_provider import GoogleProvider
+from .base import BaseAIProvider
+from .china_providers import BaiduProvider, MoonshotProvider, QwenProvider, ZhipuProvider
 from .deepseek_provider import DeepSeekProvider
-from .china_providers import QwenProvider, MoonshotProvider, ZhipuProvider, BaiduProvider
+from .google_provider import GoogleProvider
 from .openai_compatible_provider import OpenAICompatibleProvider
+from .openai_provider import OpenAIProvider
 
 
 class AIRouter:
     """AI 服务商路由器 - 统一管理多个 AI Provider，支持自定义配置"""
 
     # 内置 Provider 类
-    BUILTIN_PROVIDERS: Dict[str, Type[BaseAIProvider]] = {
+    BUILTIN_PROVIDERS: dict[str, type[BaseAIProvider]] = {
         "openai": OpenAIProvider,
         "anthropic": AnthropicProvider,
         "google": GoogleProvider,
@@ -25,7 +26,7 @@ class AIRouter:
         "baidu": BaiduProvider,
     }
 
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(self, config: dict[str, Any]):
         """
         初始化路由器
 
@@ -43,10 +44,10 @@ class AIRouter:
                     }
                 }
         """
-        self.providers: Dict[str, BaseAIProvider] = {}
+        self.providers: dict[str, BaseAIProvider] = {}
         self._initialize_providers(config)
 
-    def _initialize_providers(self, config: Dict[str, Any]):
+    def _initialize_providers(self, config: dict[str, Any]):
         """初始化所有配置的 Provider"""
         for provider_name, provider_config in config.items():
             if not provider_config:
@@ -74,7 +75,7 @@ class AIRouter:
             except Exception as e:
                 logger.error(f"✗ 初始化 {provider_name} 失败: {e}")
 
-    def _initialize_custom_provider(self, name: str, config: Dict[str, Any]):
+    def _initialize_custom_provider(self, name: str, config: dict[str, Any]):
         """初始化自定义 Provider"""
         provider_type = config.pop("type")
 
@@ -116,7 +117,7 @@ class AIRouter:
         """检查 Provider 是否可用"""
         return name in self.providers
 
-    def get_all_models(self) -> Dict[str, list[str]]:
+    def get_all_models(self) -> dict[str, list[str]]:
         """获取所有 Provider 的可用模型"""
         return {
             name: provider.get_available_models()

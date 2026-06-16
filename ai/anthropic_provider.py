@@ -1,8 +1,9 @@
-from typing import List, AsyncIterator
+from collections.abc import AsyncIterator
+
 from anthropic import AsyncAnthropic
 from loguru import logger
 
-from .base import BaseAIProvider, Message, AIResponse, MessageRole
+from .base import AIResponse, BaseAIProvider, Message, MessageRole
 
 
 class AnthropicProvider(BaseAIProvider):
@@ -15,7 +16,7 @@ class AnthropicProvider(BaseAIProvider):
 
     async def chat(
         self,
-        messages: List[Message],
+        messages: list[Message],
         model: str | None = None,
         temperature: float = 0.7,
         max_tokens: int = 4096,
@@ -65,7 +66,7 @@ class AnthropicProvider(BaseAIProvider):
 
     async def chat_stream(
         self,
-        messages: List[Message],
+        messages: list[Message],
         model: str | None = None,
         temperature: float = 0.7,
         max_tokens: int = 4096,
@@ -102,7 +103,7 @@ class AnthropicProvider(BaseAIProvider):
             logger.error(f"Anthropic Stream 失败: {e}")
             raise
 
-    def get_available_models(self) -> List[str]:
+    def get_available_models(self) -> list[str]:
         """获取可用模型列表"""
         return [
             "claude-fable-5",         # 最新最强

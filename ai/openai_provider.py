@@ -1,8 +1,9 @@
-from typing import List, AsyncIterator
-from openai import AsyncOpenAI
-from loguru import logger
+from collections.abc import AsyncIterator
 
-from .base import BaseAIProvider, Message, AIResponse, MessageRole
+from loguru import logger
+from openai import AsyncOpenAI
+
+from .base import AIResponse, BaseAIProvider, Message
 
 
 class OpenAIProvider(BaseAIProvider):
@@ -15,7 +16,7 @@ class OpenAIProvider(BaseAIProvider):
 
     async def chat(
         self,
-        messages: List[Message],
+        messages: list[Message],
         model: str | None = None,
         temperature: float = 0.7,
         max_tokens: int = 4096,
@@ -58,7 +59,7 @@ class OpenAIProvider(BaseAIProvider):
 
     async def chat_stream(
         self,
-        messages: List[Message],
+        messages: list[Message],
         model: str | None = None,
         temperature: float = 0.7,
         max_tokens: int = 4096,
@@ -90,7 +91,7 @@ class OpenAIProvider(BaseAIProvider):
             logger.error(f"OpenAI Stream 失败: {e}")
             raise
 
-    def get_available_models(self) -> List[str]:
+    def get_available_models(self) -> list[str]:
         """获取可用模型列表"""
         return [
             "gpt-4o",

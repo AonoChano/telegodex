@@ -1,7 +1,6 @@
-from typing import List, AsyncIterator
 from loguru import logger
 
-from .base import BaseAIProvider, Message, AIResponse, MessageRole
+from .base import AIResponse, Message
 from .openai_compatible_provider import OpenAICompatibleProvider
 
 
@@ -92,7 +91,7 @@ class BaiduProvider(OpenAICompatibleProvider):
         )
         self.secret_key = secret_key
 
-    async def chat(self, messages: List[Message], **kwargs) -> AIResponse:
+    async def chat(self, messages: list[Message], **kwargs) -> AIResponse:
         """
         百度 API 需要特殊处理
         TODO: 实现百度的 OAuth 2.0 鉴权流程

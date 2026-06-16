@@ -1,8 +1,9 @@
-from typing import List, AsyncIterator
-from openai import AsyncOpenAI
-from loguru import logger
+from collections.abc import AsyncIterator
 
-from .base import BaseAIProvider, Message, AIResponse, MessageRole
+from loguru import logger
+from openai import AsyncOpenAI
+
+from .base import AIResponse, BaseAIProvider, Message
 
 
 class OpenAICompatibleProvider(BaseAIProvider):
@@ -17,7 +18,7 @@ class OpenAICompatibleProvider(BaseAIProvider):
         base_url: str,
         provider_name: str = "Custom",
         default_model: str = "gpt-3.5-turbo",
-        available_models: List[str] | None = None,
+        available_models: list[str] | None = None,
         **kwargs
     ):
         """
@@ -38,7 +39,7 @@ class OpenAICompatibleProvider(BaseAIProvider):
 
     async def chat(
         self,
-        messages: List[Message],
+        messages: list[Message],
         model: str | None = None,
         temperature: float = 0.7,
         max_tokens: int = 4096,
@@ -80,7 +81,7 @@ class OpenAICompatibleProvider(BaseAIProvider):
 
     async def chat_stream(
         self,
-        messages: List[Message],
+        messages: list[Message],
         model: str | None = None,
         temperature: float = 0.7,
         max_tokens: int = 4096,
@@ -112,7 +113,7 @@ class OpenAICompatibleProvider(BaseAIProvider):
             logger.error(f"{self._provider_name} Stream 失败: {e}")
             raise
 
-    def get_available_models(self) -> List[str]:
+    def get_available_models(self) -> list[str]:
         """获取可用模型列表"""
         return self._available_models
 

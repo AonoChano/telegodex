@@ -1,7 +1,8 @@
 from abc import ABC, abstractmethod
-from typing import AsyncIterator, List, Dict, Any
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from enum import Enum
+from typing import Any
 
 
 class MessageRole(str, Enum):
@@ -16,7 +17,7 @@ class Message:
     """统一消息格式"""
     role: MessageRole
     content: str
-    metadata: Dict[str, Any] | None = None
+    metadata: dict[str, Any] | None = None
 
 
 @dataclass
@@ -24,9 +25,9 @@ class AIResponse:
     """AI 响应结果"""
     content: str
     model: str
-    usage: Dict[str, int] | None = None  # tokens 使用情况
+    usage: dict[str, int] | None = None  # tokens 使用情况
     finish_reason: str | None = None
-    metadata: Dict[str, Any] | None = None
+    metadata: dict[str, Any] | None = None
 
 
 class BaseAIProvider(ABC):
@@ -39,7 +40,7 @@ class BaseAIProvider(ABC):
     @abstractmethod
     async def chat(
         self,
-        messages: List[Message],
+        messages: list[Message],
         model: str | None = None,
         temperature: float = 0.7,
         max_tokens: int = 4096,
@@ -65,7 +66,7 @@ class BaseAIProvider(ABC):
     @abstractmethod
     async def chat_stream(
         self,
-        messages: List[Message],
+        messages: list[Message],
         model: str | None = None,
         temperature: float = 0.7,
         max_tokens: int = 4096,
@@ -80,7 +81,7 @@ class BaseAIProvider(ABC):
         pass
 
     @abstractmethod
-    def get_available_models(self) -> List[str]:
+    def get_available_models(self) -> list[str]:
         """获取可用模型列表"""
         pass
 
