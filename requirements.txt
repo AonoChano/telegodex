@@ -28,3 +28,10 @@ pytz==2024.2
 
 # Logging
 loguru==0.7.3
+
+# Terminal emulation & ANSI rendering
+pyte==0.8.2
+
+# Dev tools
+ruff>=0.6.0
+mypy>=1.11.0
