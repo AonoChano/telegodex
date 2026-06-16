@@ -1,19 +1,21 @@
 from datetime import datetime
+
+from loguru import logger
 from sqlalchemy import (
-    Column,
-    Integer,
-    String,
-    DateTime,
-    Text,
-    ForeignKey,
-    Boolean,
     BigInteger,
+    Boolean,
+    Column,
+    DateTime,
+    ForeignKey,
     Index,
+    Integer,
+    JSON,
+    String,
+    Text,
     text,
 )
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-from sqlalchemy.orm import declarative_base, relationship
-from loguru import logger
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.orm import Mapped, declarative_base, relationship
 
 Base = declarative_base()
 
@@ -45,22 +47,32 @@ class Conversation(Base):
     """对话会话表"""
     __tablename__ = "conversations"
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    title = Column(String(500), nullable=True)  # 对话标题（自动生成）
+    id: Mapped[int] = Column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = Column(Integer, ForeignKey("users.id"), nullable=False)
+    # Telegram chat_id (group/supergroup/DM identifier)
+    chat_id: Mapped[int | None] = Column(BigInteger, nullable=True)
+    title: Mapped[str | None] = Column(String(500), nullable=True)  # 对话标题（自动生成）
     # Telegram topic / message_thread_id；普通私聊下为 NULL，相当于旧版的"全局会话"
-    thread_id = Column(BigInteger, nullable=True)
+    thread_id: Mapped[int | None] = Column(BigInteger, nullable=True)
+    # Transport name for multi-transport support (e.g. "telegram")
+    transport: Mapped[str | None] = Column(String(50), nullable=True)
+    # Normalized topic id ( mirrors thread_id for new records )
+    topic_id: Mapped[int | None] = Column(BigInteger, nullable=True)
     # Codex app-server thread ID（与 Telegram thread_id 不同）
-    codex_thread_id = Column(String, nullable=True)
+    codex_thread_id: Mapped[str | None] = Column(String, nullable=True)
     # Codex 会话文件路径
-    codex_thread_path = Column(String, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    is_active = Column(Boolean, default=True)
+    codex_thread_path: Mapped[str | None] = Column(String, nullable=True)
+    # Codex working directory
+    cwd: Mapped[str | None] = Column(String, nullable=True)
+    # Provider-isolated session buckets: dict[str, ProviderSessionData]
+    provider_sessions: Mapped[dict | None] = Column(JSON, nullable=True)
+    created_at: Mapped[datetime] = Column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    is_active: Mapped[bool] = Column(Boolean, default=True)
 
     # 关系
-    user = relationship("User", back_populates="conversations")
-    messages = relationship("ConversationMessage", back_populates="conversation", cascade="all, delete-orphan")
+    user: Mapped["User"] = relationship("User", back_populates="conversations")
+    messages: Mapped[list["ConversationMessage"]] = relationship("ConversationMessage", back_populates="conversation", cascade="all, delete-orphan")
 
     __table_args__ = (
         # 一个用户在同一 thread 内只保留少量活跃会话，定位最快
@@ -104,13 +116,28 @@ class Database:
         async with self.engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
             await self._ensure_column(
+                conn, "conversations", "chat_id", "BIGINT"
+            )
+            await self._ensure_column(
                 conn, "conversations", "thread_id", "BIGINT"
+            )
+            await self._ensure_column(
+                conn, "conversations", "transport", "VARCHAR"
+            )
+            await self._ensure_column(
+                conn, "conversations", "topic_id", "BIGINT"
             )
             await self._ensure_column(
                 conn, "conversations", "codex_thread_id", "VARCHAR"
             )
             await self._ensure_column(
                 conn, "conversations", "codex_thread_path", "VARCHAR"
+            )
+            await self._ensure_column(
+                conn, "conversations", "cwd", "VARCHAR"
+            )
+            await self._ensure_column(
+                conn, "conversations", "provider_sessions", "JSON"
             )
         logger.info("✓ 数据库初始化完成")
 

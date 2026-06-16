@@ -1,10 +1,10 @@
-from typing import List, Optional
-from sqlalchemy import select, desc
-from sqlalchemy.ext.asyncio import AsyncSession
 from loguru import logger
+from sqlalchemy import desc, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import User, Conversation, ConversationMessage
 from ai.base import Message, MessageRole
+
+from .models import Conversation, ConversationMessage, User
 
 
 class ContextManager:
@@ -60,7 +60,7 @@ class ContextManager:
             .where(
                 Conversation.user_id == user_id,
                 thread_clause,
-                Conversation.is_active == True,
+                Conversation.is_active.is_(True),
             )
             .order_by(desc(Conversation.updated_at))
         )
@@ -68,7 +68,11 @@ class ContextManager:
 
         if not conversation:
             conversation = Conversation(
-                user_id=user_id, thread_id=thread_id, title="新对话"
+                user_id=user_id,
+                thread_id=thread_id,
+                topic_id=thread_id,
+                transport="telegram",
+                title="新对话",
             )
             self.session.add(conversation)
             await self.session.commit()
@@ -104,7 +108,7 @@ class ContextManager:
         self,
         conversation_id: int,
         limit: int | None = None,
-    ) -> List[Message]:
+    ) -> list[Message]:
         """获取对话历史"""
         limit = limit or self.max_context_messages
 
@@ -160,7 +164,7 @@ class ContextManager:
             select(Conversation).where(
                 Conversation.user_id == user_id,
                 thread_clause,
-                Conversation.is_active == True,
+                Conversation.is_active.is_(True),
             )
         )
         active_conversations = result.scalars().all()
@@ -170,7 +174,11 @@ class ContextManager:
 
         # 创建新对话
         new_conversation = Conversation(
-            user_id=user_id, thread_id=thread_id, title="新对话"
+            user_id=user_id,
+            thread_id=thread_id,
+            topic_id=thread_id,
+            transport="telegram",
+            title="新对话",
         )
         self.session.add(new_conversation)
         await self.session.commit()
@@ -181,7 +189,7 @@ class ContextManager:
         )
         return new_conversation
 
-    async def get_user_conversations(self, user_id: int, limit: int = 10) -> List[Conversation]:
+    async def get_user_conversations(self, user_id: int, limit: int = 10) -> list[Conversation]:
         """获取用户的对话列表"""
         result = await self.session.execute(
             select(Conversation)
