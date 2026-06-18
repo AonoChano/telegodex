@@ -15,7 +15,7 @@ from aiogram import Dispatcher
 from aiogram.types import Message, Update
 
 from ai.base import MessageRole
-from bot.handlers import messages_router
+from bot.handlers import codex_router, messages_router
 
 
 def _make_mock_message(
@@ -24,24 +24,27 @@ def _make_mock_message(
     chat_type: str = "private",
     chat_id: int = 123456,
     user_id: int = 123456,
+    message_thread_id: int | None = None,
     entities: list[dict[str, Any]] | None = None,
 ) -> Message:
     """Build a real aiogram Message with all attributes handlers touch."""
-    return Message.model_validate(
-        {
-            "message_id": 1,
-            "date": int(datetime.now().timestamp()),
-            "chat": {"id": chat_id, "type": chat_type},
-            "from": {
-                "id": user_id,
-                "is_bot": False,
-                "first_name": "Test",
-                "username": "testuser",
-            },
-            "text": text,
-            "entities": entities or [],
-        }
-    )
+    payload: dict[str, Any] = {
+        "message_id": 1,
+        "date": int(datetime.now().timestamp()),
+        "chat": {"id": chat_id, "type": chat_type},
+        "from": {
+            "id": user_id,
+            "is_bot": False,
+            "first_name": "Test",
+            "username": "testuser",
+        },
+        "text": text,
+        "entities": entities or [],
+    }
+    if message_thread_id is not None:
+        payload["message_thread_id"] = message_thread_id
+        payload["is_topic_message"] = True
+    return Message.model_validate(payload)
 
 
 def _make_update(message: Message) -> Update:
@@ -84,9 +87,7 @@ class TestStartCommandRouting:
     """Verify ``/start`` reaches ``cmd_start`` with injected mocks."""
 
     @pytest.mark.asyncio
-    async def test_start_command_routed(
-        self, dp: Dispatcher, mock_context_manager: AsyncMock
-    ) -> None:
+    async def test_start_command_routed(self, dp: Dispatcher, mock_context_manager: AsyncMock) -> None:
         @dp.message.middleware()
         async def inject_deps(handler, event, data):
             data["context_manager"] = mock_context_manager
@@ -140,12 +141,14 @@ class TestTextMessageRouting:
         mock_settings.telegram_bot_token = "123:fake"
         mock_settings.max_tokens = 4096
 
-        with patch("bot.handlers.messages.settings", mock_settings):
-            with patch(
+        with (
+            patch("bot.handlers.messages.settings", mock_settings),
+            patch(
                 "bot.handlers.messages.send_rich_message",
                 AsyncMock(return_value=True),
-            ) as mock_send_rich:
-                await dp.feed_update(bot, update)
+            ) as mock_send_rich,
+        ):
+            await dp.feed_update(bot, update)
 
         # AI provider stream was invoked
         mock_ai_provider.chat_stream.assert_called_once()
@@ -161,3 +164,69 @@ class TestTextMessageRouting:
         mock_send_rich.assert_awaited_once()
         _, kwargs = mock_send_rich.call_args
         assert "Hello world" in kwargs["markdown_text"]
+
+
+class TestCodexTopicFallthrough:
+    """Verify non-Codex topics still reach the normal AI chat handler."""
+
+    @pytest.mark.asyncio
+    async def test_unbound_forum_topic_reaches_ai_handler(
+        self,
+        mock_context_manager: AsyncMock,
+        mock_ai_provider: MagicMock,
+    ) -> None:
+        dispatcher = Dispatcher()
+        dispatcher.include_router(codex_router)
+        dispatcher.include_router(messages_router)
+
+        @dispatcher.message.middleware()
+        async def inject_deps(handler, event, data):
+            data["context_manager"] = mock_context_manager
+            data["ai_router"] = ai_router
+            data["orchestrator"] = MagicMock()
+            return await handler(event, data)
+
+        ai_router = MagicMock()
+        ai_router.get_provider = MagicMock(return_value=mock_ai_provider)
+        ai_router.get_default_provider = MagicMock(return_value=mock_ai_provider)
+        ai_router.is_provider_available = MagicMock(return_value=True)
+
+        class _Scalars:
+            def first(self):
+                return None
+
+        class _DbResult:
+            def scalars(self):
+                return _Scalars()
+
+        mock_context_manager.session.execute = AsyncMock(return_value=_DbResult())
+
+        bot = AsyncMock()
+        message = _make_mock_message(
+            text="normal topic message",
+            chat_type="supergroup",
+            message_thread_id=222,
+        )
+        update = _make_update(message)
+
+        mock_settings = MagicMock()
+        mock_settings.telegram_bot_token = "123:fake"
+        mock_settings.max_tokens = 4096
+
+        with (
+            patch("bot.handlers.messages.settings", mock_settings),
+            patch(
+                "bot.handlers.messages.send_rich_message",
+                AsyncMock(return_value=True),
+            ) as mock_send_rich,
+        ):
+            await dispatcher.feed_update(bot, update)
+
+        mock_ai_provider.chat_stream.assert_called_once()
+        mock_send_rich.assert_awaited_once()
+        _, kwargs = mock_send_rich.call_args
+        assert kwargs["message_thread_id"] == 222
+        assert "Hello world" in kwargs["markdown_text"]
+
+        codex_router._parent_router = None
+        messages_router._parent_router = None

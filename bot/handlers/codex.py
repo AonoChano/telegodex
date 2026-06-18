@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import contextlib
 import uuid
+from dataclasses import dataclass
 from typing import Any
 
 from aiogram import Bot, F, Router
@@ -34,6 +35,7 @@ from core.orchestrator import Orchestrator, StreamingCallbacks
 from core.session import SessionKey, session_manager
 from extensions.codex.commands import parse_instruction_prefix
 from extensions.codex.daemon import codex_daemon
+from storage.context_manager import ContextManager
 from utils.screenshot import send_screenshot_to_chat
 
 router = Router(name="codex")
@@ -41,11 +43,33 @@ router = Router(name="codex")
 # Draft limits for codex streaming.
 DRAFT_FLUSH_CHARS = 200
 
+_CODEX_TOPIC_BOUND = "bound"
+_CODEX_TOPIC_RECOVERABLE = "recoverable"
+_CODEX_TOPIC_NOT_CODEX = "not_codex"
+
 # Bot instance stored for approval message routing.
 _current_bot: Bot | None = None
 
 # Global Orchestrator reference for transport-level approval callbacks.
 _global_orch: Orchestrator | None = None
+
+
+@dataclass(frozen=True)
+class _TopicRecoveryRequest:
+    chat_id: int | str
+    topic_id: int
+    prompt: str
+    user_id: int
+
+
+@dataclass(frozen=True)
+class _TopicRecoveryPrompt:
+    request_id: str
+    message_id: int
+
+
+_topic_recovery_requests: dict[str, _TopicRecoveryRequest] = {}
+_topic_recovery_prompts: dict[tuple[int | str, int], _TopicRecoveryPrompt] = {}
 
 
 def _ensure_global_orch(orchestrator: Orchestrator) -> None:
@@ -56,9 +80,7 @@ def _ensure_global_orch(orchestrator: Orchestrator) -> None:
         orchestrator.set_approval_ui_sender(_approval_ui_sender)
 
 
-async def _approval_ui_sender(
-    method: str, params: dict[str, Any]
-) -> None:
+async def _approval_ui_sender(method: str, params: dict[str, Any]) -> None:
     """Send approval requests to Telegram using the cached bot instance."""
     if _current_bot is None or _global_orch is None:
         return
@@ -71,16 +93,10 @@ async def _approval_ui_sender(
         return
     approval_id = params.get("approvalId", params.get("itemId", "unknown"))
     if method == "item/commandExecution/requestApproval":
-        text = _global_orch.approval_handler.format_command_approval_markdown(
-            approval_id, params
-        )
+        text = _global_orch.approval_handler.format_command_approval_markdown(approval_id, params)
     else:
-        text = _global_orch.approval_handler.format_file_change_approval_markdown(
-            approval_id, params
-        )
-    keyboard = _global_orch.approval_handler.build_approval_keyboard(
-        approval_id, params
-    )
+        text = _global_orch.approval_handler.format_file_change_approval_markdown(approval_id, params)
+    keyboard = _global_orch.approval_handler.build_approval_keyboard(approval_id, params)
     topic_id = sm.get_topic_id(thread_id)
     try:
         await _current_bot.send_message(
@@ -90,9 +106,7 @@ async def _approval_ui_sender(
             message_thread_id=topic_id,
         )
     except Exception as exc:
-        logger.warning(
-            f"Codex: failed to send approval message to {session_key}: {exc}"
-        )
+        logger.warning(f"Codex: failed to send approval message to {session_key}: {exc}")
 
 
 def _bot_token() -> str:
@@ -102,6 +116,90 @@ def _bot_token() -> str:
 # ---------------------------------------------------------------------------
 # Forum topic helpers
 # ---------------------------------------------------------------------------
+
+
+async def _handle_codex_new(
+    message: Message,
+    route: TelegramRoute,
+    context_manager: Any,
+    orchestrator: Orchestrator,
+    session_key: SessionKey,
+    user_id: int,
+) -> None:
+    """Handle /codex new — create a new Codex session in a new forum topic."""
+    bot = message.bot
+    if bot is None:
+        await message.answer(
+            "Bot instance unavailable.",
+            **route.send_kwargs(),
+        )
+        return
+
+    try:
+        # Create the new Codex session first.
+        info = await orchestrator.codex_new_session(session_key, context_manager.session, user_id)
+        thread_id = info["thread_id"]
+        cwd = info.get("cwd", "default")
+
+        # Create a forum topic for this session.
+        # Topic name: "Codex: <short_thread_id>"
+        short_thread = thread_id[:8]
+        topic_name = f"Codex: {short_thread}"
+
+        forum_topic = await bot.create_forum_topic(
+            chat_id=route.chat_id,
+            name=topic_name,
+        )
+        topic_id = forum_topic.message_thread_id
+
+        # Update the session manager to map this thread to the topic.
+        sm = orchestrator.session_manager
+        if sm is not None:
+            sm.set_topic_id(thread_id, topic_id)
+
+            # Update the SessionKey mapping from (topic_id=None) to (topic_id=N)
+            old_key = SessionKey.from_telegram_message(route.chat_id, None)
+            new_key = SessionKey.from_telegram_message(route.chat_id, topic_id)
+            updated = sm.update_session_key(old_key, new_key)
+            logger.info(
+                f"_handle_codex_new: updated session key mapping: old={old_key}, new={new_key}, success={updated}"
+            )
+
+        # Update the database conversation record with the topic_id.
+        from sqlalchemy import update
+
+        from storage.models import Conversation
+
+        stmt = update(Conversation).where(Conversation.codex_thread_id == thread_id).values(topic_id=topic_id)
+        await context_manager.session.execute(stmt)
+        await context_manager.session.commit()
+
+        # Send a welcome message to the new topic.
+        await bot.send_message(
+            chat_id=route.chat_id,
+            message_thread_id=topic_id,
+            text=(
+                f"**New Codex Session**\n\n"
+                f"Thread: `{thread_id}`\n"
+                f"CWD: `{cwd}`\n\n"
+                f"Send your prompts here directly (no `/codex` prefix needed)."
+            ),
+            parse_mode="Markdown",
+        )
+
+        # Send a confirmation to the original chat.
+        await message.answer(
+            f"✅ Created new Codex session in topic **{topic_name}**.",
+            parse_mode="Markdown",
+            **route.send_kwargs(),
+        )
+
+    except Exception as exc:
+        logger.exception("Failed to create Codex session with forum topic")
+        await message.answer(
+            f"❌ Failed to create new session: {exc}",
+            **route.send_kwargs(),
+        )
 
 
 def _codex_send_kwargs(route: TelegramRoute, topic_id: int | None) -> dict[str, Any]:
@@ -137,11 +235,78 @@ async def _codex_reply(
     )
 
 
+def _topic_recovery_key(route: TelegramRoute) -> tuple[int | str, int] | None:
+    if route.message_thread_id is None:
+        return None
+    return route.chat_id, route.message_thread_id
+
+
+async def _delete_previous_topic_recovery_prompt(bot: Bot, route: TelegramRoute) -> None:
+    key = _topic_recovery_key(route)
+    if key is None:
+        return
+    previous = _topic_recovery_prompts.pop(key, None)
+    if previous is None:
+        return
+    _topic_recovery_requests.pop(previous.request_id, None)
+    with contextlib.suppress(Exception):
+        await bot.delete_message(chat_id=route.chat_id, message_id=previous.message_id)
+
+
+async def _send_topic_recovery_prompt(message: Message, route: TelegramRoute, prompt: str) -> None:
+    """Ask the user whether to create a fresh Codex session for this topic."""
+    bot = message.bot
+    if bot is None or route.message_thread_id is None:
+        return
+
+    await _delete_previous_topic_recovery_prompt(bot, route)
+    request_id = str(uuid.uuid4())
+    _topic_recovery_requests[request_id] = _TopicRecoveryRequest(
+        chat_id=route.chat_id,
+        topic_id=route.message_thread_id,
+        prompt=prompt,
+        user_id=message.from_user.id if message.from_user else 0,
+    )
+    sent = await bot.send_message(
+        chat_id=route.chat_id,
+        message_thread_id=route.message_thread_id,
+        text=(
+            "This topic looks like a Codex topic, but no active Codex thread is bound to it.\n\n"
+            "Create a new Codex session here and run the message you just sent?"
+        ),
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="Create new Codex session",
+                        callback_data=f"codex_topic_recover|{request_id}|create",
+                    ),
+                    InlineKeyboardButton(
+                        text="Cancel",
+                        callback_data=f"codex_topic_recover|{request_id}|cancel",
+                    ),
+                ]
+            ]
+        ),
+    )
+    key = _topic_recovery_key(route)
+    if key is not None and getattr(sent, "message_id", None) is not None:
+        _topic_recovery_prompts[key] = _TopicRecoveryPrompt(request_id=request_id, message_id=sent.message_id)
+
+
 async def _is_codex_bound_topic(
     thread_id: int,
     context_manager: Any,
 ) -> bool:
     """Check whether a Telegram thread is bound to a Codex session."""
+    return await _codex_topic_state(thread_id, context_manager) == _CODEX_TOPIC_BOUND
+
+
+async def _codex_topic_state(
+    thread_id: int,
+    context_manager: Any,
+) -> str:
+    """Classify a Telegram topic for Codex routing."""
     from sqlalchemy import or_, select
 
     from storage.models import Conversation
@@ -156,7 +321,26 @@ async def _is_codex_bound_topic(
         Conversation.is_active.is_(True),
     )
     result = await db.execute(stmt)
-    return result.scalars().first() is not None
+    conv = result.scalars().first()
+    if conv is not None:
+        logger.debug(f"Codex topic check: thread_id={thread_id}, state=bound, conv=id={conv.id}")
+        return _CODEX_TOPIC_BOUND
+
+    stmt = select(Conversation).where(
+        or_(
+            Conversation.thread_id == thread_id,
+            Conversation.topic_id == thread_id,
+        ),
+        Conversation.codex_thread_id.isnot(None),
+    )
+    result = await db.execute(stmt)
+    conv = result.scalars().first()
+    if conv is not None:
+        logger.debug(f"Codex topic check: thread_id={thread_id}, state=recoverable, conv=id={conv.id}")
+        return _CODEX_TOPIC_RECOVERABLE
+
+    logger.debug(f"Codex topic check: thread_id={thread_id}, state=not_codex")
+    return _CODEX_TOPIC_NOT_CODEX
 
 
 # ---------------------------------------------------------------------------
@@ -170,18 +354,20 @@ async def _execute_codex_prompt(
     context_manager: Any,
     orchestrator: Orchestrator,
     prompt: str,
+    user_id_override: int | None = None,
 ) -> None:
     """Execute a Codex chat prompt and stream results back via Telegram."""
+    logger.info(f"_execute_codex_prompt: starting, prompt='{prompt[:50]}...', thread_id={route.message_thread_id}")
     global _current_bot
     bot = message.bot
     if bot is None:
+        logger.warning("_execute_codex_prompt: bot is None, returning")
         return
     _current_bot = bot
 
-    session_key = SessionKey.from_telegram_message(
-        route.chat_id, route.message_thread_id
-    )
-    user_id = message.from_user.id if message.from_user else 0
+    session_key = SessionKey.from_telegram_message(route.chat_id, route.message_thread_id)
+    logger.info(f"_execute_codex_prompt: session_key={session_key}")
+    user_id = user_id_override if user_id_override is not None else (message.from_user.id if message.from_user else 0)
 
     # Send typing indicator.
     await bot.send_chat_action(
@@ -216,29 +402,32 @@ async def _execute_codex_prompt(
         logger.debug(f"Codex: failed to send stop button: {exc}")
 
     try:
-        await toolbar_handler.send_toolbar(
+        await toolbar_handler.send_reply_keyboard(
             bot,
             session_key=session_key,
             message_thread_id=topic_id,
         )
     except Exception as exc:
-        logger.debug(f"Codex: failed to send toolbar: {exc}")
+        logger.debug(f"Codex: failed to send reply keyboard: {exc}")
 
-    use_draft = message.chat.type == "private"
-    stream = DraftStream(
-        bot_token=_bot_token(),
-        chat_id=route.chat_id,
-        message_thread_id=topic_id,
-        direct_messages_topic_id=route.direct_messages_topic_id,
-        business_connection_id=route.business_connection_id,
-        use_rich=True,
-    ) if use_draft else None
+    # Enable draft streaming in private chats and forum topics.
+    use_draft = message.chat.type == "private" or route.message_thread_id is not None
+    stream = (
+        DraftStream(
+            bot_token=_bot_token(),
+            chat_id=route.chat_id,
+            message_thread_id=topic_id,
+            direct_messages_topic_id=route.direct_messages_topic_id,
+            business_connection_id=route.business_connection_id,
+            use_rich=True,
+        )
+        if use_draft
+        else None
+    )
 
     reaction_tracker = None
     if stop_msg is not None:
-        reaction_tracker = ReactionTracker(
-            bot, stop_msg.chat.id, stop_msg.message_id
-        )
+        reaction_tracker = ReactionTracker(bot, stop_msg.chat.id, stop_msg.message_id)
         try:
             await reaction_tracker.set_state("thinking")
         except Exception as exc:
@@ -297,13 +486,19 @@ async def _execute_codex_prompt(
             )
         if not success:
             await _codex_reply(
-                message, final_text, route, topic_id,
+                message,
+                final_text,
+                route,
+                topic_id,
             )
 
     except Exception as exc:
         logger.exception("Codex: turn failed")
         await _codex_reply(
-            message, f"Codex error: {exc}", route, topic_id,
+            message,
+            f"Codex error: {exc}",
+            route,
+            topic_id,
         )
     finally:
         # Remove the stop button message.
@@ -315,6 +510,11 @@ async def _execute_codex_prompt(
                 )
             except Exception as exc:
                 logger.debug(f"Codex: failed to delete stop button: {exc}")
+        # Remove ReplyKeyboard when the turn ends.
+        try:
+            await toolbar_handler.remove_reply_keyboard(bot, session_key, message_thread_id=topic_id)
+        except Exception as exc:
+            logger.debug(f"Codex: failed to remove reply keyboard: {exc}")
 
 
 # ---------------------------------------------------------------------------
@@ -338,15 +538,11 @@ async def cmd_codex_v2(
     route = TelegramRoute.from_message(message)
     chat_id = route.chat_id
     user_id = message.from_user.id if message.from_user else 0
-    session_key = SessionKey.from_telegram_message(
-        chat_id, route.message_thread_id
-    )
+    session_key = SessionKey.from_telegram_message(chat_id, route.message_thread_id)
 
     # Codex only works from the main chat (All), not inside conversation threads.
     if route.message_thread_id is not None:
-        is_bound = await _is_codex_bound_topic(
-            route.message_thread_id, context_manager
-        )
+        is_bound = await _is_codex_bound_topic(route.message_thread_id, context_manager)
         if not is_bound:
             await message.answer(
                 "Codex is only available from the main chat screen.\n\n"
@@ -361,7 +557,7 @@ async def cmd_codex_v2(
         # In main chat — extract prompt after /codex
         prompt = message.text or ""
         if prompt.startswith("/codex"):
-            prompt = prompt[len("/codex"):].strip()
+            prompt = prompt[len("/codex") :].strip()
 
     if not prompt:
         await message.answer(
@@ -403,8 +599,13 @@ async def cmd_codex_v2(
     # Determine if this should be treated as a streaming prompt or a command.
     stripped = prompt.strip().lower()
     is_prompt = (
-        stripped not in {
-            "new", "status", "pwd", "threads", "archive",
+        stripped
+        not in {
+            "new",
+            "status",
+            "pwd",
+            "threads",
+            "archive",
         }
         and not stripped.startswith("cd ")
         and not stripped.startswith("switch ")
@@ -412,9 +613,12 @@ async def cmd_codex_v2(
     )
 
     if is_prompt:
-        await _execute_codex_prompt(
-            message, route, context_manager, orchestrator, prompt
-        )
+        await _execute_codex_prompt(message, route, context_manager, orchestrator, prompt)
+        return
+
+    # Special handling for "/codex new" — create a forum topic.
+    if stripped == "new":
+        await _handle_codex_new(message, route, context_manager, orchestrator, session_key, user_id)
         return
 
     # Non-streaming command — use Orchestrator.handle_message.
@@ -444,21 +648,29 @@ async def cmd_codex_v2(
 
 
 class IsCodexBoundTopic(BaseFilter):
-    """Filter: matches text messages inside any forum topic (not main chat).
+    """Filter: match plain text messages in Codex-bound forum topics only."""
 
-    The actual Codex-binding check is performed in the handler so that
-    aiogram dependency injection (``context_manager``) is available there.
-    Non-bound topics simply return early and the update propagates to the
-    next handler (e.g. the generic AI chat handler).
-    """
-
-    async def __call__(self, message: Message) -> bool:
+    async def __call__(self, message: Message, context_manager: Any | None = None) -> bool:
         if message.message_thread_id is None:
+            logger.debug("IsCodexBoundTopic: message_thread_id is None, skipping")
             return False
         if message.text is None:
+            logger.debug("IsCodexBoundTopic: text is None, skipping")
             return False
         # Let /codex commands pass through to the command handler.
-        return not message.text.strip().startswith("/codex")
+        is_codex_cmd = message.text.strip().startswith("/codex")
+        logger.debug(
+            f"IsCodexBoundTopic: thread_id={message.message_thread_id}, "
+            f"text={message.text[:30]}..., is_codex_cmd={is_codex_cmd}"
+        )
+        if is_codex_cmd:
+            return False
+        if context_manager is None:
+            logger.debug("IsCodexBoundTopic: context_manager unavailable")
+            return False
+        state = await _codex_topic_state(message.message_thread_id, context_manager)
+        logger.debug(f"IsCodexBoundTopic: thread_id={message.message_thread_id}, state={state}")
+        return state in {_CODEX_TOPIC_BOUND, _CODEX_TOPIC_RECOVERABLE}
 
 
 @router.message(F.text, IsCodexBoundTopic())
@@ -472,6 +684,7 @@ async def handle_codex_topic_message(
     Routes the message directly to the Codex session bound to this topic
     without requiring the /codex prefix.
     """
+    logger.info(f"handle_codex_topic_message: received message in thread {message.message_thread_id}")
     route = TelegramRoute.from_message(message)
     prompt = (message.text or "").strip()
 
@@ -482,13 +695,17 @@ async def handle_codex_topic_message(
     topic_id = message.message_thread_id
     if topic_id is None:
         return
-    is_bound = await _is_codex_bound_topic(topic_id, context_manager)
-    if not is_bound:
-        # Not a Codex topic — let the update propagate to the next handler.
+    state = await _codex_topic_state(topic_id, context_manager)
+    if state == _CODEX_TOPIC_RECOVERABLE:
+        await _send_topic_recovery_prompt(message, route, prompt)
+        return
+    if state != _CODEX_TOPIC_BOUND:
         return
 
     # Check daemon readiness.
-    if not codex_daemon.is_alive():
+    daemon_alive = codex_daemon.is_alive()
+    logger.info(f"handle_codex_topic_message: codex_daemon.is_alive()={daemon_alive}")
+    if not daemon_alive:
         await _codex_reply(
             message,
             "Codex daemon is not running. Please restart the bot.",
@@ -497,13 +714,13 @@ async def handle_codex_topic_message(
         )
         return
 
+    logger.info("handle_codex_topic_message: calling orchestrator.ensure_transport_handlers()")
     orchestrator.ensure_transport_handlers()
     _ensure_global_orch(orchestrator)
 
     # Route the message as a Codex prompt.
-    await _execute_codex_prompt(
-        message, route, context_manager, orchestrator, prompt
-    )
+    logger.info(f"handle_codex_topic_message: routing to _execute_codex_prompt, prompt='{prompt[:50]}...'")
+    await _execute_codex_prompt(message, route, context_manager, orchestrator, prompt)
 
 
 # ---------------------------------------------------------------------------
@@ -527,13 +744,11 @@ async def cmd_model(
     user_id = message.from_user.id
     route = TelegramRoute.from_message(message)
     thread_id = route.storage_thread_id
-    session_key = SessionKey.from_telegram_message(
-        route.chat_id, route.message_thread_id
-    )
+    session_key = SessionKey.from_telegram_message(route.chat_id, route.message_thread_id)
 
     prompt = message.text or ""
     if prompt.startswith("/model"):
-        prompt = prompt[len("/model"):].strip()
+        prompt = prompt[len("/model") :].strip()
 
     if not prompt:
         available = orchestrator.providers.list_available()
@@ -557,9 +772,7 @@ async def cmd_model(
         return
 
     user = await context_manager.get_or_create_user(user_id)
-    conversation = await context_manager.get_or_create_conversation(
-        user_id, thread_id=thread_id
-    )
+    conversation = await context_manager.get_or_create_conversation(user_id, thread_id=thread_id)
 
     session_data = await _load_session_data(conversation, session_key)
 
@@ -570,7 +783,7 @@ async def cmd_model(
 
     # Switch active provider.
     user.preferred_provider = provider_name
-    bucket = session_manager.set_active_provider(session_key, provider_name)
+    session_manager.set_active_provider(session_key, provider_name)
 
     # Resolve or create the provider-specific conversation.
     provider_conv = await _resolve_provider_conversation(
@@ -581,8 +794,7 @@ async def cmd_model(
     await context_manager.session.commit()
 
     await message.answer(
-        f"✅ Switched to `{provider_name}`\\.\n"
-        f"_Messages in this thread are now isolated per provider\\._",
+        f"✅ Switched to `{provider_name}`\\.\n_Messages in this thread are now isolated per provider\\._",
         parse_mode="MarkdownV2",
         **route.send_kwargs(),
     )
@@ -600,12 +812,10 @@ async def cmd_shell(
 ) -> None:
     """Handle /shell <command> as a standalone alternative to the ! prefix."""
     route = TelegramRoute.from_message(message)
-    session_key = SessionKey.from_telegram_message(
-        route.chat_id, route.message_thread_id
-    )
+    session_key = SessionKey.from_telegram_message(route.chat_id, route.message_thread_id)
     prompt = message.text or ""
     if prompt.startswith("/shell"):
-        prompt = prompt[len("/shell"):].strip()
+        prompt = prompt[len("/shell") :].strip()
 
     if not prompt:
         await message.answer(
@@ -640,8 +850,7 @@ async def cmd_shell(
             "session_key": session_key,
         }
         await message.answer(
-            f"Dangerous command detected:\n```\n{prompt}\n```\n"
-            "Do you want to execute it?",
+            f"Dangerous command detected:\n```\n{prompt}\n```\nDo you want to execute it?",
             reply_markup=keyboard,
             parse_mode="Markdown",
             **route.send_kwargs(),
@@ -665,9 +874,7 @@ async def _execute_shell_telegram(
         **route.send_kwargs(),
     )
     try:
-        result = await orchestrator.shell_provider.execute(
-            command, session_id=session_key.to_string()
-        )
+        result = await orchestrator.shell_provider.execute(command, session_id=session_key.to_string())
         output = result["stdout"]
         stderr = result["stderr"]
         returncode = result["returncode"]
@@ -740,6 +947,75 @@ async def handle_codex_stop_callback(
         await callback_query.answer("No active turn.", show_alert=False)
 
 
+@router.callback_query(F.data.startswith("codex_topic_recover|"))
+async def handle_codex_topic_recovery_callback(
+    callback_query: CallbackQuery,
+    context_manager: Any,
+    orchestrator: Orchestrator,
+) -> None:
+    """Handle create/cancel for a recoverable Codex forum topic."""
+    data = callback_query.data
+    if data is None:
+        await callback_query.answer("Invalid recovery request.", show_alert=True)
+        return
+    try:
+        _, request_id, decision = data.split("|", 2)
+    except ValueError:
+        await callback_query.answer("Invalid recovery request.", show_alert=True)
+        return
+
+    request = _topic_recovery_requests.pop(request_id, None)
+    msg = callback_query.message
+    if not isinstance(msg, Message):
+        await callback_query.answer("Message unavailable.", show_alert=True)
+        return
+
+    key = (msg.chat.id, msg.message_thread_id) if msg.message_thread_id is not None else None
+    if key is not None:
+        existing = _topic_recovery_prompts.get(key)
+        if existing is not None and existing.request_id == request_id:
+            _topic_recovery_prompts.pop(key, None)
+
+    with contextlib.suppress(Exception):
+        await msg.delete()
+
+    if request is None:
+        await callback_query.answer("Request expired or already handled.", show_alert=True)
+        return
+    if decision != "create":
+        await callback_query.answer("Cancelled.", show_alert=False)
+        return
+
+    if not codex_daemon.is_alive():
+        await callback_query.answer("Codex daemon is not running.", show_alert=True)
+        return
+
+    route = TelegramRoute(
+        chat_id=request.chat_id,
+        message_thread_id=request.topic_id,
+    )
+    session_key = SessionKey.from_telegram_message(request.chat_id, request.topic_id)
+    try:
+        info = await orchestrator.codex_new_session(session_key, context_manager.session, request.user_id)
+        thread_id = info["thread_id"]
+        sm = orchestrator.session_manager
+        if sm is not None:
+            sm.set_topic_id(thread_id, request.topic_id)
+        await callback_query.answer("Created.", show_alert=False)
+        await _execute_codex_prompt(
+            msg,
+            route,
+            context_manager,
+            orchestrator,
+            request.prompt,
+            user_id_override=request.user_id,
+        )
+    except Exception as exc:
+        logger.exception("Failed to recover Codex topic")
+        await callback_query.answer("Failed to create session.", show_alert=True)
+        await _codex_reply(msg, f"Codex error: {exc}", route, request.topic_id)
+
+
 @router.callback_query(F.data.startswith("shell_approve:"))
 async def handle_shell_approve_callback(
     callback_query: CallbackQuery,
@@ -760,9 +1036,7 @@ async def handle_shell_approve_callback(
     pending = orchestrator.pending_shell_commands.pop(approval_id, None)
 
     if pending is None:
-        await callback_query.answer(
-            "Request expired or already handled.", show_alert=True
-        )
+        await callback_query.answer("Request expired or already handled.", show_alert=True)
         return
 
     command = pending["command"]
@@ -791,9 +1065,7 @@ async def handle_shell_approve_callback(
             parse_mode="Markdown",
         )
     await callback_query.answer("Executing...")
-    await _execute_shell_telegram(
-        message, route, orchestrator, command, session_key
-    )
+    await _execute_shell_telegram(message, route, orchestrator, command, session_key)
 
 
 # ---------------------------------------------------------------------------

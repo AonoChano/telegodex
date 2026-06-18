@@ -33,9 +33,7 @@ def _detect_codex_executable() -> str:
         if os.path.isfile(explicit):
             logger.info(f"Codex executable resolved via config: {explicit}")
             return explicit
-        logger.warning(
-            f"CODEX_EXECUTABLE_PATH={explicit} is not found; falling back to auto-detection"
-        )
+        logger.warning(f"CODEX_EXECUTABLE_PATH={explicit} is not found; falling back to auto-detection")
 
     # shutil.which("codex") covers Unix and npm global on Windows PATH.
     candidate = shutil.which("codex")
@@ -56,9 +54,7 @@ def _detect_codex_executable() -> str:
     if npx:
         return npx
 
-    raise FileNotFoundError(
-        "Codex executable not found. Install Codex CLI or set CODEX_EXECUTABLE_PATH in .env."
-    )
+    raise FileNotFoundError("Codex executable not found. Install Codex CLI or set CODEX_EXECUTABLE_PATH in .env.")
 
 
 class CodexDaemon:
@@ -110,6 +106,10 @@ class CodexDaemon:
                 stderr=asyncio.subprocess.PIPE,
             )
 
+            # Start stderr logger task
+            if self._proc.stderr:
+                asyncio.create_task(self._log_stderr())
+
             # Create a fresh transport wired to the subprocess stdio.
             transport = JsonRpcTransport()
             transport.start(self._proc.stdout, self._proc.stdin)  # type: ignore[arg-type]
@@ -127,6 +127,8 @@ class CodexDaemon:
                     },
                 },
             )
+            if result is None:
+                raise RuntimeError("initialize request returned None - process may have crashed")
             logger.info(
                 f"CodexDaemon: server ready — "
                 f"platform={result.get('platformFamily', '?')}/"
@@ -221,19 +223,29 @@ class CodexDaemon:
                 pass
         self._proc = None
 
+    async def _log_stderr(self) -> None:
+        """Read and log stderr from the codex subprocess."""
+        if self._proc is None or self._proc.stderr is None:
+            return
+        try:
+            while True:
+                line = await self._proc.stderr.readline()
+                if not line:
+                    break
+                text = line.decode("utf-8", errors="replace").rstrip()
+                if text:
+                    logger.warning(f"CodexDaemon stderr: {text}")
+        except Exception as exc:
+            logger.debug(f"CodexDaemon: stderr reader error: {exc}")
+
     async def _restart(self) -> None:
         """Attempt restart with exponential backoff. Raises on exhaustion."""
         if self._restart_count >= len(_RESTART_BACKOFFS):
-            raise RuntimeError(
-                f"CodexDaemon: max restarts ({len(_RESTART_BACKOFFS)}) exceeded"
-            )
+            raise RuntimeError(f"CodexDaemon: max restarts ({len(_RESTART_BACKOFFS)}) exceeded")
 
         delay = _RESTART_BACKOFFS[self._restart_count]
         self._restart_count += 1
-        logger.warning(
-            f"CodexDaemon: restarting in {delay}s "
-            f"(attempt {self._restart_count}/{len(_RESTART_BACKOFFS)})"
-        )
+        logger.warning(f"CodexDaemon: restarting in {delay}s (attempt {self._restart_count}/{len(_RESTART_BACKOFFS)})")
         await asyncio.sleep(delay)
         await self.start()
 

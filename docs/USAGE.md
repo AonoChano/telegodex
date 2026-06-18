@@ -52,7 +52,7 @@ When a provider supports `chat_stream()`, Telegodex streams temporary Rich Messa
 
 ## CodexBridge
 
-Use `/codex <prompt>` to run Codex CLI tasks from Telegram. The bot runs a persistent `codex app-server` subprocess and communicates via JSON-RPC 2.0 over stdio. Each Telegram private chat gets its own Codex session (thread) with persistent context across turns.
+Use `/codex <prompt>` to run Codex CLI tasks from Telegram. The bot runs a persistent `codex app-server` subprocess and communicates via JSON-RPC 2.0 over stdio. Each Telegram route is keyed by `SessionKey` (`chat_id` plus topic when present), so private chats and Codex-bound forum topics keep separate Codex sessions.
 
 **Commands:**
 
@@ -63,6 +63,7 @@ Use `/codex <prompt>` to run Codex CLI tasks from Telegram. The bot runs a persi
 | `!` | `/codex !<command>` | Execute a shell command in the session |
 | `@` | `/codex @<path>` | List files in a directory |
 | `new` | `/codex new` | Start a fresh Codex session |
+| `status` | `/codex status` | Show current Codex thread, cwd, and turn state |
 
 **Examples:**
 
@@ -76,7 +77,11 @@ Use `/codex <prompt>` to run Codex CLI tasks from Telegram. The bot runs a persi
 
 **Approvals:** When Codex wants to execute a command or modify a file, it sends an approval request with inline Approve/Deny buttons. Approvals auto-deny after 60 seconds (configurable via `CODEX_APPROVAL_TIMEOUT`).
 
-**Streaming:** Codex output is streamed as Rich Message drafts in private chats (up to 6 drafts per turn), then persisted as a final Rich Message.
+**Forum topics:** In a forum supergroup, `/codex new` creates a fresh Codex session and binds it to a forum topic. Messages sent inside that Codex-bound topic can continue the session without repeating the `/codex` prefix. If a historical Codex topic has no active thread binding, Telegodex asks whether to create a fresh Codex session in that topic or cancel.
+
+**Controls:** While a Codex turn or Shell process is active, Telegodex can show a temporary ReplyKeyboard with controls such as Stop, Live, Last Reply, and Status. Equivalent slash commands are always available: `/stop`, `/live`, `/last`, and `/status`.
+
+**Streaming:** Codex output is streamed as Rich Message drafts in private chats and forum topics, then persisted as a final Rich Message. Command execution output deltas are included in the same stream so long-running commands show progress before completion.
 
 **Configuration:**
 

@@ -15,7 +15,7 @@ from loguru import logger
 from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.session import ProviderSessionData, SessionData, SessionKey, SessionManager
+from core.session import ProviderSessionData, SessionKey, SessionManager
 from extensions.codex.daemon import CodexDaemon
 from extensions.codex.jsonrpc import JsonRpcTransport
 from storage.models import Conversation
@@ -146,42 +146,44 @@ class CodexSessionManager(SessionManager):
                 persisted_thread_id = conv.codex_thread_id
 
             if persisted_thread_id:
-                # Resume existing thread.
-                logger.info(
-                    f"CodexSession: resuming thread {persisted_thread_id} "
-                    f"for {session_key}"
-                )
-                resp = await self._transport().send_request(
-                    "thread/resume",
-                    {"threadId": persisted_thread_id},
-                )
-                thread = resp["thread"]
-                thread_id = thread["id"]
-                session = _SessionState(
-                    thread_id=thread_id,
-                    cwd=resp.get("cwd", conv.cwd if conv else None),
-                    was_resumed=True,
-                )
-                self._resume_info[session_key] = {
-                    "thread_id": thread_id,
-                    "resumed_at": conv.updated_at.isoformat() if conv and conv.updated_at else None,
-                }
-            else:
+                # Try to resume existing thread.
+                logger.info(f"CodexSession: resuming thread {persisted_thread_id} for {session_key}")
+                try:
+                    resp = await self._transport().send_request(
+                        "thread/resume",
+                        {"threadId": persisted_thread_id},
+                    )
+                    thread = resp["thread"]
+                    thread_id = thread["id"]
+                    session = _SessionState(
+                        thread_id=thread_id,
+                        cwd=resp.get("cwd", conv.cwd if conv else None),
+                        was_resumed=True,
+                    )
+                    self._resume_info[session_key] = {
+                        "thread_id": thread_id,
+                        "resumed_at": conv.updated_at.isoformat() if conv and conv.updated_at else None,
+                    }
+                except Exception as resume_error:
+                    # Resume failed (thread not found, expired, etc.)
+                    # Fall back to creating a new thread.
+                    logger.warning(
+                        f"CodexSession: failed to resume thread {persisted_thread_id}: {resume_error}. "
+                        f"Creating new thread instead."
+                    )
+                    persisted_thread_id = None  # Signal to create new thread below
+
+            if not persisted_thread_id:
                 # Start new thread.
                 effective_cwd = cwd or (conv.cwd if conv else None)
                 params: dict[str, Any] = {}
                 if effective_cwd:
                     params["cwd"] = effective_cwd
 
-                resp = await self._transport().send_request(
-                    "thread/start", params
-                )
+                resp = await self._transport().send_request("thread/start", params)
                 thread = resp["thread"]
                 thread_id = thread["id"]
-                logger.info(
-                    f"CodexSession: started new thread {thread_id} "
-                    f"for {session_key}"
-                )
+                logger.info(f"CodexSession: started new thread {thread_id} for {session_key}")
 
                 # Persist to database.
                 if conv is None:
@@ -258,9 +260,13 @@ class CodexSessionManager(SessionManager):
             effective_cwd = cwd
             if not effective_cwd:
                 # Try to inherit cwd from the most recent conversation.
-                stmt = select(Conversation).where(
-                    Conversation.chat_id == session_key.chat_id,
-                ).order_by(Conversation.updated_at.desc())
+                stmt = (
+                    select(Conversation)
+                    .where(
+                        Conversation.chat_id == session_key.chat_id,
+                    )
+                    .order_by(Conversation.updated_at.desc())
+                )
                 result = await db.execute(stmt)
                 recent = result.scalars().first()
                 if recent:
@@ -270,13 +276,9 @@ class CodexSessionManager(SessionManager):
             if effective_cwd:
                 params["cwd"] = effective_cwd
 
-            resp = await self._transport().send_request(
-                "thread/start", params
-            )
+            resp = await self._transport().send_request("thread/start", params)
             thread_id = resp["thread"]["id"]
-            logger.info(
-                f"CodexSession: started new thread {thread_id} for {session_key}"
-            )
+            logger.info(f"CodexSession: started new thread {thread_id} for {session_key}")
 
             # Persist new conversation.
             conv = Conversation(
@@ -320,6 +322,31 @@ class CodexSessionManager(SessionManager):
         """Map a Codex thread to its Telegram forum topic_id."""
         self._thread_to_topic[thread_id] = topic_id
 
+    def update_session_key(self, old_key: SessionKey, new_key: SessionKey) -> bool:
+        """Update the SessionKey for an existing session.
+
+        This is used when a Codex session is created in the main chat (topic_id=None)
+        and then moved to a forum topic (topic_id=N).
+
+        Returns True if the session was found and updated, False otherwise.
+        """
+        session = self._sessions.pop(old_key, None)
+        if session is None:
+            return False
+
+        # Update the session with the new key
+        self._sessions[new_key] = session
+
+        # Update reverse lookup
+        self._thread_to_session_key[session.thread_id] = new_key
+
+        # Update resume info if present
+        resume_info = self._resume_info.pop(old_key, None)
+        if resume_info is not None:
+            self._resume_info[new_key] = resume_info
+
+        return True
+
     def get_topic_id(self, thread_id: str) -> int | None:
         """Return the Telegram topic_id for a Codex thread, or ``None``."""
         return self._thread_to_topic.get(thread_id)
@@ -350,20 +377,26 @@ class CodexSessionManager(SessionManager):
         session_key: SessionKey,
     ) -> list[dict[str, Any]]:
         """Return all persisted conversations for *session_key*'s chat, newest first."""
-        stmt = select(Conversation).where(
-            Conversation.chat_id == session_key.chat_id,
-        ).order_by(Conversation.updated_at.desc())
+        stmt = (
+            select(Conversation)
+            .where(
+                Conversation.chat_id == session_key.chat_id,
+            )
+            .order_by(Conversation.updated_at.desc())
+        )
         result = await db.execute(stmt)
         rows = []
         for conv in result.scalars().all():
-            rows.append({
-                "id": conv.id,
-                "codex_thread_id": conv.codex_thread_id,
-                "cwd": conv.cwd,
-                "is_active": conv.is_active,
-                "created_at": conv.created_at.isoformat() if conv.created_at else None,
-                "updated_at": conv.updated_at.isoformat() if conv.updated_at else None,
-            })
+            rows.append(
+                {
+                    "id": conv.id,
+                    "codex_thread_id": conv.codex_thread_id,
+                    "cwd": conv.cwd,
+                    "is_active": conv.is_active,
+                    "created_at": conv.created_at.isoformat() if conv.created_at else None,
+                    "updated_at": conv.updated_at.isoformat() if conv.updated_at else None,
+                }
+            )
         return rows
 
     async def archive_thread(
@@ -480,10 +513,7 @@ class CodexSessionManager(SessionManager):
             },
         )
         session.active_turn_id = resp["turn"]["id"]
-        logger.debug(
-            f"CodexSession: turn {session.active_turn_id} started "
-            f"on thread {session.thread_id}"
-        )
+        logger.debug(f"CodexSession: turn {session.active_turn_id} started on thread {session.thread_id}")
         return session
 
     async def cancel_turn(self, session_key: SessionKey) -> None:
@@ -492,10 +522,7 @@ class CodexSessionManager(SessionManager):
         if session is None or session.active_turn_id is None:
             return
 
-        logger.info(
-            f"CodexSession: interrupting turn {session.active_turn_id} "
-            f"on thread {session.thread_id}"
-        )
+        logger.info(f"CodexSession: interrupting turn {session.active_turn_id} on thread {session.thread_id}")
         try:
             await self._transport().send_request(
                 "turn/interrupt",
@@ -520,9 +547,7 @@ class CodexSessionManager(SessionManager):
         if session is None:
             raise RuntimeError(f"No active session for {session_key}")
 
-        logger.info(
-            f"CodexSession: shell command on thread {session.thread_id}: {command}"
-        )
+        logger.info(f"CodexSession: shell command on thread {session.thread_id}: {command}")
         await self._transport().send_request(
             "thread/shellCommand",
             {

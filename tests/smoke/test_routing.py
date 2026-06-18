@@ -30,7 +30,7 @@ assert_eq("thread-storage", route.storage_thread_id, 987)
 assert_eq(
     "thread-send-kwargs",
     route.send_kwargs(),
-    {"business_connection_id": "biz-1", "message_thread_id": 987},
+    {"business_connection_id": "biz-1"},
 )
 assert_eq("thread-draft", route.draft_thread_id(), 987)
 

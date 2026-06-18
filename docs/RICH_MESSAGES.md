@@ -28,6 +28,10 @@ message:
 - `business_connection_id` when Telegram sends the message through a business connection
 
 Dropping those fields can make a response appear in the wrong Telegram surface.
+When replying through aiogram's `Message.answer()` or `Message.reply()`, use
+`TelegramRoute.send_kwargs()`; it intentionally omits `message_thread_id`
+because aiogram already carries the topic for those helper methods. Draft APIs
+and direct bot sends must pass the thread id explicitly.
 
 ## Streaming Drafts
 
