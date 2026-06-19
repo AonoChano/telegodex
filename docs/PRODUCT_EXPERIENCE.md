@@ -9,6 +9,14 @@ related: [README.md, USAGE.md, ARCHITECTURE.md, QUICKSTART.md]
 
 # Product Experience
 
+## Startup Platform Behavior
+
+The bot should take responsibility for Telegram-side configuration that can be changed through the Bot API. The user should not have to return to BotFather every time the project adds, removes, or renames a slash command. On startup, Telegodex should synchronize the command menu automatically, so the Telegram client shows the same commands the current code can actually handle.
+
+Platform settings that cannot be changed through the Bot API should be detected and explained early. If Telegram reports that private-chat Threaded Mode is not enabled for the bot, Telegodex should warn configured admins during startup and tell them to enable it in BotFather. This warning should not stop the bot from running, because ordinary chat, forum-group workflows, and debugging may still be useful.
+
+The warning must be precise. Private-chat Threaded Mode is not the same thing as forum supergroup topics. Forum groups still need Topics enabled on the group and bot admin permissions for topic management. Startup checks should help the user understand the missing platform setting without pretending that one Telegram switch controls every workbench surface.
+
 本文描述 Telegodex 最终应该给用户的使用效果。它不解释内部模块怎么写，不要求开发者按某个类名或某个函数去实现，也不替代架构文档。它只回答一个问题：用户从拿到 Bot，到在 Telegram 里控制 AI、Codex 和后续更多 CLI Agent 时，眼前应该看到什么，手上应该怎么操作，心里应该怎么理解。
 
 开发者读这个文件时，要把它当成产品体验的基准。代码可以换方案，模块可以迁移，命令可以扩展，具体实现可以重构，但用户看到的逻辑不能乱。Codex 的对话就应该是 Codex 的对话，普通 AI 的对话就应该是普通 AI 的对话。用户开在某个 forum topic 里的工作上下文，不应该因为代码找不到绑定就悄悄落进另一个 AI Provider。用户需要被问清楚：是在这里创建新的 Codex 会话，还是取消这次操作。

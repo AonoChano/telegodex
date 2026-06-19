@@ -12,7 +12,15 @@ from aiogram.utils.backoff import BackoffConfig
 from loguru import logger
 
 from ai import AIRouter
-from bot.handlers import callbacks_router, codex_router, history_router, messages_router, toolbar_router
+from bot.handlers import (
+    callbacks_router,
+    codex_router,
+    history_router,
+    messages_router,
+    send_router,
+    toolbar_router,
+)
+from bot.startup import run_telegram_startup_checks
 from config import settings
 from storage import ContextManager, Database
 
@@ -225,12 +233,14 @@ async def main():
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
         session=AiohttpSession(timeout=20),
     )
+    await run_telegram_startup_checks(bot, settings.admin_ids)
     dp = Dispatcher()
 
     # 注册路由
     dp.include_router(toolbar_router)
     dp.include_router(codex_router)
     dp.include_router(history_router)
+    dp.include_router(send_router)
     dp.include_router(messages_router)
     dp.include_router(callbacks_router)
 

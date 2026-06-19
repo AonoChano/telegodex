@@ -21,6 +21,17 @@ Telegodex runs as a Telegram Workbench. You can chat with configured providers, 
 | `/settings` | Open provider and model settings |
 | `/help` | Show help |
 | `/codex` | Run Codex CLI tasks through the app-server bridge |
+| `/model` | Switch the current AI provider |
+| `/shell` | Run a shell command through Telegodex |
+| `/send` | Send a local file or open the file picker |
+| `/history` | Browse conversation history |
+| `/status` | Show current session status |
+| `/stop` | Interrupt the active Codex turn or shell process |
+| `/live` | Toggle live session status |
+| `/last` | Resend the last assistant reply |
+| `/screenshot` | Capture the current desktop |
+
+Telegodex syncs this command menu with Telegram on startup through `setMyCommands`. BotFather is still where the bot token and platform-level bot settings live, but users should not need to maintain the slash-command menu manually.
 
 ## Provider Selection
 
@@ -45,6 +56,8 @@ See [RICH_MESSAGES.md](RICH_MESSAGES.md) for the exact Markdown contract.
 Telegodex stores conversation messages in SQLite by default. `MAX_CONTEXT_MESSAGES` controls how many messages the bot sends back to a provider.
 
 Telegram's AI chatbot integration can place conversations in separate private chat topics. Code keeps those topics separate by the route Telegram sends with each message. Threaded private AI chats use `message_thread_id`; channel direct messages topics use `direct_messages_topic_id`.
+
+On startup, Telegodex checks whether Telegram reports private-chat Threaded Mode as enabled for the bot. If it is disabled or not reported, configured admins receive a private warning with BotFather guidance. This does not replace forum group setup: forum supergroup topics still need Topics enabled on the group and suitable bot admin permissions.
 
 ## Streaming Output
 

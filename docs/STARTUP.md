@@ -35,3 +35,14 @@ github.com/AonoChano/telegodex
 Terminals that support OSC 8 make the label clickable. Terminals that do not support it still show the plain text URL.
 
 The banner version is read from `pyproject.toml`. If the project version changes, the startup banner should change with it.
+
+## Telegram Startup Checks
+
+When the bot starts the real polling process, Telegodex performs Telegram-side startup checks before accepting updates:
+
+- It calls `setMyCommands` to sync the Telegram command menu with the commands implemented by the codebase. Users should not need to edit the command menu manually in BotFather after every project change.
+- It calls `getMe` and checks `has_topics_enabled`. If Telegram reports that private-chat Threaded Mode is not enabled, Telegodex logs a warning and sends a private message to configured admins.
+
+The Threaded Mode warning is non-fatal. The bot still starts so ordinary chat, forum groups, and debugging remain possible.
+
+This check is specifically for Telegram private AI chatbot topics. Forum supergroup topics are a separate Telegram feature and still require a forum group with Topics enabled plus suitable bot admin permissions.

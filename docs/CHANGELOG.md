@@ -11,6 +11,8 @@ related: [PRODUCT_EXPERIENCE.md, RICH_MESSAGES.md, STARTUP.md]
 
 ## Unreleased
 
+- Added Telegram startup checks that sync the bot command menu and warn admins when private-chat Threaded Mode is not enabled.
+- Added a readable public version-control policy in `docs/VERSION-CONTROL.md`.
 - Fixed Codex approval callbacks so inline buttons use short Telegram-safe tokens and resolve through the active Orchestrator approval handler.
 - Added `docs/PRODUCT_EXPERIENCE.md` as the product-experience baseline for Telegram Workbench behavior.
 - Documented strict Codex topic ownership: active Codex-bound topics route to Codex, recoverable historical Codex topics ask create-or-cancel, and ordinary non-Codex topics remain normal AI chat.

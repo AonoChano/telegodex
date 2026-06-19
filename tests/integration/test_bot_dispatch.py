@@ -110,6 +110,26 @@ class TestStartCommandRouting:
         mock_context_manager.get_or_create_user.assert_awaited_once()
 
 
+class TestSettingsCommandRouting:
+    """Verify ``/settings`` opens the settings menu."""
+
+    @pytest.mark.asyncio
+    async def test_settings_command_routed(self, dp: Dispatcher) -> None:
+        bot = AsyncMock()
+        message = _make_mock_message(
+            text="/settings",
+            entities=[{"type": "bot_command", "offset": 0, "length": 9}],
+        )
+        update = _make_update(message)
+
+        await dp.feed_update(bot, update)
+
+        assert bot.called
+        call_arg = bot.await_args[0][0]
+        assert call_arg.text == "Settings"
+        assert call_arg.reply_markup is not None
+
+
 class TestTextMessageRouting:
     """Verify plain text reaches ``handle_message`` and produces a bot reply."""
 

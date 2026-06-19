@@ -8,7 +8,7 @@ from sqlalchemy import select
 
 from ai import AIRouter, MessageRole
 from ai import Message as AIMessage
-from bot.keyboards import get_main_menu
+from bot.keyboards import get_main_menu, get_settings_menu
 from bot.telegram_draft import DraftStream
 from bot.utils.latex import normalize_rich_markdown_latex
 from bot.utils.markdown import format_markdown_v2
@@ -132,6 +132,17 @@ async def cmd_help(message: Message):
     await message.answer(help_text, parse_mode="MarkdownV2", **route.send_kwargs())
 
 
+@router.message(Command("settings"))
+async def cmd_settings(message: Message) -> None:
+    """Open the settings menu."""
+    route = TelegramRoute.from_message(message)
+    await message.answer(
+        "Settings",
+        reply_markup=get_settings_menu(),
+        **route.send_kwargs(),
+    )
+
+
 @router.message(Command("new"))
 async def cmd_new(message: Message, context_manager: ContextManager):
     """开始新对话"""
@@ -140,7 +151,7 @@ async def cmd_new(message: Message, context_manager: ContextManager):
     thread_id = route.storage_thread_id
 
     # 创建新对话（按 topic 隔离）
-    conversation = await context_manager.create_new_conversation(
+    await context_manager.create_new_conversation(
         user_id, thread_id=thread_id
     )
 
@@ -274,7 +285,7 @@ async def cmd_model(
 
     # Switch active provider.
     user.preferred_provider = provider_name
-    bucket = session_manager.set_active_provider(session_key, provider_name)
+    session_manager.set_active_provider(session_key, provider_name)
 
     # Resolve or create the provider-specific conversation.
     provider_conv = await _resolve_provider_conversation(
