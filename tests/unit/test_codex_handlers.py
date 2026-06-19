@@ -332,6 +332,24 @@ async def test_codex_command_with_bot_mention_shows_usage() -> None:
     orchestrator.ensure_transport_handlers.assert_not_called()
 
 
+def test_format_collected_stderr_deduplicates_in_order() -> None:
+    assert codex._format_collected_stderr(
+        [
+            "Reconnecting... 1/5",
+            "Unexpected status 403 Forbidden: quota exhausted",
+            "Reconnecting... 1/5",
+            "Unexpected status 403 Forbidden: quota exhausted",
+            "Reconnecting... 2/5",
+        ]
+    ) == "\n".join(
+        [
+            "Reconnecting... 1/5",
+            "Unexpected status 403 Forbidden: quota exhausted",
+            "Reconnecting... 2/5",
+        ]
+    )
+
+
 @pytest.mark.asyncio
 async def test_execute_codex_prompt_updates_status_on_streaming_error(monkeypatch: pytest.MonkeyPatch) -> None:
     bot = AsyncMock()

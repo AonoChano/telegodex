@@ -37,6 +37,21 @@ DRAFT_MAX_CALLS_PER_ID = 6
 # 响应总字符数低于此值时跳过草稿阶段，直接 sendRichMessage 持久化。短回复
 # 频繁推草稿不划算（看起来在闪、实则在等）。
 DRAFT_MIN_RESPONSE_CHARS = 80
+TERMINAL_PROVIDER_STATUS_CODES = {401, 402, 403, 429}
+TERMINAL_PROVIDER_ERROR_MARKERS = (
+    "insufficient balance",
+    "payment required",
+    "quota",
+    "rate limit",
+    "rolling spend limit",
+    "unauthorized",
+    "invalid api key",
+    "forbidden",
+    "余额",
+    "额度",
+    "限额",
+    "使用人数较多",
+)
 
 
 async def _push_draft(stream: DraftStream | None, text: str) -> None:
@@ -52,6 +67,57 @@ def escape_markdown(text: str) -> str:
     for char in special_chars:
         text = text.replace(char, f'\\{char}')
     return text
+
+
+def _provider_error_status_code(exc: Exception) -> int | None:
+    """Extract an HTTP-like status code from provider SDK exceptions."""
+    status_code = getattr(exc, "status_code", None)
+    if isinstance(status_code, int):
+        return status_code
+    response = getattr(exc, "response", None)
+    response_status = getattr(response, "status_code", None)
+    if isinstance(response_status, int):
+        return response_status
+    return None
+
+
+def _provider_error_message(exc: Exception) -> str:
+    """Extract a concise provider error message without requiring provider SDK imports."""
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        error = body.get("error")
+        if isinstance(error, dict) and error.get("message"):
+            return str(error["message"])
+        if body.get("message"):
+            return str(body["message"])
+    return str(exc)
+
+
+def _is_terminal_provider_error(exc: Exception) -> bool:
+    """Return whether retrying the same provider request immediately is wasteful."""
+    status_code = _provider_error_status_code(exc)
+    if status_code in TERMINAL_PROVIDER_STATUS_CODES:
+        return True
+    message = _provider_error_message(exc).lower()
+    return any(marker in message for marker in TERMINAL_PROVIDER_ERROR_MARKERS)
+
+
+def _format_provider_error(exc: Exception, provider_name: str) -> str:
+    """Build a user-facing provider error without exposing raw SDK payloads."""
+    status_code = _provider_error_status_code(exc)
+    message = _provider_error_message(exc).lower()
+
+    if status_code == 402 or "insufficient balance" in message or "余额" in message:
+        hint = "当前 AI 服务商返回余额或额度不足。请充值、更换服务商，或稍后再试。"
+    elif status_code == 429 or "rate limit" in message or "quota" in message or "限额" in message:
+        hint = "当前 AI 服务商触发了频率或额度限制。请稍后再试，或切换到其他服务商。"
+    elif status_code in {401, 403} or "unauthorized" in message or "forbidden" in message:
+        hint = "当前 AI 服务商拒绝了请求。请检查 API Key、账号权限、余额或中转站额度。"
+    else:
+        hint = "AI 服务商请求失败。请稍后重试，或切换到其他服务商。"
+
+    status_line = f"\nHTTP 状态码: {status_code}" if status_code is not None else ""
+    return f"❌ AI 服务商请求失败\n\n{hint}\n\n服务商: {provider_name}{status_line}"
 
 
 @router.message(Command("start"))
@@ -471,6 +537,16 @@ async def handle_message(message: Message, context_manager: ContextManager, ai_r
                     ),
                 )
         except Exception as stream_err:
+            if _is_terminal_provider_error(stream_err):
+                logger.warning(
+                    f"流式 chat_stream 遇到终止性服务商错误，不再回退非流式: "
+                    f"{type(stream_err).__name__}: {stream_err}"
+                )
+                await message.answer(
+                    _format_provider_error(stream_err, provider_name),
+                    **route.send_kwargs(),
+                )
+                return
             logger.warning(
                 f"流式 chat_stream 失败，回退非流式: {type(stream_err).__name__}: {stream_err}"
             )
@@ -479,12 +555,20 @@ async def handle_message(message: Message, context_manager: ContextManager, ai_r
 
         # ---- 2) 流式失败 / 没拿到内容则回退非流式 ----
         if not stream_used:
-            response = await provider.chat(
-                messages=messages_with_system,
-                model=model_name,
-                temperature=temperature,
-                max_tokens=settings.max_tokens,
-            )
+            try:
+                response = await provider.chat(
+                    messages=messages_with_system,
+                    model=model_name,
+                    temperature=temperature,
+                    max_tokens=settings.max_tokens,
+                )
+            except Exception as chat_err:
+                logger.error(f"非流式 provider.chat 失败: {type(chat_err).__name__}: {chat_err}")
+                await message.answer(
+                    _format_provider_error(chat_err, provider_name),
+                    **route.send_kwargs(),
+                )
+                return
             response_text = response.content
             response_model = response.model
             response_tokens = (

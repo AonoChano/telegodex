@@ -239,6 +239,61 @@ class TestTextMessageRouting:
         _, kwargs = mock_send_rich.call_args
         assert "Hello world" in kwargs["markdown_text"]
 
+    @pytest.mark.asyncio
+    async def test_terminal_provider_error_does_not_retry_non_streaming(
+        self,
+        dp: Dispatcher,
+        mock_context_manager: AsyncMock,
+    ) -> None:
+        class ProviderPaymentError(Exception):
+            status_code = 402
+            body = {
+                "error": {
+                    "message": "Insufficient Balance",
+                    "type": "unknown_error",
+                    "code": "invalid_request_error",
+                }
+            }
+
+        async def _failing_stream(*args: Any, **kwargs: Any):
+            raise ProviderPaymentError("Error code: 402 - {'error': {'message': 'Insufficient Balance'}}")
+            yield ""
+
+        provider = MagicMock()
+        provider.chat_stream = MagicMock(side_effect=_failing_stream)
+        provider.chat = AsyncMock()
+
+        ai_router = MagicMock()
+        ai_router.get_provider = MagicMock(return_value=provider)
+        ai_router.get_default_provider = MagicMock(return_value=provider)
+        ai_router.is_provider_available = MagicMock(return_value=True)
+
+        @dp.message.middleware()
+        async def inject_deps(handler, event, data):
+            data["context_manager"] = mock_context_manager
+            data["ai_router"] = ai_router
+            data["orchestrator"] = MagicMock()
+            return await handler(event, data)
+
+        bot = AsyncMock()
+        message = _make_mock_message(text="测试", chat_type="group")
+        update = _make_update(message)
+
+        mock_settings = MagicMock()
+        mock_settings.telegram_bot_token = "123:fake"
+        mock_settings.max_tokens = 4096
+
+        with patch("bot.handlers.messages.settings", mock_settings):
+            await dp.feed_update(bot, update)
+
+        provider.chat_stream.assert_called_once()
+        provider.chat.assert_not_awaited()
+
+        call_arg = bot.await_args[0][0]
+        assert "AI 服务商请求失败" in call_arg.text
+        assert "余额或额度不足" in call_arg.text
+        assert "Insufficient Balance" not in call_arg.text
+
 
 class TestCodexTopicFallthrough:
     """Verify non-Codex topics still reach the normal AI chat handler."""

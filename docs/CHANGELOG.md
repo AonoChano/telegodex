@@ -11,6 +11,7 @@ related: [PRODUCT_EXPERIENCE.md, RICH_MESSAGES.md, STARTUP.md]
 
 ## Unreleased
 
+- Improved ordinary AI chat provider failures: balance/quota/auth errors now show a readable user message and do not retry the same failed request in non-streaming mode.
 - Fixed duplicate active conversation rows so they are archived instead of crashing message handling with `MultipleResultsFound`.
 - Scoped conversation lookup by Telegram chat to avoid cross-chat/topic context collisions.
 - Fixed `/start` provider listing so configured non-built-in providers such as DeepSeek are shown.
