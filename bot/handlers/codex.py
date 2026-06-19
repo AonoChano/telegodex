@@ -10,6 +10,7 @@ Telegram-specific layer: delegates all business logic to the
 from __future__ import annotations
 
 import contextlib
+import time
 import uuid
 from dataclasses import dataclass
 from typing import Any
@@ -44,6 +45,8 @@ router = Router(name="codex")
 
 # Draft limits for codex streaming.
 DRAFT_FLUSH_CHARS = 200
+STATUS_EDIT_INTERVAL_SECONDS = 2.0
+STATUS_TEXT_LIMIT = 900
 
 _CODEX_TOPIC_BOUND = "bound"
 _CODEX_TOPIC_RECOVERABLE = "recoverable"
@@ -74,12 +77,23 @@ _topic_recovery_requests: dict[str, _TopicRecoveryRequest] = {}
 _topic_recovery_prompts: dict[tuple[int | str, int], _TopicRecoveryPrompt] = {}
 
 
+def _command_args(text: str, command: str) -> str:
+    """Return text after a Telegram command, accepting /command@botname."""
+    stripped = text.strip()
+    prefix = f"/{command}"
+    if not stripped.startswith(prefix):
+        return stripped
+    rest = stripped[len(prefix) :]
+    if rest.startswith("@"):
+        if " " not in rest:
+            return ""
+        rest = rest.split(" ", 1)[1]
+    return rest.strip()
+
+
 def _topic_prompt_text(message: Message) -> str:
     """Return user prompt text inside a Codex topic, without a leading /codex."""
-    prompt = (message.text or "").strip()
-    if prompt.startswith("/codex"):
-        return prompt[len("/codex") :].strip()
-    return prompt
+    return _command_args(message.text or "", "codex")
 
 
 def _ensure_global_orch(orchestrator: Orchestrator) -> None:
@@ -121,6 +135,30 @@ async def _approval_ui_sender(method: str, params: dict[str, Any]) -> None:
 
 def _bot_token() -> str:
     return settings.telegram_bot_token
+
+
+def _trim_status_text(text: str, limit: int = STATUS_TEXT_LIMIT) -> str:
+    """Trim volatile status text so it remains safe for Telegram message edits."""
+    normalized = " ".join(text.split())
+    if len(normalized) <= limit:
+        return normalized
+    return normalized[: limit - 1].rstrip() + "..."
+
+
+def _is_codex_retry_status_line(text: str) -> bool:
+    """Return whether a daemon stderr line is useful live turn status."""
+    lowered = text.lower()
+    retry_markers = (
+        "reconnecting",
+        "unexpected status",
+        "forbidden",
+        "too many requests",
+        "rate limit",
+        "timed out",
+        "timeout",
+        "try again",
+    )
+    return any(marker in lowered for marker in retry_markers)
 
 
 # ---------------------------------------------------------------------------
@@ -444,22 +482,22 @@ async def _execute_codex_prompt(
 
     # Send a "Stop" inline button for this turn.
     stop_msg = None
+    stop_keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="Stop generating",
+                    callback_data=f"codex_stop|{session_key.to_string()}",
+                )
+            ]
+        ]
+    )
     try:
         stop_msg = await bot.send_message(
             chat_id=route.chat_id,
-            text="_Codex is working..._",
-            reply_markup=InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [
-                        InlineKeyboardButton(
-                            text="Stop generating",
-                            callback_data=f"codex_stop|{session_key.to_string()}",
-                        )
-                    ]
-                ]
-            ),
+            text="Codex is working...",
+            reply_markup=stop_keyboard,
             message_thread_id=topic_id,
-            parse_mode="Markdown",
         )
     except Exception as exc:
         logger.debug(f"Codex: failed to send stop button: {exc}")
@@ -498,30 +536,110 @@ async def _execute_codex_prompt(
 
     last_flush_len = 0
     full_accumulated = ""
+    last_status_edit = 0.0
+    last_status_text = "Codex is working..."
+
+    async def _edit_status(text: str, *, force: bool = False) -> None:
+        nonlocal last_status_edit, last_status_text
+        if stop_msg is None:
+            return
+        safe_text = _trim_status_text(text)
+        now = time.monotonic()
+        if not force and safe_text == last_status_text:
+            return
+        if not force and now - last_status_edit < STATUS_EDIT_INTERVAL_SECONDS:
+            return
+        last_status_edit = now
+        last_status_text = safe_text
+        try:
+            await bot.edit_message_text(
+                chat_id=stop_msg.chat.id,
+                message_id=stop_msg.message_id,
+                text=safe_text,
+                reply_markup=stop_keyboard,
+            )
+        except Exception as exc:
+            logger.debug(f"Codex: failed to edit status message: {exc}")
+
+    def _single_active_turn() -> bool:
+        sm = orchestrator.session_manager
+        if sm is None:
+            return False
+        active_count = getattr(sm, "active_turn_count", lambda: 0)()
+        return active_count == 1 and sm.is_turn_active(session_key)
+
+    async def _on_daemon_stderr(text: str) -> None:
+        if not _is_codex_retry_status_line(text):
+            return
+        if not _single_active_turn():
+            logger.debug(f"Codex: stderr status kept in logs because active turn count is not singular: {text}")
+            return
+        await _edit_status(f"Codex connection issue. Retrying...\n{text}", force=True)
+
+    remove_stderr_listener = codex_daemon.add_stderr_listener(_on_daemon_stderr)
 
     async def _on_text_delta(delta: str, accumulated: str) -> None:
         nonlocal last_flush_len, full_accumulated
         full_accumulated = accumulated
         if reaction_tracker is not None:
             await reaction_tracker.set_state("editing")
+        await _edit_status("Codex is writing a response...")
         if stream is None:
             return
         if len(accumulated) - last_flush_len >= DRAFT_FLUSH_CHARS:
             await stream.push(accumulated)
             last_flush_len = len(accumulated)
 
+    async def _on_reasoning_delta(delta: str, accumulated: str) -> None:
+        if reaction_tracker is not None:
+            await reaction_tracker.on_codex_event("item/reasoning/summaryTextDelta")
+        preview = _trim_status_text(accumulated, 360)
+        await _edit_status(f"Codex is thinking...\n{preview}" if preview else "Codex is thinking...")
+
+    async def _on_command_output_delta(delta: str, accumulated: str) -> None:
+        if reaction_tracker is not None:
+            await reaction_tracker.on_codex_event("item/commandExecution/outputDelta")
+        preview = _trim_status_text(accumulated, 360)
+        await _edit_status(f"Codex is running a command...\n{preview}" if preview else "Codex is running a command...")
+
     async def _on_item_started(item_type: str, item: dict[str, Any]) -> None:
         if reaction_tracker is not None:
             await reaction_tracker.on_codex_event("item/started", item_type)
+        if item_type == "commandExecution":
+            command = item.get("command", "")
+            suffix = f"\n{command}" if command else ""
+            await _edit_status(f"Codex is running a command...{suffix}", force=True)
+        elif item_type == "reasoning":
+            await _edit_status("Codex is thinking...", force=True)
 
     async def _on_turn_completed(turn: dict[str, Any], final_text: str) -> None:
+        status = turn.get("status", "")
         if reaction_tracker is not None:
-            await reaction_tracker.set_state("done")
+            if status == "failed":
+                await reaction_tracker.clear()
+            else:
+                await reaction_tracker.set_state("done")
+        if status == "failed":
+            error = turn.get("error", {})
+            error_msg = error.get("message", "Unknown error")
+            await _edit_status(f"Codex failed.\n{error_msg}", force=True)
+        elif status == "interrupted":
+            await _edit_status("Codex was interrupted.", force=True)
+        else:
+            await _edit_status("Codex completed.", force=True)
+
+    async def _on_error(error_message: str) -> None:
+        if reaction_tracker is not None:
+            await reaction_tracker.clear()
+        await _edit_status(f"Codex error.\n{error_message}", force=True)
 
     callbacks = StreamingCallbacks(
         on_text_delta=_on_text_delta,
+        on_reasoning_delta=_on_reasoning_delta,
+        on_command_output_delta=_on_command_output_delta,
         on_item_started=_on_item_started,
         on_turn_completed=_on_turn_completed,
+        on_error=_on_error,
     )
 
     try:
@@ -557,6 +675,7 @@ async def _execute_codex_prompt(
 
     except Exception as exc:
         logger.exception("Codex: turn failed")
+        await _edit_status(f"Codex error.\n{exc}", force=True)
         await _codex_reply(
             message,
             f"Codex error: {exc}",
@@ -564,6 +683,7 @@ async def _execute_codex_prompt(
             topic_id,
         )
     finally:
+        remove_stderr_listener()
         # Remove the stop button message.
         if stop_msg is not None:
             try:
@@ -619,9 +739,7 @@ async def cmd_codex_v2(
             return
     else:
         # In main chat — extract prompt after /codex
-        prompt = message.text or ""
-        if prompt.startswith("/codex"):
-            prompt = prompt[len("/codex") :].strip()
+        prompt = _command_args(message.text or "", "codex")
 
     if not prompt:
         await message.answer(
@@ -823,7 +941,11 @@ async def cmd_model(
         return
 
     user = await context_manager.get_or_create_user(user_id)
-    conversation = await context_manager.get_or_create_conversation(user_id, thread_id=thread_id)
+    conversation = await context_manager.get_or_create_conversation(
+        user_id,
+        thread_id=thread_id,
+        chat_id=route.chat_id,
+    )
 
     session_data = await _load_session_data(conversation, session_key)
 

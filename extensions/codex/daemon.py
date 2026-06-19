@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 import os
 import shutil
+from collections.abc import Awaitable, Callable
 
 from loguru import logger
 
@@ -76,6 +78,7 @@ class CodexDaemon:
         self._startup_done = asyncio.Event()
         self._shutting_down = False
         self._on_shutdown: list[asyncio.Event] = []
+        self._stderr_listeners: set[Callable[[str], Awaitable[None] | None]] = set()
 
         # Transport is created fresh on each start().
         self.transport: JsonRpcTransport | None = None
@@ -186,6 +189,19 @@ class CodexDaemon:
         self._on_shutdown.append(evt)
         return evt
 
+    def add_stderr_listener(self, listener: Callable[[str], Awaitable[None] | None]) -> Callable[[], None]:
+        """Register a callback for app-server stderr status lines.
+
+        The returned function unregisters the listener. Stderr is process-global,
+        so callers must decide whether a line can be safely shown to a user.
+        """
+        self._stderr_listeners.add(listener)
+
+        def _remove() -> None:
+            self._stderr_listeners.discard(listener)
+
+        return _remove
+
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
@@ -235,8 +251,19 @@ class CodexDaemon:
                 text = line.decode("utf-8", errors="replace").rstrip()
                 if text:
                     logger.warning(f"CodexDaemon stderr: {text}")
+                    await self._notify_stderr_listeners(text)
         except Exception as exc:
             logger.debug(f"CodexDaemon: stderr reader error: {exc}")
+
+    async def _notify_stderr_listeners(self, text: str) -> None:
+        """Notify registered stderr listeners without letting one break the reader."""
+        for listener in list(self._stderr_listeners):
+            try:
+                result = listener(text)
+                if inspect.isawaitable(result):
+                    await result
+            except Exception as exc:
+                logger.debug(f"CodexDaemon: stderr listener failed: {exc}")
 
     async def _restart(self) -> None:
         """Attempt restart with exponential backoff. Raises on exhaustion."""

@@ -318,6 +318,55 @@ async def test_codex_command_in_recoverable_topic_sends_create_or_cancel_prompt(
 
 
 @pytest.mark.asyncio
+async def test_codex_command_with_bot_mention_shows_usage() -> None:
+    bot = AsyncMock()
+    message = _message("/codex@telegodexbot", bot=bot)
+    context = _Context(state="not_codex")
+    orchestrator = SimpleNamespace(ensure_transport_handlers=MagicMock())
+
+    await codex.cmd_codex_v2(message, context, orchestrator)
+
+    bot.assert_awaited_once()
+    method = bot.await_args.args[0]
+    assert "Usage:" in method.text
+    orchestrator.ensure_transport_handlers.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_execute_codex_prompt_updates_status_on_streaming_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    bot = AsyncMock()
+    bot.send_message.return_value = SimpleNamespace(chat=SimpleNamespace(id=100), message_id=44)
+    message = _message("prompt", bot=bot)
+    route = TelegramRoute.from_message(message)
+    context = SimpleNamespace(session=AsyncMock())
+    remove_stderr_listener = MagicMock()
+    session_manager = SimpleNamespace(
+        active_turn_count=MagicMock(return_value=1),
+        is_turn_active=MagicMock(return_value=True),
+    )
+
+    async def handle_message_streaming(**kwargs):
+        await kwargs["callbacks"].on_error("Unexpected status 403 Forbidden")
+        return "Error: failed"
+
+    orchestrator = SimpleNamespace(
+        session_manager=session_manager,
+        handle_message_streaming=AsyncMock(side_effect=handle_message_streaming),
+    )
+    monkeypatch.setattr(codex.toolbar_handler, "send_reply_keyboard", AsyncMock())
+    monkeypatch.setattr(codex.toolbar_handler, "remove_reply_keyboard", AsyncMock())
+    monkeypatch.setattr(codex, "send_rich_message", AsyncMock(return_value=True))
+    monkeypatch.setattr(codex.codex_daemon, "add_stderr_listener", MagicMock(return_value=remove_stderr_listener))
+
+    await codex._execute_codex_prompt(message, route, context, orchestrator, "prompt", user_id_override=7)
+
+    bot.edit_message_text.assert_awaited()
+    edited_texts = [call.kwargs["text"] for call in bot.edit_message_text.await_args_list]
+    assert any("Unexpected status 403 Forbidden" in text for text in edited_texts)
+    remove_stderr_listener.assert_called_once()
+
+
+@pytest.mark.asyncio
 async def test_recoverable_topic_message_replaces_previous_prompt() -> None:
     bot = AsyncMock()
     bot.send_message.return_value = SimpleNamespace(message_id=100)

@@ -109,6 +109,36 @@ class TestStartCommandRouting:
         assert "Telegodex" in call_arg.text
         mock_context_manager.get_or_create_user.assert_awaited_once()
 
+    @pytest.mark.asyncio
+    async def test_start_command_lists_deepseek_provider(
+        self,
+        dp: Dispatcher,
+        mock_context_manager: AsyncMock,
+    ) -> None:
+        ai_router = MagicMock()
+        ai_router.list_available_providers = MagicMock(return_value=["deepseek"])
+        ai_router.is_provider_available = MagicMock(return_value=False)
+
+        @dp.message.middleware()
+        async def inject_deps(handler, event, data):
+            data["context_manager"] = mock_context_manager
+            data["ai_router"] = ai_router
+            data["orchestrator"] = MagicMock()
+            return await handler(event, data)
+
+        bot = AsyncMock()
+        message = _make_mock_message(
+            text="/start",
+            entities=[{"type": "bot_command", "offset": 0, "length": 6}],
+        )
+        update = _make_update(message)
+
+        await dp.feed_update(bot, update)
+
+        call_arg = bot.await_args[0][0]
+        assert "deepseek" in call_arg.text.lower()
+        assert "无可用" not in call_arg.text
+
 
 class TestSettingsCommandRouting:
     """Verify ``/settings`` opens the settings menu."""
@@ -120,6 +150,30 @@ class TestSettingsCommandRouting:
             text="/settings",
             entities=[{"type": "bot_command", "offset": 0, "length": 9}],
         )
+        update = _make_update(message)
+
+        await dp.feed_update(bot, update)
+
+        assert bot.called
+        call_arg = bot.await_args[0][0]
+        assert call_arg.text == "Settings"
+        assert call_arg.reply_markup is not None
+
+    @pytest.mark.asyncio
+    async def test_legacy_settings_keyboard_button_opens_settings(
+        self,
+        dp: Dispatcher,
+        mock_context_manager: AsyncMock,
+    ) -> None:
+        @dp.message.middleware()
+        async def inject_deps(handler, event, data):
+            data["context_manager"] = mock_context_manager
+            data["ai_router"] = MagicMock()
+            data["orchestrator"] = MagicMock()
+            return await handler(event, data)
+
+        bot = AsyncMock()
+        message = _make_mock_message(text="⚙️ 设置")
         update = _make_update(message)
 
         await dp.feed_update(bot, update)

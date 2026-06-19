@@ -11,6 +11,12 @@ related: [PRODUCT_EXPERIENCE.md, RICH_MESSAGES.md, STARTUP.md]
 
 ## Unreleased
 
+- Fixed duplicate active conversation rows so they are archived instead of crashing message handling with `MultipleResultsFound`.
+- Scoped conversation lookup by Telegram chat to avoid cross-chat/topic context collisions.
+- Fixed `/start` provider listing so configured non-built-in providers such as DeepSeek are shown.
+- Routed the legacy `⚙️ 设置` reply-keyboard button to the settings menu instead of the placeholder reply.
+- Fixed `/codex@botname` parsing so a bare command mention shows usage instead of trying to read a directory named after the bot.
+- Updated Codex in-progress status messages when retry/error, reasoning, command execution, failure, or interruption events are visible.
 - Added Telegram startup checks that sync the bot command menu and warn admins when private-chat Threaded Mode is not enabled.
 - Added a readable public version-control policy in `docs/VERSION-CONTROL.md`.
 - Fixed Codex approval callbacks so inline buttons use short Telegram-safe tokens and resolve through the active Orchestrator approval handler.

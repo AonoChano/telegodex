@@ -108,7 +108,7 @@ async def cmd_history(
 
     thread_id = route.storage_thread_id
     conversation = await context_manager.get_or_create_conversation(
-        user_id, thread_id=thread_id
+        user_id, thread_id=thread_id, chat_id=route.chat_id
     )
 
     messages, total = await _fetch_history_page(

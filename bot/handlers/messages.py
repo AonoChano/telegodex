@@ -77,6 +77,9 @@ async def cmd_start(message: Message, context_manager: ContextManager, ai_router
         providers.append('• ✅ Anthropic \\(Claude\\)')
     if ai_router.is_provider_available('google'):
         providers.append('• ✅ Google \\(Gemini\\)')
+    for provider_name in ai_router.list_available_providers():
+        if provider_name.lower() not in {"openai", "anthropic", "google"}:
+            providers.append(f"• ✅ {escape_markdown(provider_name)}")
 
     providers_text = '\n'.join(providers) if providers else '• ⚠️ 无可用服务商'
 
@@ -152,7 +155,7 @@ async def cmd_new(message: Message, context_manager: ContextManager):
 
     # 创建新对话（按 topic 隔离）
     await context_manager.create_new_conversation(
-        user_id, thread_id=thread_id
+        user_id, thread_id=thread_id, chat_id=route.chat_id
     )
 
     await message.answer(
@@ -170,7 +173,7 @@ async def cmd_clear(message: Message, context_manager: ContextManager):
     thread_id = route.storage_thread_id
 
     conversation = await context_manager.get_or_create_conversation(
-        user_id, thread_id=thread_id
+        user_id, thread_id=thread_id, chat_id=route.chat_id
     )
 
     await context_manager.clear_conversation(conversation.id)
@@ -229,7 +232,9 @@ async def _resolve_provider_conversation(
             return conv
 
     # No bucket or stale session_id: create a fresh conversation.
-    conv = await context_manager.create_new_conversation(user_id, thread_id=thread_id)
+    conv = await context_manager.create_new_conversation(
+        user_id, thread_id=thread_id, chat_id=session_key.chat_id
+    )
     bucket.session_id = str(conv.id)
     return conv
 
@@ -273,7 +278,7 @@ async def cmd_model(
 
     user = await context_manager.get_or_create_user(user_id)
     conversation = await context_manager.get_or_create_conversation(
-        user_id, thread_id=thread_id
+        user_id, thread_id=thread_id, chat_id=route.chat_id
     )
 
     session_data = await _load_session_data(conversation, session_key)
@@ -324,10 +329,13 @@ async def handle_message(message: Message, context_manager: ContextManager, ai_r
         if user_text == "💬 新对话":
             await cmd_new(message, context_manager)
             return
-        elif user_text == "ℹ️ 帮助":
+        if user_text == "⚙️ 设置":
+            await cmd_settings(message)
+            return
+        if user_text == "ℹ️ 帮助":
             await cmd_help(message)
             return
-        # TODO: 实现历史记录和设置
+        # TODO: 实现历史记录
         await message.answer("功能开发中...", **route.send_kwargs())
         return
 
@@ -337,7 +345,7 @@ async def handle_message(message: Message, context_manager: ContextManager, ai_r
 
     # Bootstrap session data from the current active conversation.
     base_conv = await context_manager.get_or_create_conversation(
-        user_id, thread_id=thread_id
+        user_id, thread_id=thread_id, chat_id=route.chat_id
     )
     session_data = await _load_session_data(base_conv, session_key)
 

@@ -43,7 +43,10 @@ class ContextManager:
         return user
 
     async def get_or_create_conversation(
-        self, user_id: int, thread_id: int | None = None
+        self,
+        user_id: int,
+        thread_id: int | None = None,
+        chat_id: int | None = None,
     ) -> Conversation:
         """获取或创建当前 thread 的活跃对话。
 
@@ -55,20 +58,37 @@ class ContextManager:
             if thread_id is None
             else Conversation.thread_id == thread_id
         )
+        scope = [
+            Conversation.user_id == user_id,
+            thread_clause,
+            Conversation.is_active.is_(True),
+        ]
+        if chat_id is not None:
+            scope.append(Conversation.chat_id == chat_id)
+
         result = await self.session.execute(
             select(Conversation)
-            .where(
-                Conversation.user_id == user_id,
-                thread_clause,
-                Conversation.is_active.is_(True),
-            )
-            .order_by(desc(Conversation.updated_at))
+            .where(*scope)
+            .order_by(desc(Conversation.updated_at), desc(Conversation.id))
         )
-        conversation = result.scalar_one_or_none()
+        conversations = list(result.scalars().all())
+        conversation = conversations[0] if conversations else None
+
+        if len(conversations) > 1:
+            for stale in conversations[1:]:
+                stale.is_active = False
+            await self.session.commit()
+            logger.warning(
+                "Archived duplicate active conversations: "
+                f"user_id={user_id}, chat_id={chat_id}, thread_id={thread_id}, "
+                f"kept_conversation_id={conversation.id}, "
+                f"archived={len(conversations) - 1}"
+            )
 
         if not conversation:
             conversation = Conversation(
                 user_id=user_id,
+                chat_id=chat_id,
                 thread_id=thread_id,
                 topic_id=thread_id,
                 transport="telegram",
@@ -150,7 +170,10 @@ class ContextManager:
         logger.info(f"清空对话历史: conversation_id={conversation_id}")
 
     async def create_new_conversation(
-        self, user_id: int, thread_id: int | None = None
+        self,
+        user_id: int,
+        thread_id: int | None = None,
+        chat_id: int | None = None,
     ) -> Conversation:
         """在同一 thread 内结束当前活跃对话并开启新对话。"""
         thread_clause = (
@@ -160,13 +183,15 @@ class ContextManager:
         )
 
         # 结束当前 thread 内的活跃对话（其他 thread 不受影响）
-        result = await self.session.execute(
-            select(Conversation).where(
-                Conversation.user_id == user_id,
-                thread_clause,
-                Conversation.is_active.is_(True),
-            )
-        )
+        scope = [
+            Conversation.user_id == user_id,
+            thread_clause,
+            Conversation.is_active.is_(True),
+        ]
+        if chat_id is not None:
+            scope.append(Conversation.chat_id == chat_id)
+
+        result = await self.session.execute(select(Conversation).where(*scope))
         active_conversations = result.scalars().all()
 
         for conv in active_conversations:
@@ -175,6 +200,7 @@ class ContextManager:
         # 创建新对话
         new_conversation = Conversation(
             user_id=user_id,
+            chat_id=chat_id,
             thread_id=thread_id,
             topic_id=thread_id,
             transport="telegram",

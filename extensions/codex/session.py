@@ -358,6 +358,14 @@ class CodexSessionManager(SessionManager):
             return False
         return session.active_turn_id is not None and not session.turn_completed.is_set()
 
+    def active_turn_count(self) -> int:
+        """Return the number of currently running turns."""
+        return sum(
+            1
+            for session in self._sessions.values()
+            if session.active_turn_id is not None and not session.turn_completed.is_set()
+        )
+
     def get_resume_info(self, session_key: SessionKey) -> dict[str, Any] | None:
         """Return resume metadata for *session_key*, or ``None``."""
         return self._resume_info.get(session_key)

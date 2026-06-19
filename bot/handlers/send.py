@@ -65,10 +65,13 @@ def _resolve_token(token: str) -> str | None:
 
 
 async def _session_cwd(
-    context_manager: ContextManager, user_id: int, thread_id: int | None
+    context_manager: ContextManager,
+    user_id: int,
+    thread_id: int | None,
+    chat_id: int | None,
 ) -> Path:
     conv = await context_manager.get_or_create_conversation(
-        user_id, thread_id=thread_id
+        user_id, thread_id=thread_id, chat_id=chat_id
     )
     if conv.cwd:
         return Path(conv.cwd).resolve()
@@ -89,10 +92,7 @@ def _is_hidden(path: Path) -> bool:
 
 def _is_secret_pattern(name: str) -> bool:
     lower = name.lower()
-    for pattern in _SECRET_PATTERNS:
-        if fnmatch(lower, pattern.lower()):
-            return True
-    return False
+    return any(fnmatch(lower, pattern.lower()) for pattern in _SECRET_PATTERNS)
 
 
 def _is_excluded_dir(path: Path) -> bool:
@@ -145,9 +145,7 @@ def _allow_listing(name: str) -> bool:
         return False
     if name in _EXCLUDED_DIRS:
         return False
-    if _is_secret_pattern(name):
-        return False
-    return True
+    return not _is_secret_pattern(name)
 
 
 async def _send_file(message: Message, path: Path, route: TelegramRoute) -> None:
@@ -314,7 +312,7 @@ async def cmd_send(message: Message, context_manager: ContextManager) -> None:
     route = TelegramRoute.from_message(message)
     user_id = message.from_user.id
     thread_id = route.storage_thread_id
-    cwd = await _session_cwd(context_manager, user_id, thread_id)
+    cwd = await _session_cwd(context_manager, user_id, thread_id, route.chat_id)
 
     text = message.text or ""
     if text.startswith("/send"):
@@ -399,7 +397,7 @@ async def handle_send_callback(
     route = TelegramRoute.from_message(callback.message)
     user_id = callback.from_user.id
     thread_id = route.storage_thread_id
-    cwd = await _session_cwd(context_manager, user_id, thread_id)
+    cwd = await _session_cwd(context_manager, user_id, thread_id, route.chat_id)
 
     parts = callback.data.split(":")
     if len(parts) < 3:
