@@ -1,15 +1,15 @@
 ---
 title: Architecture
 category: architecture
-last_updated: 2026-06-18
+last_updated: 2026-06-19
 relevance: high
 summary: Runtime layers, provider contract, Telegram rendering, and Codex bridge boundaries
-related: [CUSTOM_PROVIDERS.md, RICH_MESSAGES.md, STARTUP.md]
+related: [PRODUCT_EXPERIENCE.md, CUSTOM_PROVIDERS.md, RICH_MESSAGES.md, STARTUP.md]
 ---
 
 # Architecture
 
-Telegodex is a Telegram workbench. The current code ships the chat foundation first: multi-provider routing, rich Telegram output, conversation storage, and safety checks. The next product line is the Codex bridge.
+Telegodex is a Telegram workbench. The current code ships the multi-provider chat foundation and the CodexBridge v2 foundation: provider routing, rich Telegram output, conversation storage, topic-aware session keys, approval routing, and a persistent Codex app-server bridge.
 
 ## Runtime Layout
 
@@ -103,7 +103,7 @@ Telegram User
 - **Instruction Support**: `/codex /skill` lists available skills, `/codex !command` executes shell commands, `/codex @path` reads directory listings.
 - **Telegram Controls**: `bot/handlers/toolbar.py` owns temporary ReplyKeyboard controls while a Codex turn or Shell process is active. Slash commands such as `/stop`, `/live`, `/last`, and `/status` remain available without the keyboard.
 - **MessageBus**: `core/bus/` carries background results through explicit delivery modes and can inject eligible updates back into an active session.
-- **Topic Routing Guard**: Codex topic messages stay on the Codex path. Active Codex-bound topics route directly to Codex; historical Codex topics without an active binding ask the user to create a fresh Codex session or cancel. Ordinary non-Codex forum topics fall through to the normal AI chat handler.
+- **Topic Routing Guard**: Codex topic messages stay on the Codex path. Active Codex-bound topics route directly to Codex; historical Codex topics without an active binding ask the user to create a fresh Codex session or cancel. Ignored or canceled recovery prompts do not fall back to ordinary AI chat. Ordinary non-Codex forum topics fall through to the normal AI chat handler.
 
 ### Streaming Output
 
@@ -122,5 +122,6 @@ Turn output is streamed via Telegram Rich Message drafts. The handler accumulate
 `README.md` defines the public product story. Keep docs aligned with it:
 
 - Telegodex is a Telegram Workbench project.
-- The current release is a multi-provider Telegram bot foundation.
+- The current release has the multi-provider Telegram bot foundation and CodexBridge foundation.
 - The long-term product is mobile control for Codex and CLI agents through Telegram.
+- Product-experience decisions live in [PRODUCT_EXPERIENCE.md](PRODUCT_EXPERIENCE.md).

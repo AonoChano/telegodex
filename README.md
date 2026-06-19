@@ -155,6 +155,7 @@ Python 3.11+ · aiogram 3.x · SQLAlchemy 2.x async · Pydantic Settings · Alem
 
 - [Quickstart](docs/QUICKSTART.md)
 - [Usage](docs/USAGE.md)
+- [Product experience](docs/PRODUCT_EXPERIENCE.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Custom providers](docs/CUSTOM_PROVIDERS.md)
 - [Model catalog](docs/MODELS.md)
@@ -167,7 +168,8 @@ Python 3.11+ · aiogram 3.x · SQLAlchemy 2.x async · Pydantic Settings · Alem
 - [x] Multi-provider abstraction
 - [x] Rich Telegram rendering
 - [x] Context windowing and user preferences
-- [ ] Codex bridge
+- [x] Codex bridge foundation
+- [ ] Full Codex workbench UX
 - [ ] Claude Code bridge
 - [ ] Agent/task execution layer
 - [ ] Web admin dashboard

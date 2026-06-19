@@ -1,10 +1,10 @@
 ---
 title: Quickstart
 category: guide
-last_updated: 2026-06-15
+last_updated: 2026-06-19
 relevance: high
 summary: Install, configure, and start Telegodex
-related: [USAGE.md, CUSTOM_PROVIDERS.md, STARTUP.md]
+related: [USAGE.md, PRODUCT_EXPERIENCE.md, CUSTOM_PROVIDERS.md, STARTUP.md]
 ---
 
 # Quickstart
@@ -63,6 +63,7 @@ Restart the bot. The provider appears in the settings flow.
 ## Read Next
 
 - [Usage](USAGE.md)
+- [Product experience](PRODUCT_EXPERIENCE.md)
 - [Architecture](ARCHITECTURE.md)
 - [Custom providers](CUSTOM_PROVIDERS.md)
 - [Model catalog](MODELS.md)

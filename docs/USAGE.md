@@ -1,15 +1,15 @@
 ---
 title: Usage
 category: guide
-last_updated: 2026-06-15
+last_updated: 2026-06-19
 relevance: high
 summary: Daily use, commands, provider settings, and rich output behavior
-related: [QUICKSTART.md, CUSTOM_PROVIDERS.md, RICH_MESSAGES.md]
+related: [QUICKSTART.md, PRODUCT_EXPERIENCE.md, CUSTOM_PROVIDERS.md, RICH_MESSAGES.md]
 ---
 
 # Usage
 
-Telegodex currently runs as a Telegram AI bot with a workbench-oriented architecture. You can chat with configured providers today. The Codex bridge will use the same Telegram surface for terminal-grade workflows.
+Telegodex runs as a Telegram Workbench. You can chat with configured providers, use Telegram Rich Messages for structured output, and run Codex CLI sessions through the CodexBridge. Ordinary AI chat and Codex sessions keep separate context.
 
 ## Commands
 
@@ -77,7 +77,9 @@ Use `/codex <prompt>` to run Codex CLI tasks from Telegram. The bot runs a persi
 
 **Approvals:** When Codex wants to execute a command or modify a file, it sends an approval request with inline Approve/Deny buttons. Approvals auto-deny after 60 seconds (configurable via `CODEX_APPROVAL_TIMEOUT`).
 
-**Forum topics:** In a forum supergroup, `/codex new` creates a fresh Codex session and binds it to a forum topic. Messages sent inside that Codex-bound topic can continue the session without repeating the `/codex` prefix. If a historical Codex topic has no active thread binding, Telegodex asks whether to create a fresh Codex session in that topic or cancel.
+**Forum topics:** In a forum supergroup, `/codex new` creates a fresh Codex session and binds it to a forum topic. Messages sent inside that Codex-bound topic continue the session without repeating the `/codex` prefix.
+
+Codex topic ownership is strict. Active Codex-bound topics route directly to Codex. If a historical Codex topic has no active thread binding, Telegodex asks whether to create a fresh Codex session in that topic or cancel. Canceling, ignoring, or letting the prompt expire leaves the user message unhandled; it does not fall back to ordinary AI chat. Ordinary non-Codex forum topics still fall through to the normal AI chat handler.
 
 **Controls:** While a Codex turn or Shell process is active, Telegodex can show a temporary ReplyKeyboard with controls such as Stop, Live, Last Reply, and Status. Equivalent slash commands are always available: `/stop`, `/live`, `/last`, and `/status`.
 

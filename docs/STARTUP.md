@@ -33,3 +33,5 @@ github.com/AonoChano/telegodex
 ```
 
 Terminals that support OSC 8 make the label clickable. Terminals that do not support it still show the plain text URL.
+
+The banner version is read from `pyproject.toml`. If the project version changes, the startup banner should change with it.
