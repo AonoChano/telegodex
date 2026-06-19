@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from aiogram import Bot, F, Router
+from aiogram.dispatcher.event.bases import SkipHandler
 from aiogram.filters import BaseFilter, Command
 from aiogram.types import (
     BufferedInputFile,
@@ -24,6 +25,7 @@ from aiogram.types import (
     Message,
 )
 from loguru import logger
+from sqlalchemy import select
 
 from bot.handlers import toolbar as toolbar_handler
 from bot.streaming import ReactionTracker
@@ -70,6 +72,14 @@ class _TopicRecoveryPrompt:
 
 _topic_recovery_requests: dict[str, _TopicRecoveryRequest] = {}
 _topic_recovery_prompts: dict[tuple[int | str, int], _TopicRecoveryPrompt] = {}
+
+
+def _topic_prompt_text(message: Message) -> str:
+    """Return user prompt text inside a Codex topic, without a leading /codex."""
+    prompt = (message.text or "").strip()
+    if prompt.startswith("/codex"):
+        return prompt[len("/codex") :].strip()
+    return prompt
 
 
 def _ensure_global_orch(orchestrator: Orchestrator) -> None:
@@ -165,14 +175,14 @@ async def _handle_codex_new(
                 f"_handle_codex_new: updated session key mapping: old={old_key}, new={new_key}, success={updated}"
             )
 
-        # Update the database conversation record with the topic_id.
-        from sqlalchemy import update
-
-        from storage.models import Conversation
-
-        stmt = update(Conversation).where(Conversation.codex_thread_id == thread_id).values(topic_id=topic_id)
-        await context_manager.session.execute(stmt)
-        await context_manager.session.commit()
+        await _bind_codex_thread_to_topic(
+            context_manager=context_manager,
+            chat_id=route.chat_id,
+            topic_id=topic_id,
+            thread_id=thread_id,
+            user_id=user_id,
+            cwd=cwd,
+        )
 
         # Send a welcome message to the new topic.
         await bot.send_message(
@@ -294,17 +304,69 @@ async def _send_topic_recovery_prompt(message: Message, route: TelegramRoute, pr
         _topic_recovery_prompts[key] = _TopicRecoveryPrompt(request_id=request_id, message_id=sent.message_id)
 
 
+async def _bind_codex_thread_to_topic(
+    *,
+    context_manager: Any,
+    chat_id: int | str,
+    topic_id: int,
+    thread_id: str,
+    user_id: int,
+    cwd: str | None = None,
+) -> None:
+    """Persist that a Codex app-server thread belongs to a Telegram topic."""
+    from core.session import ProviderSessionData
+    from storage.models import Conversation
+
+    db = context_manager.session
+    result = await db.execute(
+        select(Conversation).where(
+            Conversation.chat_id == int(chat_id),
+            Conversation.codex_thread_id == thread_id,
+        )
+    )
+    conv = result.scalars().first()
+    if conv is None:
+        logger.warning(
+            "Codex topic bind: missing conversation for chat_id={} thread_id={}; creating binding row",
+            chat_id,
+            thread_id,
+        )
+        conv = Conversation(
+            user_id=user_id,
+            chat_id=int(chat_id),
+            codex_thread_id=thread_id,
+            cwd=None if cwd == "default" else cwd,
+        )
+        db.add(conv)
+
+    conv.user_id = user_id
+    conv.chat_id = int(chat_id)
+    conv.transport = "telegram"
+    conv.topic_id = topic_id
+    conv.thread_id = topic_id
+    conv.codex_thread_id = thread_id
+    if cwd is not None and cwd != "default":
+        conv.cwd = cwd
+    conv.is_active = True
+    provider_sessions = dict(conv.provider_sessions or {})
+    provider_sessions["codex"] = ProviderSessionData(session_id=thread_id).to_dict()
+    conv.provider_sessions = provider_sessions
+    await db.commit()
+
+
 async def _is_codex_bound_topic(
     thread_id: int,
     context_manager: Any,
+    chat_id: int | str | None = None,
 ) -> bool:
     """Check whether a Telegram thread is bound to a Codex session."""
-    return await _codex_topic_state(thread_id, context_manager) == _CODEX_TOPIC_BOUND
+    return await _codex_topic_state(thread_id, context_manager, chat_id=chat_id) == _CODEX_TOPIC_BOUND
 
 
 async def _codex_topic_state(
     thread_id: int,
     context_manager: Any,
+    chat_id: int | str | None = None,
 ) -> str:
     """Classify a Telegram topic for Codex routing."""
     from sqlalchemy import or_, select
@@ -312,34 +374,35 @@ async def _codex_topic_state(
     from storage.models import Conversation
 
     db = context_manager.session
-    stmt = select(Conversation).where(
+    scope = [
         or_(
             Conversation.thread_id == thread_id,
             Conversation.topic_id == thread_id,
         ),
         Conversation.codex_thread_id.isnot(None),
+    ]
+    if chat_id is not None:
+        scope.append(Conversation.chat_id == int(chat_id))
+    stmt = select(Conversation).where(
+        *scope,
         Conversation.is_active.is_(True),
     )
     result = await db.execute(stmt)
     conv = result.scalars().first()
     if conv is not None:
-        logger.debug(f"Codex topic check: thread_id={thread_id}, state=bound, conv=id={conv.id}")
+        logger.debug(f"Codex topic check: chat_id={chat_id}, thread_id={thread_id}, state=bound, conv=id={conv.id}")
         return _CODEX_TOPIC_BOUND
 
-    stmt = select(Conversation).where(
-        or_(
-            Conversation.thread_id == thread_id,
-            Conversation.topic_id == thread_id,
-        ),
-        Conversation.codex_thread_id.isnot(None),
-    )
+    stmt = select(Conversation).where(*scope)
     result = await db.execute(stmt)
     conv = result.scalars().first()
     if conv is not None:
-        logger.debug(f"Codex topic check: thread_id={thread_id}, state=recoverable, conv=id={conv.id}")
+        logger.debug(
+            f"Codex topic check: chat_id={chat_id}, thread_id={thread_id}, state=recoverable, conv=id={conv.id}"
+        )
         return _CODEX_TOPIC_RECOVERABLE
 
-    logger.debug(f"Codex topic check: thread_id={thread_id}, state=not_codex")
+    logger.debug(f"Codex topic check: chat_id={chat_id}, thread_id={thread_id}, state=not_codex")
     return _CODEX_TOPIC_NOT_CODEX
 
 
@@ -540,10 +603,13 @@ async def cmd_codex_v2(
     user_id = message.from_user.id if message.from_user else 0
     session_key = SessionKey.from_telegram_message(chat_id, route.message_thread_id)
 
-    # Codex only works from the main chat (All), not inside conversation threads.
     if route.message_thread_id is not None:
-        is_bound = await _is_codex_bound_topic(route.message_thread_id, context_manager)
-        if not is_bound:
+        state = await _codex_topic_state(route.message_thread_id, context_manager, chat_id=route.chat_id)
+        prompt = _topic_prompt_text(message)
+        if state == _CODEX_TOPIC_RECOVERABLE:
+            await _send_topic_recovery_prompt(message, route, prompt)
+            return
+        if state != _CODEX_TOPIC_BOUND:
             await message.answer(
                 "Codex is only available from the main chat screen.\n\n"
                 "Switch to <b>All</b> and send <code>/codex &lt;prompt&gt;</code> there.",
@@ -551,8 +617,6 @@ async def cmd_codex_v2(
                 **route.send_kwargs(),
             )
             return
-        # In a Codex-bound topic — prompt is the full message text.
-        prompt = message.text or ""
     else:
         # In main chat — extract prompt after /codex
         prompt = message.text or ""
@@ -648,7 +712,7 @@ async def cmd_codex_v2(
 
 
 class IsCodexBoundTopic(BaseFilter):
-    """Filter: match plain text messages in Codex-bound forum topics only."""
+    """Filter: catch candidate text messages in Telegram forum topics."""
 
     async def __call__(self, message: Message, context_manager: Any | None = None) -> bool:
         if message.message_thread_id is None:
@@ -657,20 +721,7 @@ class IsCodexBoundTopic(BaseFilter):
         if message.text is None:
             logger.debug("IsCodexBoundTopic: text is None, skipping")
             return False
-        # Let /codex commands pass through to the command handler.
-        is_codex_cmd = message.text.strip().startswith("/codex")
-        logger.debug(
-            f"IsCodexBoundTopic: thread_id={message.message_thread_id}, "
-            f"text={message.text[:30]}..., is_codex_cmd={is_codex_cmd}"
-        )
-        if is_codex_cmd:
-            return False
-        if context_manager is None:
-            logger.debug("IsCodexBoundTopic: context_manager unavailable")
-            return False
-        state = await _codex_topic_state(message.message_thread_id, context_manager)
-        logger.debug(f"IsCodexBoundTopic: thread_id={message.message_thread_id}, state={state}")
-        return state in {_CODEX_TOPIC_BOUND, _CODEX_TOPIC_RECOVERABLE}
+        return not message.text.strip().startswith("/codex")
 
 
 @router.message(F.text, IsCodexBoundTopic())
@@ -686,21 +737,21 @@ async def handle_codex_topic_message(
     """
     logger.info(f"handle_codex_topic_message: received message in thread {message.message_thread_id}")
     route = TelegramRoute.from_message(message)
-    prompt = (message.text or "").strip()
+    prompt = _topic_prompt_text(message)
 
     if not prompt:
-        return
+        raise SkipHandler
 
     # Verify this topic is actually bound to a Codex session.
     topic_id = message.message_thread_id
     if topic_id is None:
-        return
-    state = await _codex_topic_state(topic_id, context_manager)
+        raise SkipHandler
+    state = await _codex_topic_state(topic_id, context_manager, chat_id=route.chat_id)
     if state == _CODEX_TOPIC_RECOVERABLE:
         await _send_topic_recovery_prompt(message, route, prompt)
         return
     if state != _CODEX_TOPIC_BOUND:
-        return
+        raise SkipHandler
 
     # Check daemon readiness.
     daemon_alive = codex_daemon.is_alive()
@@ -1001,6 +1052,14 @@ async def handle_codex_topic_recovery_callback(
         sm = orchestrator.session_manager
         if sm is not None:
             sm.set_topic_id(thread_id, request.topic_id)
+        await _bind_codex_thread_to_topic(
+            context_manager=context_manager,
+            chat_id=request.chat_id,
+            topic_id=request.topic_id,
+            thread_id=thread_id,
+            user_id=request.user_id,
+            cwd=info.get("cwd"),
+        )
         await callback_query.answer("Created.", show_alert=False)
         await _execute_codex_prompt(
             msg,

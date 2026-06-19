@@ -19,6 +19,24 @@ sys.path.insert(0, str(Path(__file__).parent))
 from config import settings
 
 
+def _project_version() -> str:
+    """Read the package version from pyproject.toml."""
+    pyproject = Path(__file__).parent / "pyproject.toml"
+    in_project = False
+    for line in pyproject.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if stripped == "[project]":
+            in_project = True
+            continue
+        if in_project and stripped.startswith("["):
+            break
+        if in_project and stripped.startswith("version"):
+            match = re.match(r'version\s*=\s*"([^"]+)"', stripped)
+            if match:
+                return match.group(1)
+    return "0.0.0"
+
+
 def check_configuration() -> bool:
     """Validate required local configuration before starting the bot."""
     logger.info("Checking configuration...")
@@ -86,6 +104,7 @@ def print_banner() -> None:
     repo_url = "https://github.com/AonoChano/telegodex"
     repo_label = "github.com/AonoChano/telegodex"
     repo_link = _terminal_link(repo_label, repo_url)
+    version = _project_version()
     logo_lines = [
         "   ████████╗███████╗██╗     ███████╗ ██████╗  ██████╗ ██████╗ ███████╗██╗  ██╗   ",
         "   ╚══██╔══╝██╔════╝██║     ██╔════╝██╔════╝ ██╔═══██╗██╔══██╗██╔════╝╚██╗██╔╝   ",
@@ -95,7 +114,7 @@ def print_banner() -> None:
         "      ╚═╝   ╚══════╝╚══════╝╚══════╝ ╚═════╝  ╚═════╝ ╚═════╝ ╚══════╝╚═╝  ╚═╝   ",
     ]
     tagline = "       AI Workbench Telegram Bot   |   Codex, ClaudeCode, and more"
-    repo_line = f"       {repo_label}                            v0.0.1"
+    repo_line = f"       {repo_label}                            v{version}"
     width = max(len(line) for line in logo_lines + [tagline, repo_line])
     ansi_pattern = re.compile(r"\033\]8;;.*?\033\\|\033\]8;;\033\\|\033\[[0-9;]*m")
 
@@ -115,7 +134,7 @@ def print_banner() -> None:
     print(box_line())
     print(box_line(f"{white}{tagline}{reset}"))
     print(box_line())
-    print(box_line(f"{blue}  {repo_link}{reset}{white}                  v0.0.1{reset}"))
+    print(box_line(f"{blue}  {repo_link}{reset}{white}                  v{version}{reset}"))
     print(box_line())
     print(f"{white}╚{'═' * width}╝{reset}")
     print()

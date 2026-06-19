@@ -170,6 +170,70 @@ class TestCodexTopicFallthrough:
     """Verify non-Codex topics still reach the normal AI chat handler."""
 
     @pytest.mark.asyncio
+    async def test_bound_forum_topic_routes_to_codex_not_ai(
+        self,
+        mock_context_manager: AsyncMock,
+        mock_ai_provider: MagicMock,
+    ) -> None:
+        dispatcher = Dispatcher()
+        dispatcher.include_router(codex_router)
+        dispatcher.include_router(messages_router)
+
+        orchestrator = MagicMock()
+        orchestrator.ensure_transport_handlers = MagicMock()
+
+        @dispatcher.message.middleware()
+        async def inject_deps(handler, event, data):
+            data["context_manager"] = mock_context_manager
+            data["ai_router"] = ai_router
+            data["orchestrator"] = orchestrator
+            return await handler(event, data)
+
+        ai_router = MagicMock()
+        ai_router.get_provider = MagicMock(return_value=mock_ai_provider)
+        ai_router.get_default_provider = MagicMock(return_value=mock_ai_provider)
+        ai_router.is_provider_available = MagicMock(return_value=True)
+
+        class _Scalars:
+            def __init__(self, first):
+                self._first = first
+
+            def first(self):
+                return self._first
+
+        class _DbResult:
+            def __init__(self, first):
+                self._first = first
+
+            def scalars(self):
+                return _Scalars(self._first)
+
+        mock_context_manager.session.execute = AsyncMock(
+            return_value=_DbResult(MagicMock(id=17, topic_id=222, is_active=True))
+        )
+
+        bot = AsyncMock()
+        message = _make_mock_message(
+            text="continue in codex topic",
+            chat_type="supergroup",
+            message_thread_id=222,
+        )
+        update = _make_update(message)
+
+        with (
+            patch("bot.handlers.codex.codex_daemon.is_alive", return_value=True),
+            patch("bot.handlers.codex._ensure_global_orch", MagicMock()),
+            patch("bot.handlers.codex._execute_codex_prompt", AsyncMock()) as execute,
+        ):
+            await dispatcher.feed_update(bot, update)
+
+        execute.assert_awaited_once()
+        mock_ai_provider.chat_stream.assert_not_called()
+
+        codex_router._parent_router = None
+        messages_router._parent_router = None
+
+    @pytest.mark.asyncio
     async def test_unbound_forum_topic_reaches_ai_handler(
         self,
         mock_context_manager: AsyncMock,

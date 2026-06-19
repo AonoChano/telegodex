@@ -7,11 +7,16 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from aiogram.dispatcher.event.bases import SkipHandler
 from aiogram.types import Message
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from bot.handlers import codex
 from bot.utils.routing import TelegramRoute
 from core.session import SessionKey
+from storage.context_manager import ContextManager
+from storage.models import Base, Conversation
 
 
 def _message(
@@ -42,19 +47,24 @@ def _message(
 
 
 class _Scalars:
-    def __init__(self, first):
+    def __init__(self, first, all_items=None):
         self._first = first
+        self._all = [] if all_items is None else all_items
 
     def first(self):
         return self._first
 
+    def all(self):
+        return self._all
+
 
 class _DbResult:
-    def __init__(self, first):
+    def __init__(self, first, all_items=None):
         self._first = first
+        self._all = [] if all_items is None else all_items
 
     def scalars(self):
-        return _Scalars(self._first)
+        return _Scalars(self._first, self._all)
 
 
 class _Context:
@@ -64,8 +74,22 @@ class _Context:
         self.session = AsyncMock()
         active = SimpleNamespace(id=1, topic_id=222) if state == "bound" else None
         historical = SimpleNamespace(id=2, topic_id=222) if state == "recoverable" else None
+        conv = SimpleNamespace(
+            id=3,
+            user_id=7,
+            chat_id=100,
+            transport="telegram",
+            topic_id=None,
+            thread_id=None,
+            codex_thread_id="thread-abcdef",
+            cwd="C:/repo",
+            is_active=True,
+            provider_sessions=None,
+        )
+        self.bound_conversation = conv
         self.session.execute = AsyncMock(side_effect=[_DbResult(active), _DbResult(historical)])
         self.session.commit = AsyncMock()
+        self.session.add = MagicMock()
 
 
 class _SessionManager:
@@ -82,13 +106,12 @@ class _SessionManager:
 
 
 @pytest.mark.asyncio
-async def test_codex_bound_topic_filter_checks_database_binding() -> None:
+async def test_codex_bound_topic_filter_catches_text_topic_candidates() -> None:
     message = _message("hello", message_thread_id=222)
     filter_ = codex.IsCodexBoundTopic()
 
-    assert await filter_(message, _Context(state="not_codex")) is False
-    assert await filter_(message, _Context(state="recoverable")) is True
-    assert await filter_(message, _Context(bound=True)) is True
+    assert await filter_(message, _Context(state="not_codex")) is True
+    assert await filter_(_message("hello")) is False
 
 
 @pytest.mark.asyncio
@@ -111,6 +134,8 @@ async def test_handle_codex_new_creates_topic_and_rebinds_session(monkeypatch: p
         codex_new_session=AsyncMock(return_value={"thread_id": "thread-abcdef", "cwd": "C:/repo"}),
     )
     session_key = SessionKey.from_telegram_message(route.chat_id, None)
+    bind = AsyncMock()
+    monkeypatch.setattr(codex, "_bind_codex_thread_to_topic", bind)
 
     await codex._handle_codex_new(
         message,
@@ -135,12 +160,66 @@ async def test_handle_codex_new_creates_topic_and_rebinds_session(monkeypatch: p
             SessionKey.from_telegram_message(100, 222),
         )
     ]
-    context.session.execute.assert_awaited_once()
-    assert context.session.commit.await_count == 1
+    bind.assert_awaited_once_with(
+        context_manager=context,
+        chat_id=100,
+        topic_id=222,
+        thread_id="thread-abcdef",
+        user_id=7,
+        cwd="C:/repo",
+    )
 
     method = bot.await_args.args[0]
     assert method.__class__.__name__ == "SendMessage"
     assert "Codex: thread-a" in method.text
+
+
+@pytest.mark.asyncio
+async def test_bind_codex_thread_to_topic_persists_storage_route() -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    async with session_factory() as session:
+        conv = Conversation(
+            user_id=7,
+            chat_id=100,
+            transport="telegram",
+            topic_id=None,
+            thread_id=None,
+            codex_thread_id="thread-abcdef",
+            cwd="C:/old",
+            is_active=True,
+            provider_sessions={"codex": {"session_id": "thread-abcdef"}},
+        )
+        session.add(conv)
+        await session.commit()
+
+        context = ContextManager(session)
+        await codex._bind_codex_thread_to_topic(
+            context_manager=context,
+            chat_id=100,
+            topic_id=222,
+            thread_id="thread-abcdef",
+            user_id=7,
+            cwd="C:/repo",
+        )
+
+        result = await session.execute(select(Conversation).where(Conversation.codex_thread_id == "thread-abcdef"))
+        rebound = result.scalars().first()
+        assert rebound is not None
+        assert rebound.chat_id == 100
+        assert rebound.thread_id == 222
+        assert rebound.topic_id == 222
+        assert rebound.transport == "telegram"
+        assert rebound.cwd == "C:/repo"
+        assert rebound.is_active is True
+        assert rebound.provider_sessions["codex"]["session_id"] == "thread-abcdef"
+        assert await codex._codex_topic_state(222, context, chat_id=100) == codex._CODEX_TOPIC_BOUND
+        assert await codex._codex_topic_state(222, context, chat_id=101) == codex._CODEX_TOPIC_NOT_CODEX
+
+    await engine.dispose()
 
 
 @pytest.mark.asyncio
@@ -149,8 +228,10 @@ async def test_topic_message_routes_directly_to_codex(monkeypatch: pytest.Monkey
     context = _Context(bound=True)
     orchestrator = SimpleNamespace(ensure_transport_handlers=MagicMock())
     execute = AsyncMock()
+    bind = AsyncMock()
     monkeypatch.setattr(codex.codex_daemon, "is_alive", lambda: True)
     monkeypatch.setattr(codex, "_execute_codex_prompt", execute)
+    monkeypatch.setattr(codex, "_bind_codex_thread_to_topic", bind)
     monkeypatch.setattr(codex, "_ensure_global_orch", lambda orch: None)
 
     await codex.handle_codex_topic_message(message, context, orchestrator)
@@ -161,6 +242,18 @@ async def test_topic_message_routes_directly_to_codex(monkeypatch: pytest.Monkey
     assert args[0] is message
     assert args[1].message_thread_id == 222
     assert args[4] == "continue the work"
+
+
+@pytest.mark.asyncio
+async def test_non_codex_topic_handler_skips_to_ai_chat() -> None:
+    message = _message("normal topic message", message_thread_id=222)
+    context = _Context(state="not_codex")
+    orchestrator = SimpleNamespace(ensure_transport_handlers=MagicMock())
+
+    with pytest.raises(SkipHandler):
+        await codex.handle_codex_topic_message(message, context, orchestrator)
+
+    orchestrator.ensure_transport_handlers.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -190,6 +283,35 @@ async def test_recoverable_topic_message_sends_create_or_cancel_prompt(
         assert "Create a new Codex session" in kwargs["text"]
         assert len(codex._topic_recovery_requests) == 1
         assert codex._topic_recovery_prompts[(100, 222)].message_id == 99
+    finally:
+        codex._topic_recovery_requests.clear()
+        codex._topic_recovery_prompts.clear()
+
+
+@pytest.mark.asyncio
+async def test_codex_command_in_recoverable_topic_sends_create_or_cancel_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bot = AsyncMock()
+    bot.send_message.return_value = SimpleNamespace(message_id=101)
+    message = _message("/codex continue the work", bot=bot, message_thread_id=222)
+    context = _Context(state="recoverable")
+    orchestrator = SimpleNamespace(ensure_transport_handlers=MagicMock())
+    monkeypatch.setattr(codex.codex_daemon, "is_alive", lambda: True)
+
+    codex._topic_recovery_requests.clear()
+    codex._topic_recovery_prompts.clear()
+    try:
+        await codex.cmd_codex_v2(message, context, orchestrator)
+
+        orchestrator.ensure_transport_handlers.assert_not_called()
+        bot.send_message.assert_awaited_once()
+        _, kwargs = bot.send_message.await_args
+        assert kwargs["chat_id"] == 100
+        assert kwargs["message_thread_id"] == 222
+        assert "Create a new Codex session" in kwargs["text"]
+        request = next(iter(codex._topic_recovery_requests.values()))
+        assert request.prompt == "continue the work"
     finally:
         codex._topic_recovery_requests.clear()
         codex._topic_recovery_prompts.clear()
@@ -247,8 +369,10 @@ async def test_topic_recovery_create_starts_session_in_current_topic(
         codex_new_session=AsyncMock(return_value={"thread_id": "thread-new", "cwd": "C:/repo"}),
     )
     execute = AsyncMock()
+    bind = AsyncMock()
     monkeypatch.setattr(codex.codex_daemon, "is_alive", lambda: True)
     monkeypatch.setattr(codex, "_execute_codex_prompt", execute)
+    monkeypatch.setattr(codex, "_bind_codex_thread_to_topic", bind)
     codex._topic_recovery_requests[request_id] = codex._TopicRecoveryRequest(
         chat_id=100,
         topic_id=222,
@@ -272,6 +396,14 @@ async def test_topic_recovery_create_starts_session_in_current_topic(
             7,
         )
         assert session_manager.set_topic_id_calls == [("thread-new", 222)]
+        bind.assert_awaited_once_with(
+            context_manager=context,
+            chat_id=100,
+            topic_id=222,
+            thread_id="thread-new",
+            user_id=7,
+            cwd="C:/repo",
+        )
         execute.assert_awaited_once()
         args = execute.await_args.args
         kwargs = execute.await_args.kwargs
