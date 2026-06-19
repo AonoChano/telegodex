@@ -11,6 +11,7 @@ related: [PRODUCT_EXPERIENCE.md, RICH_MESSAGES.md, STARTUP.md]
 
 ## Unreleased
 
+- Fixed Codex approval callbacks so inline buttons use short Telegram-safe tokens and resolve through the active Orchestrator approval handler.
 - Added `docs/PRODUCT_EXPERIENCE.md` as the product-experience baseline for Telegram Workbench behavior.
 - Documented strict Codex topic ownership: active Codex-bound topics route to Codex, recoverable historical Codex topics ask create-or-cancel, and ordinary non-Codex topics remain normal AI chat.
 - Updated the roadmap to mark the Codex bridge foundation complete while keeping full Codex Workbench UX open.

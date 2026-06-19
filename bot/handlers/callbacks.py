@@ -1,3 +1,5 @@
+from typing import Any
+
 from aiogram import Router
 from aiogram.types import CallbackQuery
 from loguru import logger
@@ -95,7 +97,6 @@ async def handle_provider_change(callback: CallbackQuery, context_manager: Conte
 async def handle_model_change(callback: CallbackQuery, context_manager: ContextManager):
     """处理模型切换"""
     parts = callback.data.split(":", 2)
-    provider = parts[1]
     model = parts[2]
 
     user = await context_manager.session.execute(
@@ -166,25 +167,32 @@ async def handle_cancel(callback: CallbackQuery):
 # ---------------------------------------------------------------------------
 
 @router.callback_query(lambda c: c.data and c.data.startswith("codex_approval:"))
-async def handle_codex_approval(callback: CallbackQuery):
+async def handle_codex_approval(callback: CallbackQuery, orchestrator: Any):
     """Handle Codex approval inline button callbacks.
 
-    Callback data format: ``codex_approval:{approval_id}:{decision}``
-    where decision is one of ``acceptOnce``, ``acceptForSession``, ``deny``.
+    Callback data format: ``codex_approval:{token}``. The token maps to
+    ``(approval_id, decision)`` inside the shared ``ApprovalHandler``.
     """
-    from bot.handlers.codex import approval_handler
-
-    parts = callback.data.split(":", 2)
-    if len(parts) < 3:
+    if callback.data is None:
         await callback.answer("Invalid callback data", show_alert=True)
         return
 
-    approval_id = parts[1]
-    decision = parts[2]
+    parts = callback.data.split(":", 1)
+    if len(parts) < 2:
+        await callback.answer("Invalid callback data", show_alert=True)
+        return
+
+    token = parts[1]
+    approval = orchestrator.approval_handler.resolve_callback_token(token)
+    if approval is None:
+        await callback.answer("Approval already timed out", show_alert=True)
+        return
+
+    approval_id, decision = approval
 
     logger.info(f"Codex approval callback: id={approval_id} decision={decision}")
 
-    resolved = await approval_handler.resolve(approval_id, decision)
+    resolved = await orchestrator.approval_handler.resolve(approval_id, decision)
     if resolved:
         decision_label = {
             "Accept": "Approved",

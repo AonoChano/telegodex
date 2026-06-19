@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import secrets
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -44,6 +45,8 @@ class ApprovalHandler:
         self._timeout: float = float(settings.codex_approval_timeout)
         # Cache of items by item_id for looking up diffs during approval.
         self._item_cache: dict[str, dict[str, Any]] = {}
+        self._callback_tokens: dict[str, tuple[str | int, str]] = {}
+        self._approval_callback_tokens: dict[str | int, set[str]] = {}
 
     async def handle_server_request(
         self,
@@ -99,6 +102,7 @@ class ApprovalHandler:
         # Build response.
         decision = pending.decision or "deny"
         del self._pending[approval_id]
+        self._clear_callback_tokens(approval_id)
         return {"decision": decision}
 
     async def _handle_file_change_approval(
@@ -130,6 +134,7 @@ class ApprovalHandler:
 
         decision = pending.decision or "deny"
         del self._pending[approval_id]
+        self._clear_callback_tokens(approval_id)
         return {"decision": decision}
 
     def cache_item(self, item_id: str, item: dict[str, Any]) -> None:
@@ -158,10 +163,14 @@ class ApprovalHandler:
         pending.event.set()
         return True
 
+    def resolve_callback_token(self, token: str) -> tuple[str | int, str] | None:
+        """Return ``(approval_id, decision)`` for a Telegram callback token."""
+        return self._callback_tokens.pop(token, None)
+
     async def _auto_deny_after(self, approval_id: str | int) -> None:
         """Auto-deny an approval after the configured timeout."""
         await asyncio.sleep(self._timeout)
-        pending = self._pending.pop(approval_id, None)
+        pending = self._pending.get(approval_id)
         if pending is not None and not pending.event.is_set():
             logger.warning(
                 f"ApprovalHandler: auto-denying approval {approval_id} "
@@ -169,6 +178,21 @@ class ApprovalHandler:
             )
             pending.decision = "Decline"
             pending.event.set()
+
+    def _new_callback_token(self, approval_id: str | int, decision: str) -> str:
+        """Create a short callback token within Telegram's 64-byte limit."""
+        while True:
+            token = secrets.token_urlsafe(8)
+            if token not in self._callback_tokens:
+                break
+        self._callback_tokens[token] = (approval_id, decision)
+        self._approval_callback_tokens.setdefault(approval_id, set()).add(token)
+        return token
+
+    def _clear_callback_tokens(self, approval_id: str | int) -> None:
+        tokens = self._approval_callback_tokens.pop(approval_id, set())
+        for token in tokens:
+            self._callback_tokens.pop(token, None)
 
     # ------------------------------------------------------------------
     # Formatters — build Telegram inline keyboard markup for approval msgs
@@ -247,10 +271,11 @@ class ApprovalHandler:
             label, callback_value = decision_map.get(
                 decision, (decision, decision.lower())
             )
+            token = self._new_callback_token(approval_id, callback_value)
             buttons.append(
                 InlineKeyboardButton(
                     text=label,
-                    callback_data=f"codex_approval:{approval_id}:{callback_value}",
+                    callback_data=f"codex_approval:{token}",
                 )
             )
 
