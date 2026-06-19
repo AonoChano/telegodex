@@ -1,7 +1,7 @@
 ---
 title: Architecture
 category: architecture
-last_updated: 2026-06-19
+last_updated: 2026-06-20
 relevance: high
 summary: Runtime layers, provider contract, Telegram rendering, and Codex bridge boundaries
 related: [PRODUCT_EXPERIENCE.md, CUSTOM_PROVIDERS.md, RICH_MESSAGES.md, STARTUP.md]
@@ -108,6 +108,8 @@ Telegram User
 ### Streaming Output
 
 Turn output is streamed via Telegram Rich Message drafts. The handler accumulates `item/agentMessage/delta` notifications, filters short internal status chatter, flushes draft updates every 200 characters, streams command output deltas into the same visible text, and persists the final result with `sendRichMessage`.
+
+Codex app-server stderr is process-global, so the Telegram handler only shows stderr when it can attribute the line to the current turn or to a just-reported turn failure. These lines are still raw runtime detail: the handler does not reinterpret provider quota, auth, rate-limit, or concurrency messages, it forwards the useful text into the live status and final Rich Message while suppressing duplicate generic `Unknown error` noise.
 
 ### Approval Flow
 

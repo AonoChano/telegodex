@@ -1,7 +1,7 @@
 ---
 title: Usage
 category: guide
-last_updated: 2026-06-19
+last_updated: 2026-06-20
 relevance: high
 summary: Daily use, commands, provider settings, and rich output behavior
 related: [QUICKSTART.md, PRODUCT_EXPERIENCE.md, CUSTOM_PROVIDERS.md, RICH_MESSAGES.md]
@@ -97,6 +97,8 @@ Codex topic ownership is strict. Active Codex-bound topics route directly to Cod
 **Controls:** While a Codex turn or Shell process is active, Telegodex can show a temporary ReplyKeyboard with controls such as Stop, Live, Last Reply, and Status. Equivalent slash commands are always available: `/stop`, `/live`, `/last`, and `/status`.
 
 **Streaming:** Codex output is streamed as Rich Message drafts in private chats and forum topics, then persisted as a final Rich Message. Command execution output deltas are included in the same stream so long-running commands show progress before completion.
+
+**Errors:** If Codex reports a generic structured failure but the daemon logs a more useful provider/runtime error, Telegodex refreshes the live status message with `Codex runtime detail` and includes the raw detail in the final Rich Message. Repeated generic `Unknown error` lines are removed so quota, auth, rate-limit, and concurrency errors remain readable.
 
 **Configuration:**
 

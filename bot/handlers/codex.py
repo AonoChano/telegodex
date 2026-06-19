@@ -9,6 +9,7 @@ Telegram-specific layer: delegates all business logic to the
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import time
 import uuid
@@ -47,6 +48,8 @@ router = Router(name="codex")
 DRAFT_FLUSH_CHARS = 200
 STATUS_EDIT_INTERVAL_SECONDS = 2.0
 STATUS_TEXT_LIMIT = 900
+STDERR_LATE_GRACE_SECONDS = 2.0
+STDERR_FLUSH_GRACE_SECONDS = 0.25
 
 _CODEX_TOPIC_BOUND = "bound"
 _CODEX_TOPIC_RECOVERABLE = "recoverable"
@@ -139,7 +142,7 @@ def _bot_token() -> str:
 
 def _trim_status_text(text: str, limit: int = STATUS_TEXT_LIMIT) -> str:
     """Trim volatile status text so it remains safe for Telegram message edits."""
-    normalized = " ".join(text.split())
+    normalized = "\n".join(" ".join(line.split()) for line in text.splitlines())
     if len(normalized) <= limit:
         return normalized
     return normalized[: limit - 1].rstrip() + "..."
@@ -151,14 +154,83 @@ def _is_codex_retry_status_line(text: str) -> bool:
     retry_markers = (
         "reconnecting",
         "unexpected status",
+        "bad request",
         "forbidden",
+        "unauthorized",
+        "payment required",
+        "insufficient",
+        "balance",
+        "quota",
         "too many requests",
         "rate limit",
+        "request body",
+        "only one codex conversation",
+        "usage limit",
+        "context window",
+        "status 4",
+        "status 5",
         "timed out",
         "timeout",
         "try again",
+        "error:",
     )
     return any(marker in lowered for marker in retry_markers)
+
+
+def _is_generic_unknown_error_line(line: str) -> bool:
+    """Return whether *line* is only the structured Codex generic error."""
+    normalized = line.strip().strip("_").replace("**", "").replace("`", "")
+    normalized = " ".join(normalized.split()).lower()
+    prefix = "error: unknown error"
+    if not normalized.startswith(prefix):
+        return False
+    suffix = normalized[len(prefix) :].strip()
+    return not suffix or (suffix.startswith("(") and suffix.endswith(")"))
+
+
+def _clean_codex_error_text(text: str, stderr_block: str) -> str:
+    """Remove noisy duplicate generic errors when raw stderr has the real cause."""
+    lines: list[str] = []
+    generic_seen = False
+    previous_line: str | None = None
+
+    for line in text.splitlines():
+        if _is_generic_unknown_error_line(line):
+            if stderr_block:
+                continue
+            if generic_seen:
+                continue
+            generic_seen = True
+        if line == previous_line and line.strip():
+            continue
+        lines.append(line)
+        previous_line = line
+
+    cleaned = "\n".join(lines).strip()
+    while "\n\n\n" in cleaned:
+        cleaned = cleaned.replace("\n\n\n", "\n\n")
+    return cleaned
+
+
+def _markdown_code_fence(text: str, language: str = "text") -> str:
+    """Return a Markdown code fence that can contain the given raw text."""
+    fence = "```"
+    while fence in text:
+        fence += "`"
+    return f"{fence}{language}\n{text}\n{fence}"
+
+
+def _append_codex_stderr_detail(text: str, stderr_block: str) -> str:
+    """Append collected raw Codex stderr to final Telegram output."""
+    if not stderr_block:
+        return text
+    if "Codex runtime detail:" in text:
+        return text
+    base_text = text.replace(stderr_block, "").strip()
+    detail = f"**Codex runtime detail:**\n\n{_markdown_code_fence(stderr_block)}"
+    if not base_text:
+        return detail
+    return f"{base_text.rstrip()}\n\n---\n{detail}"
 
 
 def _format_collected_stderr(lines: list[str]) -> str:
@@ -563,6 +635,9 @@ async def _execute_codex_prompt(
     # We intentionally do NOT classify error types here — the raw line carries
     # the actionable detail and is forwarded as-is.
     stderr_collector: list[str] = []
+    turn_problem_seen = False
+    last_problem_status = ""
+    last_problem_at = 0.0
 
     async def _edit_status(text: str, *, force: bool = False) -> None:
         nonlocal last_status_edit, last_status_text
@@ -593,16 +668,31 @@ async def _execute_codex_prompt(
         active_count = getattr(sm, "active_turn_count", lambda: 0)()
         return active_count == 1 and sm.is_turn_active(session_key)
 
+    def _problem_is_recent() -> bool:
+        return turn_problem_seen and (time.monotonic() - last_problem_at) <= STDERR_LATE_GRACE_SECONDS
+
+    async def _edit_problem_status_with_stderr() -> None:
+        stderr_block = _format_collected_stderr(stderr_collector)
+        status_text = last_problem_status or "Codex error.\nUnknown error"
+        if stderr_block:
+            status_text += f"\n\nCodex runtime detail:\n{stderr_block}"
+        await _edit_status(status_text, force=True)
+
     async def _on_daemon_stderr(text: str) -> None:
         if not _is_codex_retry_status_line(text):
             return
-        if not _single_active_turn():
-            logger.debug(f"Codex: stderr status kept in logs because active turn count is not singular: {text}")
+        can_show_live = _single_active_turn()
+        can_attach_to_recent_error = _problem_is_recent()
+        if not can_show_live and not can_attach_to_recent_error:
+            logger.debug(f"Codex: stderr status kept in logs because it cannot be safely attributed: {text}")
             return
         # Preserve the raw line so the final message can echo it back verbatim
         # instead of the generic "Unknown error" from turn/completed.
         stderr_collector.append(text)
-        await _edit_status(f"Codex connection issue. Retrying...\n{text}", force=True)
+        if can_attach_to_recent_error:
+            await _edit_problem_status_with_stderr()
+        else:
+            await _edit_status(f"Codex connection issue. Retrying...\n{text}", force=True)
 
     remove_stderr_listener = codex_daemon.add_stderr_listener(_on_daemon_stderr)
 
@@ -641,6 +731,7 @@ async def _execute_codex_prompt(
             await _edit_status("Codex is thinking...", force=True)
 
     async def _on_turn_completed(turn: dict[str, Any], final_text: str) -> None:
+        nonlocal turn_problem_seen, last_problem_status, last_problem_at
         status = turn.get("status", "")
         if reaction_tracker is not None:
             if status == "failed":
@@ -650,26 +741,23 @@ async def _execute_codex_prompt(
         if status == "failed":
             error = turn.get("error", {})
             error_msg = error.get("message", "Unknown error")
-            status_text = f"Codex failed.\n{error_msg}"
-            stderr_block = _format_collected_stderr(stderr_collector)
-            if stderr_block:
-                # Surface the raw daemon output that explains the real cause
-                # (e.g. 403 quota exhausted); turn/completed.error is generic.
-                status_text += f"\n\n{stderr_block}"
-            await _edit_status(status_text, force=True)
+            turn_problem_seen = True
+            last_problem_status = f"Codex failed.\n{error_msg}"
+            last_problem_at = time.monotonic()
+            await _edit_problem_status_with_stderr()
         elif status == "interrupted":
             await _edit_status("Codex was interrupted.", force=True)
         else:
             await _edit_status("Codex completed.", force=True)
 
     async def _on_error(error_message: str) -> None:
+        nonlocal turn_problem_seen, last_problem_status, last_problem_at
         if reaction_tracker is not None:
             await reaction_tracker.clear()
-        status_text = f"Codex error.\n{error_message}"
-        stderr_block = _format_collected_stderr(stderr_collector)
-        if stderr_block:
-            status_text += f"\n\n{stderr_block}"
-        await _edit_status(status_text, force=True)
+        turn_problem_seen = True
+        last_problem_status = f"Codex error.\n{error_message}"
+        last_problem_at = time.monotonic()
+        await _edit_problem_status_with_stderr()
 
     callbacks = StreamingCallbacks(
         on_text_delta=_on_text_delta,
@@ -692,9 +780,11 @@ async def _execute_codex_prompt(
         # If Codex emitted actionable detail on its stderr stream (e.g. a 403
         # quota-exhausted banner), the structured turn payload won't carry it —
         # append the collected lines verbatim so the user sees the real cause.
+        if turn_problem_seen:
+            await asyncio.sleep(STDERR_FLUSH_GRACE_SECONDS)
         stderr_block = _format_collected_stderr(stderr_collector)
-        if stderr_block and stderr_block not in final_text:
-            final_text = f"{final_text.rstrip()}\n\n---\n{stderr_block}"
+        final_text = _clean_codex_error_text(final_text, stderr_block)
+        final_text = _append_codex_stderr_detail(final_text, stderr_block)
 
         toolbar_handler.set_last_reply(session_key, final_text)
 

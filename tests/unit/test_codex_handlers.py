@@ -350,6 +350,25 @@ def test_format_collected_stderr_deduplicates_in_order() -> None:
     )
 
 
+def test_codex_error_text_moves_raw_stderr_into_runtime_detail() -> None:
+    stderr = "Error: unexpected status 403 Forbidden: Only one Codex conversation can run at a time"
+    text = "\n".join(
+        [
+            "_ERROR: Unknown error_",
+            "_ERROR: Unknown error_",
+            stderr,
+        ]
+    )
+
+    cleaned = codex._clean_codex_error_text(text, stderr)
+    final = codex._append_codex_stderr_detail(cleaned, stderr)
+
+    assert "Unknown error" not in final
+    assert final.count(stderr) == 1
+    assert "Codex runtime detail" in final
+    assert "```text" in final
+
+
 @pytest.mark.asyncio
 async def test_execute_codex_prompt_updates_status_on_streaming_error(monkeypatch: pytest.MonkeyPatch) -> None:
     bot = AsyncMock()
@@ -381,6 +400,62 @@ async def test_execute_codex_prompt_updates_status_on_streaming_error(monkeypatc
     bot.edit_message_text.assert_awaited()
     edited_texts = [call.kwargs["text"] for call in bot.edit_message_text.await_args_list]
     assert any("Unexpected status 403 Forbidden" in text for text in edited_texts)
+    remove_stderr_listener.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_execute_codex_prompt_updates_status_when_stderr_arrives_after_unknown_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bot = AsyncMock()
+    bot.send_message.return_value = SimpleNamespace(chat=SimpleNamespace(id=100), message_id=44)
+    message = _message("prompt", bot=bot, chat_type="private")
+    route = TelegramRoute.from_message(message)
+    context = SimpleNamespace(session=AsyncMock())
+    remove_stderr_listener = MagicMock()
+    stderr_listener = None
+    raw_stderr = (
+        "Error: unexpected status 403 Forbidden: "
+        "Only one Codex conversation can run at a time"
+    )
+    session_manager = SimpleNamespace(
+        active_turn_count=MagicMock(return_value=0),
+        is_turn_active=MagicMock(return_value=False),
+    )
+
+    def add_stderr_listener(listener):
+        nonlocal stderr_listener
+        stderr_listener = listener
+        return remove_stderr_listener
+
+    async def handle_message_streaming(**kwargs):
+        await kwargs["callbacks"].on_error("Unknown error")
+        assert stderr_listener is not None
+        await stderr_listener(raw_stderr)
+        return "_ERROR: Unknown error_\n_ERROR: Unknown error_\n" + raw_stderr
+
+    finalize = AsyncMock(return_value=True)
+    orchestrator = SimpleNamespace(
+        session_manager=session_manager,
+        handle_message_streaming=AsyncMock(side_effect=handle_message_streaming),
+    )
+    monkeypatch.setattr(codex.toolbar_handler, "send_reply_keyboard", AsyncMock())
+    monkeypatch.setattr(codex.toolbar_handler, "remove_reply_keyboard", AsyncMock())
+    monkeypatch.setattr(codex.toolbar_handler, "set_last_reply", MagicMock())
+    monkeypatch.setattr(codex.DraftStream, "finalize", finalize)
+    monkeypatch.setattr(codex, "send_rich_message", AsyncMock(return_value=True))
+    monkeypatch.setattr(codex.codex_daemon, "add_stderr_listener", MagicMock(side_effect=add_stderr_listener))
+    monkeypatch.setattr(codex, "STDERR_FLUSH_GRACE_SECONDS", 0)
+
+    await codex._execute_codex_prompt(message, route, context, orchestrator, "prompt", user_id_override=7)
+
+    edited_texts = [call.kwargs["text"] for call in bot.edit_message_text.await_args_list]
+    assert any("Unknown error" in text for text in edited_texts)
+    assert any(raw_stderr in text and "Codex runtime detail" in text for text in edited_texts)
+    final_text = finalize.await_args.args[0]
+    assert final_text.count(raw_stderr) == 1
+    assert "ERROR: Unknown error" not in final_text
+    assert "Codex runtime detail" in final_text
     remove_stderr_listener.assert_called_once()
 
 
