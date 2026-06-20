@@ -121,3 +121,38 @@ async def test_consume_turn_streams_command_output_into_final_text() -> None:
     assert "pytest" in text_deltas[0][1]
     assert "tests passed" in text_deltas[0][1]
     assert output_deltas == [("tests passed\n", "tests passed\n")]
+
+
+@pytest.mark.asyncio
+async def test_consume_turn_surfaces_app_server_retry_error_without_polluting_final_text() -> None:
+    codex_errors: list[tuple[str, str | None, bool]] = []
+    detail = (
+        "unexpected status 403 Forbidden: quota exhausted "
+        "(traceid: trace-123), url: https://new.sharedchat.cc/codex/responses, cf-ray: ray-KIX"
+    )
+
+    async def on_codex_error(message: str, additional_details: str | None, will_retry: bool) -> None:
+        codex_errors.append((message, additional_details, will_retry))
+
+    final = await _consume_with_events(
+        [
+            (
+                "error",
+                {
+                    "threadId": "thread-1",
+                    "turnId": "turn-1",
+                    "willRetry": True,
+                    "error": {
+                        "message": "Reconnecting... 1/5",
+                        "codexErrorInfo": "other",
+                        "additionalDetails": detail,
+                    },
+                },
+            ),
+            ("turn/completed", {"turn": {"status": "completed"}}),
+        ],
+        StreamingCallbacks(on_codex_error=on_codex_error),
+    )
+
+    assert final == "Codex completed with no output."
+    assert codex_errors == [("Reconnecting... 1/5", detail, True)]

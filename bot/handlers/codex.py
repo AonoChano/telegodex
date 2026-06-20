@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import re
 import time
 import uuid
 from dataclasses import dataclass
@@ -50,6 +51,10 @@ STATUS_EDIT_INTERVAL_SECONDS = 2.0
 STATUS_TEXT_LIMIT = 900
 STDERR_LATE_GRACE_SECONDS = 2.0
 STDERR_FLUSH_GRACE_SECONDS = 0.25
+
+_TRACE_ID_RE = re.compile(r"[（(]traceid:\s*([^)）]+)[)）]", re.IGNORECASE)
+_URL_RE = re.compile(r",\s*url:\s*(\S+)", re.IGNORECASE)
+_CF_RAY_RE = re.compile(r",\s*cf-ray:\s*(\S+)", re.IGNORECASE)
 
 _CODEX_TOPIC_BOUND = "bound"
 _CODEX_TOPIC_RECOVERABLE = "recoverable"
@@ -247,6 +252,50 @@ def _format_collected_stderr(lines: list[str]) -> str:
             seen.add(line)
             unique.append(line)
     return "\n".join(unique)
+
+
+def _append_unique_runtime_detail(lines: list[str], *texts: str | None) -> None:
+    """Append non-empty runtime detail lines once, preserving arrival order."""
+    for text in texts:
+        detail = (text or "").strip()
+        if not detail or _is_generic_unknown_error_line(detail):
+            continue
+        if detail not in lines:
+            lines.append(detail)
+
+
+def _format_codex_error_detail_for_status(detail: str) -> str:
+    """Make one-line provider errors easier to scan in the stop-button status."""
+    trace_id = _TRACE_ID_RE.search(detail)
+    url = _URL_RE.search(detail)
+    cf_ray = _CF_RAY_RE.search(detail)
+
+    summary = detail
+    for match in (trace_id, url, cf_ray):
+        if match is not None:
+            summary = summary.replace(match.group(0), "")
+    summary = summary.strip(" ,，")
+
+    lines: list[str] = []
+    if summary:
+        lines.append(summary)
+    if trace_id is not None:
+        lines.append(f"traceid: {trace_id.group(1).strip()}")
+    if url is not None:
+        lines.append(f"url: {url.group(1).strip()}")
+    if cf_ray is not None:
+        lines.append(f"cf-ray: {cf_ray.group(1).strip()}")
+    return "\n".join(lines) if lines else detail
+
+
+def _format_codex_retry_status(message: str, additional_details: str | None = None) -> str:
+    """Build the live Telegram text for an app-server retry notification."""
+    lines = ["Codex Reconnecting..."]
+    if message.strip():
+        lines.append(message.strip())
+    if additional_details and additional_details.strip() and additional_details.strip() != message.strip():
+        lines.append(_format_codex_error_detail_for_status(additional_details.strip()))
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -627,14 +676,11 @@ async def _execute_codex_prompt(
     last_status_edit = 0.0
     last_status_text = "Codex is working..."
 
-    # Codex surfaces runtime failures (e.g. "Unexpected status 403 Forbidden:
-    # 您当前的 Codex 额度已用完...") only through the subprocess stderr stream,
-    # not through the structured ``turn/completed.error`` payload (which carries
-    # a generic ``Unknown error``). Collect these lines as they arrive so we can
-    # append them verbatim to the final user-facing message when the turn fails.
-    # We intentionally do NOT classify error types here — the raw line carries
-    # the actionable detail and is forwarded as-is.
-    stderr_collector: list[str] = []
+    # Codex may surface retry/failure details through app-server structured
+    # error notifications or the subprocess stderr stream. Collect the
+    # actionable detail so final output does not collapse to generic
+    # ``Unknown error`` payloads.
+    runtime_detail_collector: list[str] = []
     turn_problem_seen = False
     last_problem_status = ""
     last_problem_at = 0.0
@@ -671,8 +717,8 @@ async def _execute_codex_prompt(
     def _problem_is_recent() -> bool:
         return turn_problem_seen and (time.monotonic() - last_problem_at) <= STDERR_LATE_GRACE_SECONDS
 
-    async def _edit_problem_status_with_stderr() -> None:
-        stderr_block = _format_collected_stderr(stderr_collector)
+    async def _edit_problem_status_with_runtime_detail() -> None:
+        stderr_block = _format_collected_stderr(runtime_detail_collector)
         status_text = last_problem_status or "Codex error.\nUnknown error"
         if stderr_block:
             status_text += f"\n\nCodex runtime detail:\n{stderr_block}"
@@ -688,9 +734,9 @@ async def _execute_codex_prompt(
             return
         # Preserve the raw line so the final message can echo it back verbatim
         # instead of the generic "Unknown error" from turn/completed.
-        stderr_collector.append(text)
+        _append_unique_runtime_detail(runtime_detail_collector, text)
         if can_attach_to_recent_error:
-            await _edit_problem_status_with_stderr()
+            await _edit_problem_status_with_runtime_detail()
         else:
             await _edit_status(f"Codex connection issue. Retrying...\n{text}", force=True)
 
@@ -741,14 +787,37 @@ async def _execute_codex_prompt(
         if status == "failed":
             error = turn.get("error", {})
             error_msg = error.get("message", "Unknown error")
+            additional_details = error.get("additionalDetails") or error.get("additional_details")
+            _append_unique_runtime_detail(runtime_detail_collector, additional_details)
             turn_problem_seen = True
+            if _is_generic_unknown_error_line(f"Error: {error_msg}") and (
+                last_problem_status or runtime_detail_collector
+            ):
+                if not last_problem_status:
+                    last_problem_status = "Codex failed."
+                last_problem_at = time.monotonic()
+                await _edit_problem_status_with_runtime_detail()
+                return
             last_problem_status = f"Codex failed.\n{error_msg}"
             last_problem_at = time.monotonic()
-            await _edit_problem_status_with_stderr()
+            await _edit_problem_status_with_runtime_detail()
         elif status == "interrupted":
             await _edit_status("Codex was interrupted.", force=True)
         else:
             await _edit_status("Codex completed.", force=True)
+
+    async def _on_codex_error(error_message: str, additional_details: str | None, will_retry: bool) -> None:
+        nonlocal turn_problem_seen, last_problem_status, last_problem_at
+        _append_unique_runtime_detail(runtime_detail_collector, additional_details)
+        if will_retry:
+            await _edit_status(_format_codex_retry_status(error_message, additional_details), force=True)
+            return
+        if reaction_tracker is not None:
+            await reaction_tracker.clear()
+        turn_problem_seen = True
+        last_problem_status = f"Codex error.\n{error_message}"
+        last_problem_at = time.monotonic()
+        await _edit_problem_status_with_runtime_detail()
 
     async def _on_error(error_message: str) -> None:
         nonlocal turn_problem_seen, last_problem_status, last_problem_at
@@ -757,7 +826,7 @@ async def _execute_codex_prompt(
         turn_problem_seen = True
         last_problem_status = f"Codex error.\n{error_message}"
         last_problem_at = time.monotonic()
-        await _edit_problem_status_with_stderr()
+        await _edit_problem_status_with_runtime_detail()
 
     callbacks = StreamingCallbacks(
         on_text_delta=_on_text_delta,
@@ -765,6 +834,7 @@ async def _execute_codex_prompt(
         on_command_output_delta=_on_command_output_delta,
         on_item_started=_on_item_started,
         on_turn_completed=_on_turn_completed,
+        on_codex_error=_on_codex_error,
         on_error=_on_error,
     )
 
@@ -782,7 +852,7 @@ async def _execute_codex_prompt(
         # append the collected lines verbatim so the user sees the real cause.
         if turn_problem_seen:
             await asyncio.sleep(STDERR_FLUSH_GRACE_SECONDS)
-        stderr_block = _format_collected_stderr(stderr_collector)
+        stderr_block = _format_collected_stderr(runtime_detail_collector)
         final_text = _clean_codex_error_text(final_text, stderr_block)
         final_text = _append_codex_stderr_detail(final_text, stderr_block)
 

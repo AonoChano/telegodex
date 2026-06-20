@@ -64,6 +64,29 @@ def _is_codex_internal_delta(delta: str) -> bool:
     return False
 
 
+def _extract_codex_error_notification(params: dict[str, Any]) -> tuple[str, str | None, bool, str]:
+    """Return ``(message, additional_details, will_retry, codex_error_info)``.
+
+    App-server v2 emits ``error`` notifications as
+    ``{error: {message, additionalDetails}, willRetry}``, while older code in
+    this project expected a flat ``{message}`` payload. Keep both shapes here so
+    retry status never collapses to ``Unknown error``.
+    """
+    error = params.get("error")
+    message = params.get("message", "Unknown error")
+    additional_details = None
+    codex_error_info = ""
+
+    if isinstance(error, dict):
+        message = error.get("message", message)
+        additional_details = error.get("additionalDetails") or error.get("additional_details")
+        codex_error_info = error.get("codexErrorInfo") or error.get("codex_error_info") or ""
+
+    message_text = str(message or "Unknown error").strip() or "Unknown error"
+    detail_text = str(additional_details).strip() if additional_details else None
+    return message_text, detail_text, bool(params.get("willRetry", False)), str(codex_error_info or "")
+
+
 # ---------------------------------------------------------------------------
 # Callbacks
 # ---------------------------------------------------------------------------
@@ -94,6 +117,9 @@ class StreamingCallbacks:
 
     on_turn_completed: Callable[[dict[str, Any], str], Awaitable[None] | None] | None = None
     """(turn_dict, final_text)"""
+
+    on_codex_error: Callable[[str, str | None, bool], Awaitable[None] | None] | None = None
+    """(error_message, additional_details, will_retry)"""
 
     on_error: Callable[[str], Awaitable[None] | None] | None = None
     """(error_message)"""
@@ -704,11 +730,15 @@ class Orchestrator:
 
                     if status == "failed":
                         error = turn.get("error", {})
-                        error_msg = error.get("message", "Unknown error")
-                        codex_err = error.get("codexErrorInfo", "")
+                        error_msg, additional_details, _, codex_err = _extract_codex_error_notification({"error": error})
                         block = f"\n\n**Error:** {error_msg}" + (f" (`{codex_err}`)" if codex_err else "")
+                        if additional_details and additional_details != error_msg:
+                            block += f"\n\n{additional_details}"
                         full_text_parts.append(block)
-                        await _maybe_await(callbacks.on_error, block)
+                        if callbacks.on_codex_error is not None:
+                            await _maybe_await(callbacks.on_codex_error, error_msg, additional_details, False)
+                        else:
+                            await _maybe_await(callbacks.on_error, block)
 
                     elif status == "interrupted":
                         full_text_parts.append("\n\n_Interrupted._")
@@ -789,9 +819,16 @@ class Orchestrator:
                     )
 
                 elif method == "error":
-                    error_msg = params.get("message", "Unknown error")
-                    full_text_parts.append(f"\n\n_ERROR: {error_msg}_")
-                    await _maybe_await(callbacks.on_error, error_msg)
+                    error_msg, additional_details, will_retry, _ = _extract_codex_error_notification(params)
+                    if callbacks.on_codex_error is not None:
+                        await _maybe_await(callbacks.on_codex_error, error_msg, additional_details, will_retry)
+                    else:
+                        await _maybe_await(callbacks.on_error, error_msg)
+                    if not will_retry:
+                        block = f"\n\n_ERROR: {error_msg}_"
+                        if additional_details and additional_details != error_msg:
+                            block += f"\n\n{additional_details}"
+                        full_text_parts.append(block)
 
         finally:
             _NOTIFICATION_QUEUES.pop(key, None)

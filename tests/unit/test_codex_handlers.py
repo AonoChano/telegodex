@@ -460,6 +460,71 @@ async def test_execute_codex_prompt_updates_status_when_stderr_arrives_after_unk
 
 
 @pytest.mark.asyncio
+async def test_execute_codex_prompt_formats_app_server_reconnecting_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bot = AsyncMock()
+    bot.send_message.return_value = SimpleNamespace(chat=SimpleNamespace(id=100), message_id=44)
+    message = _message("prompt", bot=bot, chat_type="private")
+    route = TelegramRoute.from_message(message)
+    context = SimpleNamespace(session=AsyncMock())
+    remove_stderr_listener = MagicMock()
+    runtime_detail = (
+        "unexpected status 403 Forbidden: 当前公益站使用人数较多，本时段全站额度已用完，请12:00 后再试。"
+        "（traceid: 60c481be-56e0-479b-8416-f4edbc60999d）, "
+        "url: https://new.sharedchat.cc/codex/responses, cf-ray: a0e7dd11ca8419c9-KIX"
+    )
+    session_manager = SimpleNamespace(
+        active_turn_count=MagicMock(return_value=1),
+        is_turn_active=MagicMock(return_value=True),
+    )
+
+    async def handle_message_streaming(**kwargs):
+        callbacks = kwargs["callbacks"]
+        await callbacks.on_codex_error("Reconnecting... 4/5", runtime_detail, True)
+        await callbacks.on_turn_completed(
+            {"status": "failed", "error": {"message": "Unknown error"}},
+            "**Error:** Unknown error",
+        )
+        return "**Error:** Unknown error"
+
+    finalize = AsyncMock(return_value=True)
+    orchestrator = SimpleNamespace(
+        session_manager=session_manager,
+        handle_message_streaming=AsyncMock(side_effect=handle_message_streaming),
+    )
+    monkeypatch.setattr(codex.toolbar_handler, "send_reply_keyboard", AsyncMock())
+    monkeypatch.setattr(codex.toolbar_handler, "remove_reply_keyboard", AsyncMock())
+    monkeypatch.setattr(codex.toolbar_handler, "set_last_reply", MagicMock())
+    monkeypatch.setattr(codex.DraftStream, "finalize", finalize)
+    monkeypatch.setattr(codex, "send_rich_message", AsyncMock(return_value=True))
+    monkeypatch.setattr(codex.codex_daemon, "add_stderr_listener", MagicMock(return_value=remove_stderr_listener))
+    monkeypatch.setattr(codex, "STDERR_FLUSH_GRACE_SECONDS", 0)
+
+    await codex._execute_codex_prompt(message, route, context, orchestrator, "prompt", user_id_override=7)
+
+    edited_texts = [call.kwargs["text"] for call in bot.edit_message_text.await_args_list]
+    retry_text = next(text for text in edited_texts if "Codex Reconnecting..." in text)
+    assert "Reconnecting... 4/5" in retry_text
+    assert "unexpected status 403 Forbidden" in retry_text
+    assert "traceid: 60c481be-56e0-479b-8416-f4edbc60999d" in retry_text
+    assert "url: https://new.sharedchat.cc/codex/responses" in retry_text
+    assert "cf-ray: a0e7dd11ca8419c9-KIX" in retry_text
+    assert "Unknown error" not in retry_text
+
+    final_status = edited_texts[-1]
+    assert "Codex failed." in final_status
+    assert "Unknown error" not in final_status
+
+    final_text = finalize.await_args.args[0]
+    assert "ERROR: Unknown error" not in final_text
+    assert "**Error:** Unknown error" not in final_text
+    assert "Codex runtime detail" in final_text
+    assert runtime_detail in final_text
+    remove_stderr_listener.assert_called_once()
+
+
+@pytest.mark.asyncio
 async def test_recoverable_topic_message_replaces_previous_prompt() -> None:
     bot = AsyncMock()
     bot.send_message.return_value = SimpleNamespace(message_id=100)
