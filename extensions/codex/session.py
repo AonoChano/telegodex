@@ -318,6 +318,46 @@ class CodexSessionManager(SessionManager):
         """Return the SessionKey for a given Codex thread_id, or ``None``."""
         return self._thread_to_session_key.get(thread_id)
 
+    async def reverse_lookup_db_fallback(
+        self,
+        thread_id: str,
+        db: AsyncSession,
+    ) -> SessionKey | None:
+        """Resolve a thread_id to SessionKey, falling back to the database.
+
+        The in-memory ``_thread_to_session_key`` map is only populated when a
+        session is opened in this process. After a bot restart or daemon
+        reconnect, the app-server may send an approval request for a thread
+        that exists in the DB but was never opened here — the in-memory lookup
+        returns None and the approval UI is silently skipped.
+
+        This method queries ``Conversation.codex_thread_id`` and caches the
+        result so subsequent sync ``reverse_lookup`` calls hit.
+        """
+        cached = self._thread_to_session_key.get(thread_id)
+        if cached is not None:
+            return cached
+
+        stmt = select(Conversation).where(
+            Conversation.codex_thread_id == thread_id,
+            Conversation.is_active.is_(True),
+        )
+        result = await db.execute(stmt)
+        conv = result.scalars().first()
+        if conv is None:
+            return None
+
+        key = SessionKey(
+            transport=conv.transport or "telegram",
+            chat_id=conv.chat_id,
+            topic_id=conv.topic_id,
+        )
+        # Cache so later sync lookups (e.g. topic_id fetch) succeed.
+        self._thread_to_session_key[thread_id] = key
+        if conv.topic_id is not None and conv.thread_id is not None:
+            self._thread_to_topic.setdefault(thread_id, conv.thread_id)
+        return key
+
     def set_topic_id(self, thread_id: str, topic_id: int | None) -> None:
         """Map a Codex thread to its Telegram forum topic_id."""
         self._thread_to_topic[thread_id] = topic_id

@@ -21,8 +21,9 @@ from bot.utils.rich_messages import (
 class FakeResponse:
     """根据传入的 payload 决定 json() 是返回 dict 还是抛异常。"""
 
-    def __init__(self, payload):
+    def __init__(self, payload, status=None):
         self._payload = payload
+        self.status = status
 
     async def json(self):
         if isinstance(self._payload, BaseException):
@@ -52,6 +53,9 @@ class FakeSession:
     def post(self, *a, **kw):
         self.calls += 1
         item = self.queue.pop(0)
+        if isinstance(item, tuple):
+            payload, status = item
+            return FakeResponse(payload, status=status)
         return FakeResponse(item)
 
     async def close(self):
@@ -89,7 +93,7 @@ async def main():
     # 1) 单次成功：不重试
     fake = FakeSession([{"ok": True}])
     async def case1():
-        ok, desc = await _post_bot_method("TOKEN", "test", {})
+        ok, desc, _ = await _post_bot_method("TOKEN", "test", {})
         return ok, fake.calls, desc
     ok, calls, desc = await with_fake_session(fake, case1)
     assert_eq("immediate-success", (ok, calls, desc), (True, 1, ""))
@@ -104,7 +108,8 @@ async def main():
     fake = FakeSession(errs)
     t0 = time.monotonic()
     async def case2():
-        return await _post_bot_method("TOKEN", "test", {})
+        ok, desc, _ = await _post_bot_method("TOKEN", "test", {})
+        return ok, desc
     ok, desc = await with_fake_session(fake, case2)
     elapsed = time.monotonic() - t0
     expected_delay = sum(RETRY_DELAYS[:3])  # 1 + 2 + 2
@@ -118,7 +123,8 @@ async def main():
     fake = FakeSession(errs)
     t0 = time.monotonic()
     async def case3():
-        return await _post_bot_method("TOKEN", "test", {})
+        ok, desc, _ = await _post_bot_method("TOKEN", "test", {})
+        return ok, desc
     ok, desc = await with_fake_session(fake, case3)
     elapsed = time.monotonic() - t0
     total_delay = sum(RETRY_DELAYS)
@@ -130,7 +136,7 @@ async def main():
     # 4) 业务错误 4xx：不重试
     fake = FakeSession([{"ok": False, "description": "Bad Request: chat not found"}])
     async def case4():
-        ok, desc = await _post_bot_method("TOKEN", "test", {})
+        ok, desc, _ = await _post_bot_method("TOKEN", "test", {})
         return ok, fake.calls, desc
     ok, calls, desc = await with_fake_session(fake, case4)
     assert_eq("business-error", (ok, calls, desc),
@@ -139,19 +145,46 @@ async def main():
     # 5) 非可重试异常（ValueError）：不重试
     fake = FakeSession([ValueError("not a network error")])
     async def case5():
-        ok, desc = await _post_bot_method("TOKEN", "test", {})
+        ok, desc, _ = await _post_bot_method("TOKEN", "test", {})
         return ok, fake.calls
     ok, calls = await with_fake_session(fake, case5)
     assert_eq("non-retryable", (ok, calls), (False, 1))
 
-    # 6) JSONDecodeError：可重试
-    errs = [json.JSONDecodeError("empty body", "", 0), {"ok": True}]
-    fake = FakeSession(errs)
+    # 6) JSONDecodeError：不再可重试（请求可能已成功，重试会重复消息）
+    fake = FakeSession([json.JSONDecodeError("empty body", "", 0)])
     async def case6():
-        ok, desc = await _post_bot_method("TOKEN", "test", {})
-        return ok, fake.calls
-    ok, calls = await with_fake_session(fake, case6)
-    assert_eq("json-decode-retry", (ok, calls), (True, 2))
+        ok, desc, _ = await _post_bot_method("TOKEN", "test", {})
+        return ok, fake.calls, desc
+    ok, calls, desc = await with_fake_session(fake, case6)
+    assert_eq("json-decode-no-retry", (ok, calls), (False, 1))
+    assert "JSONDecodeError" in desc, f"description should mention JSONDecodeError, got {desc!r}"
+
+    # 6b) 非幂等消息方法 JSONDecodeError：视为可能已送达，避免 fallback 重复发送
+    fake = FakeSession([json.JSONDecodeError("empty body", "", 0)])
+    async def case6b():
+        ok, desc, _ = await _post_bot_method("TOKEN", "sendRichMessage", {})
+        return ok, fake.calls, desc
+    ok, calls, desc = await with_fake_session(fake, case6b)
+    assert_eq("json-decode-rich-message-ambiguous-ok", (ok, calls), (True, 1))
+    assert "JSONDecodeError" in desc
+
+    # 6c) 2xx JSONDecodeError：Bot API 已返回成功状态但 body 损坏，也不触发重发
+    fake = FakeSession([(json.JSONDecodeError("empty body", "", 0), 200)])
+    async def case6c():
+        ok, desc, _ = await _post_bot_method("TOKEN", "test", {})
+        return ok, fake.calls, desc
+    ok, calls, desc = await with_fake_session(fake, case6c)
+    assert_eq("json-decode-2xx-ok", (ok, calls), (True, 1))
+    assert "JSONDecodeError" in desc
+
+    # 6d) 草稿方法 JSONDecodeError：同一 draft_id 替换语义下也不需要 fallback 复制
+    fake = FakeSession([json.JSONDecodeError("empty body", "", 0)])
+    async def case6d():
+        ok, desc, _ = await _post_bot_method("TOKEN", "sendRichMessageDraft", {})
+        return ok, fake.calls, desc
+    ok, calls, desc = await with_fake_session(fake, case6d)
+    assert_eq("json-decode-draft-ambiguous-ok", (ok, calls), (True, 1))
+    assert "JSONDecodeError" in desc
 
     # 7) 退避序列
     assert_eq("backoff-seq", RETRY_DELAYS, [1, 2, 2, 3, 5, 8, 13, 20, 20, 20])
@@ -160,7 +193,7 @@ async def main():
     assert aiohttp.ClientError in RETRYABLE_EXCEPTIONS
     assert asyncio.TimeoutError in RETRYABLE_EXCEPTIONS
     assert ConnectionError in RETRYABLE_EXCEPTIONS
-    assert json.JSONDecodeError in RETRYABLE_EXCEPTIONS
+    assert json.JSONDecodeError not in RETRYABLE_EXCEPTIONS
     assert ValueError not in RETRYABLE_EXCEPTIONS
     print("OK   retryable-set")
 
@@ -170,6 +203,36 @@ async def main():
     fake_in_use = rich_messages._shared_session
     await close_shared_session()
     assert_eq("close-shared-state", (rich_messages._shared_session, fake_in_use.closed), (None, True))
+
+    # 10) 非幂等方法网络异常不重试（sendMessage 不会重复调用）
+    errs = [
+        aiohttp.ClientConnectorError(MagicMock(), OSError("conn refused")),
+        {"ok": True},
+    ]
+    fake = FakeSession(errs)
+    t0 = time.monotonic()
+    async def case10():
+        ok, desc, _ = await _post_bot_method("TOKEN", "sendMessage", {})
+        return ok
+    ok = await with_fake_session(fake, case10)
+    elapsed = time.monotonic() - t0
+    assert_eq("non-idempotent-no-retry", (ok, fake.calls), (False, 1))
+    assert_eq("non-idempotent-no-delay", int(elapsed), 0)
+
+    # 11) 幂等方法（sendRichMessageDraft）仍享受重试
+    errs = [
+        aiohttp.ClientConnectorError(MagicMock(), OSError("conn refused")),
+        {"ok": True},
+    ]
+    fake = FakeSession(errs)
+    t0 = time.monotonic()
+    async def case11():
+        ok, desc, _ = await _post_bot_method("TOKEN", "sendRichMessageDraft", {})
+        return ok
+    ok = await with_fake_session(fake, case11)
+    elapsed = time.monotonic() - t0
+    assert_eq("idempotent-draft-retry", (ok, fake.calls), (True, 2))
+    assert_eq("idempotent-draft-delay", int(elapsed), RETRY_DELAYS[0])
 
     print("ALL RETRY SMOKE OK")
 

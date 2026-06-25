@@ -21,7 +21,7 @@ def test_approval_keyboard_uses_telegram_safe_callback_tokens() -> None:
 
     markup = handler.build_approval_keyboard(
         long_approval_id,
-        {"availableDecisions": ["Accept", "AcceptForSession", "Decline", "Cancel"]},
+        {"availableDecisions": ["accept", "acceptForSession", "decline", "cancel"]},
     )
 
     callback_data = _keyboard_callback_data(markup)
@@ -36,7 +36,7 @@ async def test_codex_approval_callback_resolves_token_via_orchestrator() -> None
     handler = ApprovalHandler()
     markup = handler.build_approval_keyboard(
         "approval-1",
-        {"availableDecisions": ["AcceptForSession"]},
+        {"availableDecisions": ["acceptForSession"]},
     )
     callback_data = _keyboard_callback_data(markup)[0]
     message = SimpleNamespace(
@@ -55,7 +55,7 @@ async def test_codex_approval_callback_resolves_token_via_orchestrator() -> None
 
     await handle_codex_approval(callback, orchestrator)
 
-    resolve.assert_awaited_once_with("approval-1", "AcceptForSession")
+    resolve.assert_awaited_once_with("approval-1", "acceptForSession")
     message.edit_text.assert_awaited_once()
     callback.answer.assert_awaited_once_with("Approved (Session)")
 
@@ -86,5 +86,5 @@ async def test_command_approval_auto_deny_does_not_drop_pending_before_waiter_re
         }
     )
 
-    assert result == {"decision": "Decline"}
+    assert result == {"decision": "decline"}
     assert "approval-timeout" not in handler._pending

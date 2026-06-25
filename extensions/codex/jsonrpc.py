@@ -59,6 +59,11 @@ class JsonRpcTransport:
         self._pending: dict[str | int, _PendingRequest] = {}
         self._writer_lock = asyncio.Lock()
         self._stdout: asyncio.StreamWriter | None = None
+        # Strong references to in-flight server-request tasks. asyncio only
+        # keeps weak refs to tasks; without this set the event loop may GC a
+        # task mid-await (e.g. during a long approval wait) and silently drop
+        # the response.
+        self._server_request_tasks: set[asyncio.Task[Any]] = set()
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -77,6 +82,15 @@ class JsonRpcTransport:
             with contextlib.suppress(asyncio.CancelledError):
                 await self._reader_task
             self._reader_task = None
+
+        # Cancel any in-flight server-request handlers so a lingering approval
+        # wait does not outlive the transport.
+        for task in list(self._server_request_tasks):
+            task.cancel()
+        for task in list(self._server_request_tasks):
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
+        self._server_request_tasks.clear()
 
         for pending in self._pending.values():
             pending.event.set()
@@ -165,8 +179,19 @@ class JsonRpcTransport:
         method = message.get("method")
 
         if msg_id is not None and method is not None:
-            # Server request → invoke callback, send response
-            await self._handle_server_request(msg_id, method, message.get("params", {}))
+            # Server request → run handler in the background so the reader
+            # keeps draining the stream. The handler resolves and sends the
+            # response on its own; we must not block here, otherwise a
+            # long-lived approval wait (up to 60s) stalls every subsequent
+            # notification (item/agentMessage/delta, item/started, ...) and
+            # the streaming preview appears frozen.
+            task = asyncio.create_task(
+                self._handle_server_request(msg_id, method, message.get("params", {}))
+            )
+            # Keep a strong reference so the event loop does not GC the task
+            # mid-await (asyncio only holds weak refs). Cleaned up on close.
+            self._server_request_tasks.add(task)
+            task.add_done_callback(self._server_request_tasks.discard)
         elif msg_id is not None:
             # Response to one of our requests
             pending = self._pending.pop(msg_id, None)

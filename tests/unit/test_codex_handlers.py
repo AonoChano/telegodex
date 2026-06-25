@@ -370,6 +370,60 @@ def test_codex_error_text_moves_raw_stderr_into_runtime_detail() -> None:
 
 
 @pytest.mark.asyncio
+async def test_execute_codex_prompt_pushes_render_updates_to_draft(monkeypatch: pytest.MonkeyPatch) -> None:
+    bot = AsyncMock()
+    bot.send_message.return_value = SimpleNamespace(chat=SimpleNamespace(id=100), message_id=44)
+    message = _message("prompt", bot=bot, chat_type="private")
+    route = TelegramRoute.from_message(message)
+    context = SimpleNamespace(session=AsyncMock())
+    remove_stderr_listener = MagicMock()
+    rendered = "Hello\n\n<details><summary>Tool activity</summary>\n\n**Exec**\n\n```sh\npytest\n```\n\n</details>"
+    pushed: list[str] = []
+    finalized: list[str] = []
+
+    class FakeDraftStream:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        async def push(self, text: str) -> bool:
+            pushed.append(text)
+            return True
+
+        async def finalize(self, text: str) -> bool:
+            finalized.append(text)
+            return True
+
+    session_manager = SimpleNamespace(
+        active_turn_count=MagicMock(return_value=1),
+        is_turn_active=MagicMock(return_value=True),
+    )
+
+    async def handle_message_streaming(**kwargs):
+        callbacks = kwargs["callbacks"]
+        await callbacks.on_render_update(rendered)
+        await callbacks.on_text_delta("Hello", rendered)
+        return rendered
+
+    orchestrator = SimpleNamespace(
+        session_manager=session_manager,
+        handle_message_streaming=AsyncMock(side_effect=handle_message_streaming),
+    )
+    monkeypatch.setattr(codex, "_bot_token", lambda: "TOKEN")
+    monkeypatch.setattr(codex, "DraftStream", FakeDraftStream)
+    monkeypatch.setattr(codex.toolbar_handler, "send_reply_keyboard", AsyncMock())
+    monkeypatch.setattr(codex.toolbar_handler, "remove_reply_keyboard", AsyncMock())
+    monkeypatch.setattr(codex.toolbar_handler, "set_last_reply", MagicMock())
+    monkeypatch.setattr(codex, "send_rich_message", AsyncMock(return_value=True))
+    monkeypatch.setattr(codex.codex_daemon, "add_stderr_listener", MagicMock(return_value=remove_stderr_listener))
+
+    await codex._execute_codex_prompt(message, route, context, orchestrator, "prompt", user_id_override=7)
+
+    assert pushed == [rendered]
+    assert finalized == [rendered]
+    assert "<details><summary>Tool activity</summary>" in pushed[0]
+    remove_stderr_listener.assert_called_once()
+
+@pytest.mark.asyncio
 async def test_execute_codex_prompt_updates_status_on_streaming_error(monkeypatch: pytest.MonkeyPatch) -> None:
     bot = AsyncMock()
     bot.send_message.return_value = SimpleNamespace(chat=SimpleNamespace(id=100), message_id=44)

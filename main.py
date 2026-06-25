@@ -188,6 +188,10 @@ async def main():
     db = Database(settings.database_url)
     await db.init_db()
 
+    # Wire DB session factory into codex handler for approval DB fallback.
+    from bot.handlers.codex import set_db_session_factory
+    set_db_session_factory(db.get_session)
+
     # 初始化 AI Router（包含内置和自定义 Provider）
     ai_router = AIRouter(settings.get_ai_providers_config())
 

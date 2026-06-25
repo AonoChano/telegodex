@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 from core.session import SessionKey
 from extensions.codex.session import CodexSessionManager
@@ -40,3 +43,46 @@ def test_update_session_key_returns_false_for_missing_session() -> None:
     new_key = SessionKey.from_telegram_message(100, 222)
 
     assert manager.update_session_key(old_key, new_key) is False
+
+
+@pytest.mark.asyncio
+async def test_reverse_lookup_db_fallback_recovers_unloaded_thread() -> None:
+    """A thread persisted in DB but not in memory must still resolve.
+
+    Reproduces the approval-button root cause: after a bot restart or daemon
+    reconnect, the app-server may replay an approval request for a thread
+    whose SessionKey is not yet in ``_thread_to_session_key``. Without a DB
+    fallback the approval UI is silently skipped and the turn auto-denies.
+    """
+    manager = CodexSessionManager(SimpleNamespace(transport=None))
+
+    conv = SimpleNamespace(
+        chat_id=4242,
+        transport="telegram",
+        topic_id=99,
+        thread_id=99,
+        codex_thread_id="thread-abc",
+        is_active=True,
+    )
+    db = MagicMock()
+    db.execute = AsyncMock(
+        return_value=MagicMock(scalars=MagicMock(return_value=MagicMock(first=MagicMock(return_value=conv))))
+    )
+
+    key = await manager.reverse_lookup_db_fallback("thread-abc", db)
+    assert key is not None
+    assert key.chat_id == 4242
+    assert key.topic_id == 99
+    # Cached for subsequent sync lookups.
+    assert manager.reverse_lookup("thread-abc") == key
+
+
+@pytest.mark.asyncio
+async def test_reverse_lookup_db_fallback_returns_none_when_not_found() -> None:
+    manager = CodexSessionManager(SimpleNamespace(transport=None))
+    db = MagicMock()
+    db.execute = AsyncMock(
+        return_value=MagicMock(scalars=MagicMock(return_value=MagicMock(first=MagicMock(return_value=None))))
+    )
+
+    assert await manager.reverse_lookup_db_fallback("missing", db) is None

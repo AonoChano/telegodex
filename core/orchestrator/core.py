@@ -87,6 +87,165 @@ def _extract_codex_error_notification(params: dict[str, Any]) -> tuple[str, str 
     return message_text, detail_text, bool(params.get("willRetry", False)), str(codex_error_info or "")
 
 
+
+def _markdown_code_fence(text: str, language: str = "text") -> str:
+    """Return a Markdown fence that can contain *text* safely."""
+    fence = "```"
+    while fence in text:
+        fence += "`"
+    return f"{fence}{language}\n{text}\n{fence}"
+
+
+@dataclass
+class _CodexTextSegment:
+    text: str = ""
+
+
+@dataclass
+class _CodexToolCommand:
+    item_id: str
+    command: str = ""
+    output: str = ""
+    exit_code: int | str | None = None
+
+
+@dataclass
+class _CodexToolSegment:
+    commands: list[_CodexToolCommand] = field(default_factory=list)
+
+
+class _CodexTurnRenderer:
+    """Render Codex notifications into Telegram Rich Markdown.
+
+    Assistant prose remains normal body text. Consecutive tool events are kept
+    in a default-collapsed <details> block so long command logs do not drown
+    out the answer while still staying available to inspect.
+    """
+
+    def __init__(self) -> None:
+        self._segments: list[_CodexTextSegment | _CodexToolSegment] = []
+        self._commands_by_id: dict[str, _CodexToolCommand] = {}
+        self._active_command_id: str | None = None
+        self._anon_command_count = 0
+
+    def add_text(self, text: str) -> None:
+        if not text:
+            return
+        if self._segments and isinstance(self._segments[-1], _CodexTextSegment):
+            self._segments[-1].text += text
+        else:
+            self._segments.append(_CodexTextSegment(text=text))
+
+    def add_error(self, text: str) -> None:
+        if text.strip():
+            self.add_text(text)
+
+    def start_command(self, item: dict[str, Any]) -> None:
+        item_id = str(item.get("id") or self._next_anon_command_id())
+        command = str(item.get("command") or item.get("formattedCommand") or "")
+        cmd = self._commands_by_id.get(item_id)
+        if cmd is None:
+            cmd = _CodexToolCommand(item_id=item_id, command=command)
+            self._commands_by_id[item_id] = cmd
+            self._current_tool_segment().commands.append(cmd)
+        elif command and not cmd.command:
+            cmd.command = command
+        self._active_command_id = item_id
+
+    def append_command_output(self, delta: str, item_id: str | None = None) -> None:
+        if not delta:
+            return
+        cmd = self._command_for_update(item_id)
+        cmd.output += delta
+
+    def complete_command(self, item: dict[str, Any]) -> None:
+        item_id = str(item.get("id") or self._active_command_id or self._next_anon_command_id())
+        cmd = self._commands_by_id.get(item_id)
+        if cmd is None:
+            cmd = _CodexToolCommand(item_id=item_id)
+            self._commands_by_id[item_id] = cmd
+            self._current_tool_segment().commands.append(cmd)
+        if not cmd.command:
+            cmd.command = str(item.get("command") or item.get("formattedCommand") or "")
+        if "exitCode" in item:
+            cmd.exit_code = item.get("exitCode")
+        aggregated = item.get("aggregatedOutput") or item.get("output") or ""
+        if aggregated and aggregated not in cmd.output:
+            if cmd.output and not cmd.output.endswith("\n"):
+                cmd.output += "\n"
+            cmd.output += str(aggregated)
+        self._active_command_id = None
+
+    def render(self) -> str:
+        rendered: list[str] = []
+        for segment in self._segments:
+            if isinstance(segment, _CodexTextSegment):
+                text = segment.text.strip("\n")
+                if text:
+                    rendered.append(text)
+            else:
+                details = self._render_tool_segment(segment)
+                if details:
+                    rendered.append(details)
+        return "\n\n".join(rendered).strip()
+
+    def _current_tool_segment(self) -> _CodexToolSegment:
+        if self._segments and isinstance(self._segments[-1], _CodexToolSegment):
+            return self._segments[-1]
+        segment = _CodexToolSegment()
+        self._segments.append(segment)
+        return segment
+
+    def _command_for_update(self, item_id: str | None = None) -> _CodexToolCommand:
+        resolved = str(item_id or self._active_command_id or "")
+        if resolved and resolved in self._commands_by_id:
+            return self._commands_by_id[resolved]
+        if not resolved:
+            resolved = self._next_anon_command_id()
+        cmd = _CodexToolCommand(item_id=resolved)
+        self._commands_by_id[resolved] = cmd
+        self._current_tool_segment().commands.append(cmd)
+        self._active_command_id = resolved
+        return cmd
+
+    def _next_anon_command_id(self) -> str:
+        self._anon_command_count += 1
+        return f"command-{self._anon_command_count}"
+
+    @staticmethod
+    def _render_tool_segment(segment: _CodexToolSegment) -> str:
+        blocks: list[str] = []
+        for command in segment.commands:
+            command_blocks: list[str] = []
+            if command.command:
+                command_blocks.append("**Exec**")
+                command_blocks.append(_markdown_code_fence(command.command, "sh"))
+            else:
+                command_blocks.append("**Command output**")
+
+            if command.output.strip():
+                command_blocks.append(_markdown_code_fence(command.output.rstrip(), "text"))
+
+            if command.exit_code is not None:
+                try:
+                    exit_code = int(command.exit_code)
+                except (TypeError, ValueError):
+                    exit_code = command.exit_code
+                if exit_code == 0:
+                    command_blocks.append("**Success**")
+                    if not command.output.strip():
+                        command_blocks.append("_Command completed with no output._")
+                else:
+                    command_blocks.append(f"**Failed** (exit code: {exit_code})")
+
+            blocks.append("\n\n".join(command_blocks))
+
+        if not blocks:
+            return ""
+        body = "\n\n---\n\n".join(blocks)
+        return f"<details><summary>Tool activity</summary>\n\n{body}\n\n</details>"
+
+
 # ---------------------------------------------------------------------------
 # Callbacks
 # ---------------------------------------------------------------------------
@@ -108,6 +267,9 @@ class StreamingCallbacks:
 
     on_command_output_delta: Callable[[str, str], Awaitable[None] | None] | None = None
     """(delta, accumulated_output)"""
+
+    on_render_update: Callable[[str], Awaitable[None] | None] | None = None
+    """(rendered_text)"""
 
     on_item_started: Callable[[str, dict[str, Any]], Awaitable[None] | None] = None
     """(item_type, item_dict)"""
@@ -237,7 +399,14 @@ class Orchestrator:
                 if inspect.isawaitable(result):
                     await result
             except Exception:
-                pass
+                # The approval UI is best-effort: even if delivery fails, we
+                # still need to await the handler so the turn can auto-deny.
+                # But silently swallowing makes "button never appeared"
+                # impossible to diagnose — log it.
+                logger.exception(
+                    f"approval UI sender failed for {method}; "
+                    f"turn will auto-deny after timeout"
+                )
         return await self._approval_handler.handle_server_request(method, params)
 
     # ------------------------------------------------------------------
@@ -710,17 +879,28 @@ class Orchestrator:
         queue: asyncio.Queue[tuple[str, dict[str, Any]]] = asyncio.Queue()
         _NOTIFICATION_QUEUES[key] = queue
 
-        full_text_parts: list[str] = []
+        renderer = _CodexTurnRenderer()
         reasoning_text = ""
         command_output = ""
+        last_rendered = ""
+
+        async def _emit_render_update() -> str:
+            nonlocal last_rendered
+            rendered = renderer.render()
+            if rendered and rendered != last_rendered:
+                last_rendered = rendered
+                await _maybe_await(callbacks.on_render_update, rendered)
+            return rendered
 
         try:
             while True:
                 try:
                     method, params = await asyncio.wait_for(queue.get(), timeout=120.0)
                 except TimeoutError:
-                    full_text_parts.append("\n\n_Codex turn timed out._")
+                    renderer.add_error("\n\n_Codex turn timed out._")
+                    await _emit_render_update()
                     await _maybe_await(callbacks.on_error, "Turn timed out")
+                    session.turn_completed.set()
                     break
 
                 if method == "turn/completed":
@@ -734,19 +914,21 @@ class Orchestrator:
                         block = f"\n\n**Error:** {error_msg}" + (f" (`{codex_err}`)" if codex_err else "")
                         if additional_details and additional_details != error_msg:
                             block += f"\n\n{additional_details}"
-                        full_text_parts.append(block)
+                        renderer.add_error(block)
+                        await _emit_render_update()
                         if callbacks.on_codex_error is not None:
                             await _maybe_await(callbacks.on_codex_error, error_msg, additional_details, False)
                         else:
                             await _maybe_await(callbacks.on_error, block)
 
                     elif status == "interrupted":
-                        full_text_parts.append("\n\n_Interrupted._")
+                        renderer.add_text("\n\n_Interrupted._")
+                        await _emit_render_update()
 
                     if usage:
                         await _maybe_await(callbacks.on_usage, usage)
 
-                    final_text = "".join(full_text_parts).strip()
+                    final_text = renderer.render().strip()
                     await _maybe_await(callbacks.on_turn_completed, turn, final_text)
                     session.turn_completed.set()
                     break
@@ -754,8 +936,8 @@ class Orchestrator:
                 elif method == "item/agentMessage/delta":
                     delta = params.get("delta", "")
                     if delta and not _is_codex_internal_delta(delta):
-                        full_text_parts.append(delta)
-                        accumulated = "".join(full_text_parts)
+                        renderer.add_text(delta)
+                        accumulated = await _emit_render_update()
                         await _maybe_await(callbacks.on_text_delta, delta, accumulated)
 
                 elif method == "item/reasoning/summaryTextDelta":
@@ -771,51 +953,41 @@ class Orchestrator:
                 elif method == "item/commandExecution/outputDelta":
                     delta = params.get("delta", "")
                     if delta:
+                        item_id = params.get("itemId") or params.get("item_id") or params.get("id")
                         command_output += delta
-                        # Stream command output into the main text so the
-                        # user sees real-time updates via DraftStream.
-                        full_text_parts.append(delta)
-                        accumulated = "".join(full_text_parts)
-                        await _maybe_await(callbacks.on_text_delta, delta, accumulated)
+                        renderer.append_command_output(delta, str(item_id) if item_id is not None else None)
                         await _maybe_await(
                             callbacks.on_command_output_delta,
                             delta,
                             command_output,
                         )
+                        await _emit_render_update()
 
                 elif method == "item/started":
-                    item_type = params.get("item", {}).get("type", "")
-                    item_id = params.get("item", {}).get("id", "")
-                    self._approval_handler.cache_item(item_id, params.get("item", {}))
+                    item = params.get("item", {})
+                    item_type = item.get("type", "")
+                    item_id = item.get("id", "")
+                    self._approval_handler.cache_item(item_id, item)
                     if item_type == "commandExecution":
-                        cmd = params.get("item", {}).get("command", "")
-                        full_text_parts.append(f"\n\n> ⚡ **Exec**\n> `{cmd}`\n")
-                    # reasoning items are internal state; do not append
-                    # visible text (ReactionTracker already shows emoji).
+                        renderer.start_command(item)
+                        await _emit_render_update()
                     await _maybe_await(
                         callbacks.on_item_started,
                         item_type,
-                        params.get("item", {}),
+                        item,
                     )
 
                 elif method == "item/completed":
-                    item_type = params.get("item", {}).get("type", "")
+                    item = params.get("item", {})
+                    item_type = item.get("type", "")
                     if item_type == "commandExecution":
-                        exit_code = params.get("item", {}).get("exitCode", "")
-                        # Output was already streamed via outputDelta;
-                        # only append the final status badge.
-                        if exit_code != 0:
-                            full_text_parts.append(f"\n\n> 🔴 **Failed** (exit code: {exit_code})")
-                        else:
-                            full_text_parts.append("\n\n> 🟢 **Success**")
-                        # Empty result protection
-                        if exit_code == 0 and not command_output.strip():
-                            full_text_parts.append("\n> _Command executed successfully (no output)._")
+                        renderer.complete_command(item)
+                        await _emit_render_update()
 
                     await _maybe_await(
                         callbacks.on_item_completed,
                         item_type,
-                        params.get("item", {}),
+                        item,
                     )
 
                 elif method == "error":
@@ -825,15 +997,16 @@ class Orchestrator:
                     else:
                         await _maybe_await(callbacks.on_error, error_msg)
                     if not will_retry:
-                        block = f"\n\n_ERROR: {error_msg}_"
+                        block = f"\n\n**Error:** {error_msg}"
                         if additional_details and additional_details != error_msg:
                             block += f"\n\n{additional_details}"
-                        full_text_parts.append(block)
+                        renderer.add_error(block)
+                        await _emit_render_update()
 
         finally:
             _NOTIFICATION_QUEUES.pop(key, None)
 
-        final = "".join(full_text_parts).strip()
+        final = renderer.render().strip()
         if not final:
             final = "Codex completed with no output."
         return final

@@ -25,7 +25,7 @@ class _PendingApproval:
 
     request_id: str | int
     event: asyncio.Event = field(default_factory=asyncio.Event)
-    decision: str | None = None  # "acceptOnce" | "acceptForSession" | "deny"
+    decision: str | None = None  # "accept" | "acceptForSession" | "decline" | "cancel"
     params: dict[str, Any] = field(default_factory=dict)
 
 
@@ -100,7 +100,7 @@ class ApprovalHandler:
                 await timeout_task
 
         # Build response.
-        decision = pending.decision or "deny"
+        decision = pending.decision or "decline"
         del self._pending[approval_id]
         self._clear_callback_tokens(approval_id)
         return {"decision": decision}
@@ -132,7 +132,7 @@ class ApprovalHandler:
             with contextlib.suppress(asyncio.CancelledError):
                 await timeout_task
 
-        decision = pending.decision or "deny"
+        decision = pending.decision or "decline"
         del self._pending[approval_id]
         self._clear_callback_tokens(approval_id)
         return {"decision": decision}
@@ -176,7 +176,7 @@ class ApprovalHandler:
                 f"ApprovalHandler: auto-denying approval {approval_id} "
                 f"(timeout {self._timeout}s)"
             )
-            pending.decision = "Decline"
+            pending.decision = "decline"
             pending.event.set()
 
     def _new_callback_token(self, approval_id: str | int, decision: str) -> str:
@@ -251,32 +251,55 @@ class ApprovalHandler:
     ) -> InlineKeyboardMarkup:
         """Build an inline keyboard with Approve/Deny buttons.
 
-        Adapts to ``available_decisions`` from the app-server when provided.
+        Adapts to ``availableDecisions`` from the app-server when provided.
+        All decision keys are normalised to lowercase to match the Codex enum:
+        ``accept | acceptForSession | decline | cancel``.
+
+        Buttons are stacked one per row so labels stay full-width (Telegram
+        shrinks multiple buttons in a row and truncates the text — e.g.
+        "✓ Approve (Session)" gets clipped). Approve-family decisions are
+        listed first, then decline/cancel.
         """
         params = params or {}
         available = params.get("availableDecisions", [])
         if not available:
-            # Default: show all options.
-            available = ["Accept", "AcceptForSession", "Decline"]
+            # Default: show standard options (lowercase per Codex spec).
+            available = ["accept", "acceptForSession", "decline"]
 
+        # Normalise incoming keys to lowercase for lookup.
+        available = [d.lower() for d in available]
+
+        # Map Codex decision values → (button label, callback decision value).
+        # callback_value is always lowercase per Codex spec.
         decision_map = {
-            "Accept": ("Approve", "Accept"),
-            "AcceptForSession": ("Approve (Session)", "AcceptForSession"),
-            "Decline": ("Deny", "Decline"),
-            "Cancel": ("Cancel", "Cancel"),
+            "accept": ("✓ Approve", "accept"),
+            "acceptforsession": ("✓ Approve (Session)", "acceptForSession"),
+            "decline": ("✕ Decline", "decline"),
+            "cancel": ("Cancel", "cancel"),
         }
 
-        buttons: list[InlineKeyboardButton] = []
+        approve_buttons: list[InlineKeyboardButton] = []
+        decline_buttons: list[InlineKeyboardButton] = []
+
         for decision in available:
             label, callback_value = decision_map.get(
-                decision, (decision, decision.lower())
+                decision, (decision.title(), decision)
             )
             token = self._new_callback_token(approval_id, callback_value)
-            buttons.append(
-                InlineKeyboardButton(
-                    text=label,
-                    callback_data=f"codex_approval:{token}",
-                )
+            btn = InlineKeyboardButton(
+                text=label,
+                callback_data=f"codex_approval:{token}",
             )
+            if decision in ("decline", "cancel"):
+                decline_buttons.append(btn)
+            else:
+                approve_buttons.append(btn)
 
-        return InlineKeyboardMarkup(inline_keyboard=[buttons])
+        # One button per row so Telegram never truncates labels.
+        rows: list[list[InlineKeyboardButton]] = [
+            [btn] for btn in approve_buttons
+        ] + [
+            [btn] for btn in decline_buttons
+        ]
+
+        return InlineKeyboardMarkup(inline_keyboard=rows)

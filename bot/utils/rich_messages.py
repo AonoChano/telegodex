@@ -36,15 +36,31 @@ RETRY_MAX_ATTEMPTS: int = len(RETRY_DELAYS)
 
 # 可重试的异常。aiohttp.ClientError 覆盖了连接失败 / 读超时 / 服务器 5xx
 # 等大多数"网络层面"问题；asyncio.TimeoutError 单独再列一次以兼容 3.10；
-# json.JSONDecodeError 处理"网关返回了空 body / 半截 HTML"这种
-# 代理层异常；ConnectionError 兜底原生 socket 错误。
+# ConnectionError 兜底原生 socket 错误。
+#
+# 注意：json.JSONDecodeError 故意不在列表中。当 Telegram 服务端已经处理了
+# 请求但代理返回空 body / 半截 HTML 时，resp.json() 抛出 JSONDecodeError。
+# 此时请求实际已成功（消息已发送），重试会导致 sendMessage 等非幂等方法
+# 产生重复消息。
 RETRYABLE_EXCEPTIONS: tuple[type[BaseException], ...] = (
     aiohttp.ClientError,
     asyncio.TimeoutError,
     ConnectionError,
-    json.JSONDecodeError,
 )
 
+# 非幂等的 Bot API 方法：重试网络错误会导致重复消息（Bug #2 根因）。
+# 草稿方法（sendRichMessageDraft / sendMessageDraft）是幂等的——同一个
+# draft_id 会替换而非新增，因此它们仍然享受退避重试。
+_NON_IDEMPOTENT_METHODS: frozenset[str] = frozenset({
+    "sendMessage",
+    "sendRichMessage",
+    "editMessageText",
+})
+
+_MESSAGE_EFFECT_METHODS: frozenset[str] = _NON_IDEMPOTENT_METHODS | frozenset({
+    "sendRichMessageDraft",
+    "sendMessageDraft",
+})
 # 共享的 aiohttp ClientSession。每个 _post_bot_method 调用都 new 一次 session
 # 是常见反模式：流式响应里推 20+ 次草稿 = 20+ 个 session 内部创建/销毁 Proactor
 # pipe transport，bot 关闭时残留 transport 在 __del__ 里尝试通过已关闭的事件
@@ -138,7 +154,6 @@ async def send_rich_message(
     Returns True on success. Callers should fall back to MarkdownV2/plain text
     when Telegram rejects the rich message.
     """
-    url = f"https://api.telegram.org/bot{bot_token}/sendRichMessage"
     payload = build_rich_markdown_payload(
         chat_id,
         markdown_text,
@@ -148,31 +163,12 @@ async def send_rich_message(
         direct_messages_topic_id=direct_messages_topic_id,
         business_connection_id=business_connection_id,
     )
-
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                url,
-                json=payload,
-                timeout=aiohttp.ClientTimeout(total=30),
-            ) as resp:
-                result = await resp.json()
-
-        if result.get("ok"):
-            logger.info(f"Rich Message sent successfully: chat_id={chat_id}")
-            return True
-
-        error_desc = result.get("description", "Unknown error")
-        logger.warning(f"Rich Message send failed: {error_desc}")
-        return False
-
-    except aiohttp.ClientError as e:
-        logger.error(f"Rich Message API request failed: {e}")
-        return False
-    except Exception as e:
-        logger.error(f"Rich Message send raised an exception: {e}")
-        return False
-
+    ok, desc, _ = await _post_bot_method(bot_token, "sendRichMessage", payload)
+    if ok:
+        logger.info(f"Rich Message sent successfully: chat_id={chat_id}")
+        return True
+    logger.warning(f"Rich Message send failed: {desc}")
+    return False
 
 # ---------------------------------------------------------------------------
 # Draft helpers (sendRichMessageDraft / sendMessageDraft)
@@ -198,7 +194,11 @@ async def _post_bot_method(
     """
     共用底层：调一次 Telegram Bot API 并返回 ``(ok, description, result)``。
 
-    网络层异常走 :data:`RETRY_DELAYS` 退避序列。日志策略：
+    网络层异常走 :data:`RETRY_DELAYS` 退避序列（仅幂等方法）。
+    非幂等方法（``sendMessage`` / ``sendRichMessage`` / ``editMessageText``）
+    在网络异常时不重试，因为请求可能已被服务端处理——重试会产生重复消息。
+
+    日志策略：
 
     - **第一次失败** → 红 ERROR，标 type(e)
     - **重试 1..N** → 灰 ↻ RETRY，单行 ``[NN/10] in Ns — reason``
@@ -210,6 +210,7 @@ async def _post_bot_method(
     url = f"https://api.telegram.org/bot{bot_token}/{method}"
     last_exc: BaseException | None = None
     first_failure_logged = False
+    allow_retry = method not in _NON_IDEMPOTENT_METHODS
 
     for attempt in range(RETRY_MAX_ATTEMPTS + 1):
         if attempt > 0:
@@ -226,6 +227,7 @@ async def _post_bot_method(
             )
             await asyncio.sleep(delay)
 
+        response_status: int | None = None
         try:
             session = _get_shared_session()
             async with session.post(
@@ -233,19 +235,38 @@ async def _post_bot_method(
                 json=payload,
                 timeout=aiohttp.ClientTimeout(total=15),
             ) as resp:
+                response_status = getattr(resp, "status", None)
                 result = await resp.json()
         except RETRYABLE_EXCEPTIONS as e:
             last_exc = e
+            if not allow_retry:
+                logger.error(
+                    f"{method} non-idempotent network error (no retry): "
+                    f"{type(e).__name__}: {e!r}"
+                )
+                return False, f"{type(e).__name__}: {e}", None
             if not first_failure_logged:
-                # 首次失败：跳红，让运维立刻看到
                 logger.error(
                     f"{method} network error: {type(e).__name__}: {e!r} "
                     f"(will backoff up to {RETRY_MAX_ATTEMPTS} times)"
                 )
                 first_failure_logged = True
             continue
+        except json.JSONDecodeError as e:
+            desc = f"JSONDecodeError: {e}"
+            status_success = response_status is not None and 200 <= response_status < 300
+            message_effect_unknown = response_status is None and method in _MESSAGE_EFFECT_METHODS
+            if status_success or message_effect_unknown:
+                logger.warning(
+                    f"{method} response parse error after a possibly successful request; "
+                    f"treating as delivered to avoid duplicate fallback: {e!r}"
+                )
+                return True, desc, None
+            logger.error(
+                f"{method} response parse error (request failed or status unknown): {e!r}"
+            )
+            return False, desc, None
         except Exception as e:
-            # 非可重试异常：原样上报，不消耗重试预算
             logger.error(f"{method} raised {type(e).__name__}: {e!r}")
             return False, f"{type(e).__name__}: {e}", None
 

@@ -43,11 +43,7 @@ def log_throttled(key: str, message: str, level: str = "warning") -> None:
 
 
 def _is_draft_unavailable(chat_id: int | str, thread_id: int | None) -> bool:
-    if _DRAFT_UNAVAILABLE:
-        return True
-    if (chat_id, thread_id) in _UNSUPPORTED_PEERS:
-        return True
-    return False
+    return _DRAFT_UNAVAILABLE or (chat_id, thread_id) in _UNSUPPORTED_PEERS
 
 
 def _classify_draft_error(desc: str) -> tuple[bool, bool]:
@@ -174,8 +170,19 @@ class DraftStream:
             ok, desc, result = await _post_bot_method(
                 self._bot_token, "sendRichMessage", rich_payload
             )
-            if ok and isinstance(result, dict):
-                self._legacy_message_id = result.get("message_id")
+            if ok:
+                if isinstance(result, dict) and result.get("message_id") is not None:
+                    self._legacy_message_id = result.get("message_id")
+                else:
+                    # The request may have been processed but the response body
+                    # was lost. Do not fall back to sendMessage, or each push can
+                    # create another real message.
+                    self._state = "GIVE_UP"
+                    log_throttled(
+                        f"draft_legacy_no_message_id:{self._chat_id}:{self._message_thread_id}",
+                        "sendRichMessage legacy fallback returned no message_id; "
+                        "stopping preview edits to avoid duplicate messages",
+                    )
                 return True
             logger.debug(f"sendRichMessage legacy fallback: {desc}")
 
@@ -191,8 +198,16 @@ class DraftStream:
         ok, desc, result = await _post_bot_method(
             self._bot_token, "sendMessage", payload
         )
-        if ok and isinstance(result, dict):
-            self._legacy_message_id = result.get("message_id")
+        if ok:
+            if isinstance(result, dict) and result.get("message_id") is not None:
+                self._legacy_message_id = result.get("message_id")
+            else:
+                self._state = "GIVE_UP"
+                log_throttled(
+                    f"draft_legacy_plain_no_message_id:{self._chat_id}:{self._message_thread_id}",
+                    "sendMessage legacy fallback returned no message_id; "
+                    "stopping preview edits to avoid duplicate messages",
+                )
             return True
         logger.warning(f"Legacy sendMessage failed: {desc}")
         return False
@@ -205,21 +220,95 @@ class DraftStream:
         payload: dict[str, Any] = {
             "chat_id": self._chat_id,
             "message_id": self._legacy_message_id,
-            "text": text,
         }
-        if self._message_thread_id is not None:
-            payload["message_thread_id"] = self._message_thread_id
+        if self._use_rich:
+            payload["rich_message"] = {"markdown": text}
+        else:
+            payload["text"] = text
         if self._business_connection_id is not None:
             payload["business_connection_id"] = self._business_connection_id
 
         ok, desc, _ = await _post_bot_method(
             self._bot_token, "editMessageText", payload
         )
+        if ok:
+            return True
+
+        if "message is not modified" in desc.lower():
+            return True
+
+        if self._use_rich:
+            plain_payload: dict[str, Any] = {
+                "chat_id": self._chat_id,
+                "message_id": self._legacy_message_id,
+                "text": text,
+            }
+            if self._business_connection_id is not None:
+                plain_payload["business_connection_id"] = self._business_connection_id
+            ok2, desc2, _ = await _post_bot_method(
+                self._bot_token, "editMessageText", plain_payload
+            )
+            if ok2 or "message is not modified" in desc2.lower():
+                return True
+            desc = desc2
+
+        # Re-sending on every edit failure is what creates repeated transcript
+        # messages. Stop preview updates; finalize() will make one final send if
+        # it cannot edit the existing preview.
+        self._state = "GIVE_UP"
+        log_throttled(
+            f"draft_legacy_edit_failed:{self._chat_id}:{self._message_thread_id}",
+            f"Legacy preview edit failed; stopping preview edits: {desc}",
+        )
+        return False
+
+    async def _send_final_message(self, text: str) -> bool:
+        """Send the final persistent message without mutating preview state."""
+        if self._use_rich:
+            rich_payload: dict[str, Any] = {
+                "chat_id": self._chat_id,
+                "rich_message": {"markdown": text},
+            }
+            if self._message_thread_id is not None:
+                rich_payload["message_thread_id"] = self._message_thread_id
+            if self._direct_messages_topic_id is not None:
+                rich_payload["direct_messages_topic_id"] = self._direct_messages_topic_id
+            if self._business_connection_id is not None:
+                rich_payload["business_connection_id"] = self._business_connection_id
+
+            ok, desc, _ = await _post_bot_method(
+                self._bot_token, "sendRichMessage", rich_payload
+            )
+            if ok:
+                return True
+            logger.debug(f"final sendRichMessage failed: {desc}")
+
+        payload: dict[str, Any] = {
+            "chat_id": self._chat_id,
+            "text": text,
+        }
+        if self._message_thread_id is not None:
+            payload["message_thread_id"] = self._message_thread_id
+        if self._business_connection_id is not None:
+            payload["business_connection_id"] = self._business_connection_id
+        ok, desc, _ = await _post_bot_method(self._bot_token, "sendMessage", payload)
         if not ok:
-            # Message may have been deleted; try sending a new one
+            logger.warning(f"Final sendMessage failed: {desc}")
+        return ok
+
+    async def _delete_legacy_preview(self) -> None:
+        """Best-effort removal of a legacy preview after final send succeeds."""
+        if self._legacy_message_id is None:
+            return
+        payload: dict[str, Any] = {
+            "chat_id": self._chat_id,
+            "message_id": self._legacy_message_id,
+        }
+        ok, desc, _ = await _post_bot_method(self._bot_token, "deleteMessage", payload)
+        if ok:
             self._legacy_message_id = None
-            return await self._send_legacy(text)
-        return True
+        else:
+            logger.debug(f"Legacy preview delete failed: {desc}")
 
     # ------------------------------------------------------------------
     # Public API
@@ -239,6 +328,9 @@ class DraftStream:
         if not text or text == self._last_text:
             return True
         self._last_text = text
+
+        if self._state == "GIVE_UP":
+            return False
 
         # Already known unavailable at process/peer level -> legacy immediately
         if _is_draft_unavailable(self._chat_id, self._message_thread_id):
@@ -301,28 +393,21 @@ class DraftStream:
         self._last_text = text
 
         if self._state == "DRAFT":
-            # Try persistent rich message first
-            rich_payload: dict[str, Any] = {
-                "chat_id": self._chat_id,
-                "rich_message": {"markdown": text},
-            }
-            if self._message_thread_id is not None:
-                rich_payload["message_thread_id"] = self._message_thread_id
-            if self._direct_messages_topic_id is not None:
-                rich_payload["direct_messages_topic_id"] = self._direct_messages_topic_id
-            if self._business_connection_id is not None:
-                rich_payload["business_connection_id"] = self._business_connection_id
-
-            ok, desc, _ = await _post_bot_method(
-                self._bot_token, "sendRichMessage", rich_payload
-            )
-            if ok:
-                return True
-            logger.debug(f"finalize sendRichMessage failed: {desc}")
-            return await self._send_legacy(text)
+            return await self._send_final_message(text)
 
         if self._state == "LEGACY":
-            return await self._edit_legacy(text)
+            if await self._edit_legacy(text):
+                return True
+            ok = await self._send_final_message(text)
+            if ok:
+                await self._delete_legacy_preview()
+            return ok
 
-        # GIVE_UP or never pushed
-        return await self._send_legacy(text)
+        if self._state == "GIVE_UP":
+            ok = await self._send_final_message(text)
+            if ok:
+                await self._delete_legacy_preview()
+            return ok
+
+        # Unknown state: make exactly one final send.
+        return await self._send_final_message(text)

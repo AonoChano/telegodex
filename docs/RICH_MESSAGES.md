@@ -122,6 +122,12 @@ Rich Message path because Telegram treats formula source as raw LaTeX.
 If `sendRichMessage` fails, the bot falls back to the existing MarkdownV2
 formatter and sends the response with `parse_mode="MarkdownV2"`.
 
+Streaming previews have one extra fallback layer. When draft APIs are unavailable,
+the bot sends one real preview message and edits it with `editMessageText` using
+the `rich_message` field. If that edit path fails, the bot stops preview updates
+so every flush does not create another chat message; finalization sends one
+persistent result and best-effort deletes the stale preview.
+
 ## Prompt Contract
 
 The system prompt should advertise Rich Markdown features only when replies are

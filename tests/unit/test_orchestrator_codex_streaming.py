@@ -70,15 +70,19 @@ async def test_consume_turn_filters_codex_internal_delta() -> None:
 
 
 @pytest.mark.asyncio
-async def test_consume_turn_streams_command_output_into_final_text() -> None:
+async def test_consume_turn_renders_command_output_in_collapsed_tool_activity() -> None:
     text_deltas: list[tuple[str, str]] = []
     output_deltas: list[tuple[str, str]] = []
+    render_updates: list[str] = []
 
     async def on_text_delta(delta: str, accumulated: str) -> None:
         text_deltas.append((delta, accumulated))
 
     async def on_command_output_delta(delta: str, accumulated: str) -> None:
         output_deltas.append((delta, accumulated))
+
+    async def on_render_update(rendered: str) -> None:
+        render_updates.append(rendered)
 
     final = await _consume_with_events(
         [
@@ -92,7 +96,7 @@ async def test_consume_turn_streams_command_output_into_final_text() -> None:
                     }
                 },
             ),
-            ("item/commandExecution/outputDelta", {"delta": "tests passed\n"}),
+            ("item/commandExecution/outputDelta", {"itemId": "cmd-1", "delta": "tests passed\n"}),
             (
                 "item/completed",
                 {
@@ -108,19 +112,63 @@ async def test_consume_turn_streams_command_output_into_final_text() -> None:
         StreamingCallbacks(
             on_text_delta=on_text_delta,
             on_command_output_delta=on_command_output_delta,
+            on_render_update=on_render_update,
         ),
     )
 
+    assert "<details><summary>Tool activity</summary>" in final
     assert "pytest" in final
     assert "tests passed" in final
     assert "Success" in final
-    assert text_deltas == [
-        ("tests passed\n", text_deltas[0][1]),
-    ]
-    assert "Exec" in text_deltas[0][1]
-    assert "pytest" in text_deltas[0][1]
-    assert "tests passed" in text_deltas[0][1]
+    assert text_deltas == []
     assert output_deltas == [("tests passed\n", "tests passed\n")]
+    assert render_updates[-1] == final
+
+
+@pytest.mark.asyncio
+async def test_consume_turn_keeps_prose_and_tool_activity_in_order() -> None:
+    render_updates: list[str] = []
+
+    async def on_render_update(rendered: str) -> None:
+        render_updates.append(rendered)
+
+    final = await _consume_with_events(
+        [
+            ("item/agentMessage/delta", {"delta": "I will check."}),
+            (
+                "item/started",
+                {
+                    "item": {
+                        "id": "cmd-1",
+                        "type": "commandExecution",
+                        "command": "git status --short",
+                    }
+                },
+            ),
+            ("item/commandExecution/outputDelta", {"itemId": "cmd-1", "delta": "clean\n"}),
+            (
+                "item/completed",
+                {
+                    "item": {
+                        "id": "cmd-1",
+                        "type": "commandExecution",
+                        "exitCode": 0,
+                        "aggregatedOutput": "clean\n",
+                    }
+                },
+            ),
+            ("item/agentMessage/delta", {"delta": "Done."}),
+            ("turn/completed", {"turn": {"status": "completed"}}),
+        ],
+        StreamingCallbacks(on_render_update=on_render_update),
+    )
+
+    prose_idx = final.index("I will check.")
+    details_idx = final.index("<details><summary>Tool activity</summary>")
+    done_idx = final.index("Done.")
+    assert prose_idx < details_idx < done_idx
+    assert final.count("clean") == 1
+    assert render_updates[-1] == final
 
 
 @pytest.mark.asyncio
