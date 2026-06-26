@@ -33,7 +33,7 @@ from sqlalchemy import select
 
 from bot.handlers import toolbar as toolbar_handler
 from bot.streaming import ReactionTracker
-from bot.telegram_draft import DraftStream
+from bot.telegram_draft import DraftStream, shorten_plain_telegram_text
 from bot.utils.rich_messages import send_rich_message
 from bot.utils.routing import TelegramRoute
 from config import settings
@@ -487,7 +487,7 @@ async def _codex_reply(
         return
     await bot.send_message(
         chat_id=route.chat_id,
-        text=text,
+        text=shorten_plain_telegram_text(text),
         **merged,
     )
 

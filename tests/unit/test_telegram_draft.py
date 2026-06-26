@@ -123,3 +123,38 @@ async def test_legacy_edit_failure_stops_preview_resends_until_final(
     assert calls[1][1]["rich_message"] == {"markdown": "second"}
     assert calls[2][1]["text"] == "second"
     assert calls[3][1]["rich_message"] == {"markdown": "final"}
+
+
+@pytest.mark.asyncio
+async def test_final_plain_fallback_shortens_overlong_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, dict[str, Any]]] = []
+    long_text = "start\n" + ("x" * 6_000) + "\nend"
+
+    async def fake_post(
+        _token: str,
+        method: str,
+        payload: dict[str, Any],
+    ) -> tuple[bool, str, Any]:
+        calls.append((method, payload))
+        if method == "sendRichMessage":
+            return False, "Bad Request: message is too long", None
+        if method == "sendMessage":
+            assert len(payload["text"]) <= 4096
+            return True, "", {"message_id": 99}
+        raise AssertionError(f"unexpected method: {method}")
+
+    monkeypatch.setattr(telegram_draft, "_post_bot_method", fake_post)
+
+    stream = DraftStream("TOKEN", 100, message_thread_id=222, use_rich=True)
+
+    assert await stream.finalize(long_text) is True
+
+    methods = [method for method, _ in calls]
+    assert methods == ["sendRichMessage", "sendMessage"]
+    sent_text = calls[1][1]["text"]
+    assert sent_text.startswith("start")
+    assert sent_text.endswith("end")
+    assert "Telegram plain-message fallback truncated" in sent_text
+    assert long_text not in sent_text

@@ -1,7 +1,7 @@
 ---
 title: Architecture
 category: architecture
-last_updated: 2026-06-25
+last_updated: 2026-06-26
 relevance: high
 summary: Runtime layers, provider contract, Telegram rendering, and Codex bridge boundaries
 related: [PRODUCT_EXPERIENCE.md, CUSTOM_PROVIDERS.md, RICH_MESSAGES.md, STARTUP.md]
@@ -107,7 +107,7 @@ Telegram User
 
 ### Streaming Output
 
-Turn output is streamed via Telegram Rich Message drafts. Assistant prose stays in the main message body, while command execution and tool output are rendered into default-collapsed `<details><summary>Tool activity</summary>` blocks. The handler flushes rendered Rich Markdown updates on content changes and persists the complete result with `sendRichMessage`.
+Turn output is streamed via Telegram Rich Message drafts. Assistant prose stays in the main message body, while command execution and tool output are rendered into default-collapsed `<details><summary>Tool activity</summary>` blocks. Tool output inside those blocks is previewed and can be compacted or summarized so collapsed details do not exceed Telegram's Rich Message limits. The handler flushes rendered Rich Markdown updates on content changes and persists the complete result with `sendRichMessage`.
 
 Legacy fallback previews edit the same real message with `editMessageText.rich_message`. If Telegram refuses the edit, the handler stops preview edits instead of sending a new transcript on every update, then sends one final message and removes the stale preview when possible.
 

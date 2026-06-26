@@ -31,6 +31,27 @@ _UNSUPPORTED_PEERS: set[tuple[int | str, int | None]] = set()
 _last_log_time: dict[str, float] = {}
 _LOG_THROTTLE_SEC = 60
 
+_TELEGRAM_PLAIN_TEXT_LIMIT = 4096
+
+
+def shorten_plain_telegram_text(text: str, limit: int = _TELEGRAM_PLAIN_TEXT_LIMIT) -> str:
+    """Return text safe for Telegram plain sendMessage/editMessageText calls."""
+    if len(text) <= limit:
+        return text
+    marker = "\n\n[Telegram plain-message fallback truncated this long response.]\n\n"
+    available = max(0, limit - len(marker))
+    head_len = min(available, max(0, available * 2 // 3))
+    tail_len = max(0, available - head_len)
+    omitted = max(0, len(text) - head_len - tail_len)
+    marker = f"\n\n[Telegram plain-message fallback truncated {omitted} chars.]\n\n"
+    available = max(0, limit - len(marker))
+    head_len = min(available, max(0, available * 2 // 3))
+    tail_len = max(0, available - head_len)
+    head = text[:head_len].rstrip()
+    tail = text[-tail_len:].lstrip() if tail_len > 0 else ""
+    result = f"{head}{marker}{tail}"
+    return result[:limit]
+
 
 def log_throttled(key: str, message: str, level: str = "warning") -> None:
     """Emit a log message at most once per ``_LOG_THROTTLE_SEC`` for each key."""
@@ -127,7 +148,7 @@ class DraftStream:
                 plain_payload: dict[str, Any] = {
                     "chat_id": self._chat_id,
                     "draft_id": self._draft_id,
-                    "text": text,
+                    "text": shorten_plain_telegram_text(text),
                 }
                 if self._message_thread_id is not None:
                     plain_payload["message_thread_id"] = self._message_thread_id
@@ -143,7 +164,7 @@ class DraftStream:
         payload = {
             "chat_id": self._chat_id,
             "draft_id": self._draft_id,
-            "text": text,
+            "text": shorten_plain_telegram_text(text),
         }
         if self._message_thread_id is not None:
             payload["message_thread_id"] = self._message_thread_id
@@ -188,7 +209,7 @@ class DraftStream:
 
         payload: dict[str, Any] = {
             "chat_id": self._chat_id,
-            "text": text,
+            "text": shorten_plain_telegram_text(text),
         }
         if self._message_thread_id is not None:
             payload["message_thread_id"] = self._message_thread_id
@@ -241,7 +262,7 @@ class DraftStream:
             plain_payload: dict[str, Any] = {
                 "chat_id": self._chat_id,
                 "message_id": self._legacy_message_id,
-                "text": text,
+                "text": shorten_plain_telegram_text(text),
             }
             if self._business_connection_id is not None:
                 plain_payload["business_connection_id"] = self._business_connection_id
@@ -285,7 +306,7 @@ class DraftStream:
 
         payload: dict[str, Any] = {
             "chat_id": self._chat_id,
-            "text": text,
+            "text": shorten_plain_telegram_text(text),
         }
         if self._message_thread_id is not None:
             payload["message_thread_id"] = self._message_thread_id

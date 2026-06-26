@@ -1,7 +1,7 @@
 ---
 title: Changelog
 category: changelog
-last_updated: 2026-06-25
+last_updated: 2026-06-26
 relevance: medium
 summary: Human-maintained release notes for Telegodex
 related: [PRODUCT_EXPERIENCE.md, RICH_MESSAGES.md, STARTUP.md]
@@ -11,6 +11,7 @@ related: [PRODUCT_EXPERIENCE.md, RICH_MESSAGES.md, STARTUP.md]
 
 ## Unreleased
 
+- Fixed Codex Telegram finalization for long tool output: collapsed tool details are now previewed/summarized within Rich Message limits, and plain-message fallback is shortened before send.
 - Fixed Codex streaming rendering so tool activity stays in default-collapsed Rich Message details blocks, legacy previews edit the same rich message, and edit failures no longer create repeated transcript messages.
 - Fixed Codex runtime error display so late daemon stderr refreshes the live status message, raw provider/runtime details are shown in a dedicated block, and repeated generic `Unknown error` lines are removed.
 - Improved ordinary AI chat provider failures: balance/quota/auth errors now show a readable user message and do not retry the same failed request in non-streaming mode.

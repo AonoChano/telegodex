@@ -96,6 +96,37 @@ def _markdown_code_fence(text: str, language: str = "text") -> str:
     return f"{fence}{language}\n{text}\n{fence}"
 
 
+_TELEGRAM_RICH_SOFT_LIMIT = 30_000
+_TOOL_OUTPUT_PREVIEW_CHARS = 2_400
+_TOOL_OUTPUT_COMPACT_CHARS = 600
+_TOOL_COMMAND_PREVIEW_CHARS = 1_600
+_TOOL_COMMAND_COMPACT_CHARS = 600
+
+
+def _truncate_middle_text(text: str, limit: int, subject: str) -> str:
+    """Keep the start and end of long runtime text within a character budget."""
+    if limit <= 0:
+        return ""
+    if len(text) <= limit:
+        return text
+    if limit < 120:
+        return text[:limit]
+
+    marker = f"\n\n[... {subject} truncated for Telegram ...]\n\n"
+    available = max(0, limit - len(marker))
+    head_len = available // 2
+    tail_len = available - head_len
+    omitted = max(0, len(text) - head_len - tail_len)
+    marker = f"\n\n[... {subject} truncated for Telegram: {omitted} chars omitted ...]\n\n"
+    available = max(0, limit - len(marker))
+    head_len = available // 2
+    tail_len = available - head_len
+    head = text[:head_len].rstrip()
+    tail = text[-tail_len:].lstrip() if tail_len > 0 else ""
+    result = f"{head}{marker}{tail}"
+    return result[:limit]
+
+
 @dataclass
 class _CodexTextSegment:
     text: str = ""
@@ -177,6 +208,40 @@ class _CodexTurnRenderer:
         self._active_command_id = None
 
     def render(self) -> str:
+        for options in (
+            {
+                "output_char_limit": _TOOL_OUTPUT_PREVIEW_CHARS,
+                "command_char_limit": _TOOL_COMMAND_PREVIEW_CHARS,
+                "summary_only": False,
+            },
+            {
+                "output_char_limit": _TOOL_OUTPUT_COMPACT_CHARS,
+                "command_char_limit": _TOOL_COMMAND_COMPACT_CHARS,
+                "summary_only": False,
+            },
+            {
+                "output_char_limit": 0,
+                "command_char_limit": _TOOL_COMMAND_COMPACT_CHARS,
+                "summary_only": False,
+            },
+            {
+                "output_char_limit": 0,
+                "command_char_limit": 0,
+                "summary_only": True,
+            },
+        ):
+            rendered = self._render_segments(**options)
+            if len(rendered) <= _TELEGRAM_RICH_SOFT_LIMIT:
+                return rendered
+        return _truncate_middle_text(rendered, _TELEGRAM_RICH_SOFT_LIMIT, "message")
+
+    def _render_segments(
+        self,
+        *,
+        output_char_limit: int,
+        command_char_limit: int,
+        summary_only: bool,
+    ) -> str:
         rendered: list[str] = []
         for segment in self._segments:
             if isinstance(segment, _CodexTextSegment):
@@ -184,7 +249,12 @@ class _CodexTurnRenderer:
                 if text:
                     rendered.append(text)
             else:
-                details = self._render_tool_segment(segment)
+                details = self._render_tool_segment(
+                    segment,
+                    output_char_limit=output_char_limit,
+                    command_char_limit=command_char_limit,
+                    summary_only=summary_only,
+                )
                 if details:
                     rendered.append(details)
         return "\n\n".join(rendered).strip()
@@ -213,18 +283,52 @@ class _CodexTurnRenderer:
         return f"command-{self._anon_command_count}"
 
     @staticmethod
-    def _render_tool_segment(segment: _CodexToolSegment) -> str:
+    def _render_tool_segment(
+        segment: _CodexToolSegment,
+        *,
+        output_char_limit: int,
+        command_char_limit: int,
+        summary_only: bool,
+    ) -> str:
+        if summary_only:
+            command_count = len(segment.commands)
+            output_chars = sum(len(command.output) for command in segment.commands)
+            if command_count <= 0:
+                return ""
+            body = (
+                f"_{command_count} command(s); detailed tool activity omitted "
+                "to keep this Telegram message within size limits._"
+            )
+            if output_chars:
+                body += f"\n\n_{output_chars} chars of tool output were not echoed._"
+            return f"<details><summary>Tool activity</summary>\n\n{body}\n\n</details>"
+
         blocks: list[str] = []
         for command in segment.commands:
             command_blocks: list[str] = []
             if command.command:
                 command_blocks.append("**Exec**")
-                command_blocks.append(_markdown_code_fence(command.command, "sh"))
+                command_text = _truncate_middle_text(
+                    command.command,
+                    command_char_limit,
+                    "command",
+                )
+                command_blocks.append(_markdown_code_fence(command_text, "sh"))
             else:
                 command_blocks.append("**Command output**")
 
             if command.output.strip():
-                command_blocks.append(_markdown_code_fence(command.output.rstrip(), "text"))
+                if output_char_limit > 0:
+                    output = _truncate_middle_text(
+                        command.output.rstrip(),
+                        output_char_limit,
+                        "tool output",
+                    )
+                    command_blocks.append(_markdown_code_fence(output, "text"))
+                else:
+                    command_blocks.append(
+                        f"_Tool output omitted for Telegram ({len(command.output)} chars)._"
+                    )
 
             if command.exit_code is not None:
                 try:

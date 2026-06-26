@@ -126,6 +126,50 @@ async def test_consume_turn_renders_command_output_in_collapsed_tool_activity() 
 
 
 @pytest.mark.asyncio
+async def test_consume_turn_truncates_large_command_output_in_tool_activity() -> None:
+    large_output = "HEAD-" + ("x" * 8_000) + "-TAIL\n"
+
+    final = await _consume_with_events(
+        [
+            (
+                "item/started",
+                {
+                    "item": {
+                        "id": "cmd-1",
+                        "type": "commandExecution",
+                        "command": "Get-Content -Raw RULES.md",
+                    }
+                },
+            ),
+            (
+                "item/commandExecution/outputDelta",
+                {"itemId": "cmd-1", "delta": large_output},
+            ),
+            (
+                "item/completed",
+                {
+                    "item": {
+                        "id": "cmd-1",
+                        "type": "commandExecution",
+                        "exitCode": 0,
+                    }
+                },
+            ),
+            ("turn/completed", {"turn": {"status": "completed"}}),
+        ],
+        StreamingCallbacks(),
+    )
+
+    assert "<details><summary>Tool activity</summary>" in final
+    assert "Get-Content -Raw RULES.md" in final
+    assert "HEAD-" in final
+    assert "-TAIL" in final
+    assert "tool output truncated for Telegram" in final
+    assert large_output not in final
+    assert len(final) < 4_000
+
+
+@pytest.mark.asyncio
 async def test_consume_turn_keeps_prose_and_tool_activity_in_order() -> None:
     render_updates: list[str] = []
 
