@@ -57,7 +57,9 @@ Use block quotes only for quoted material or callouts. Do not use them as
 generic indentation.
 
 For long citations, logs, source dumps, or optional details, use Rich Markdown's
-HTML-compatible details block:
+HTML-compatible details block. Collapsing is a display behavior only: hidden text
+still counts toward Telegram's Rich Message size limit, so runtime logs and tool
+output must be previewed or summarized before they are placed inside details.
 
 ```html
 <details><summary>Full log</summary>
@@ -121,6 +123,15 @@ Rich Message path because Telegram treats formula source as raw LaTeX.
 
 If `sendRichMessage` fails, the bot falls back to the existing MarkdownV2
 formatter and sends the response with `parse_mode="MarkdownV2"`.
+
+Streaming previews have one extra fallback layer. When draft APIs are unavailable,
+the bot sends one real preview message and edits it with `editMessageText` using
+the `rich_message` field. If that edit path fails, the bot stops preview updates
+so every flush does not create another chat message; finalization sends one
+persistent result and best-effort deletes the stale preview. If final Rich
+Message delivery is rejected and the bot must fall back to ordinary
+`sendMessage`, that plain fallback is shortened to Telegram's 4096-character
+message limit instead of retrying the same oversized payload.
 
 ## Prompt Contract
 

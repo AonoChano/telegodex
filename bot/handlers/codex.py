@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import html
 import re
 import time
 import uuid
@@ -32,7 +33,7 @@ from sqlalchemy import select
 
 from bot.handlers import toolbar as toolbar_handler
 from bot.streaming import ReactionTracker
-from bot.telegram_draft import DraftStream
+from bot.telegram_draft import DraftStream, shorten_plain_telegram_text
 from bot.utils.rich_messages import send_rich_message
 from bot.utils.routing import TelegramRoute
 from config import settings
@@ -47,6 +48,7 @@ router = Router(name="codex")
 
 # Draft limits for codex streaming.
 DRAFT_FLUSH_CHARS = 200
+DRAFT_FLUSH_INTERVAL_SECONDS = 1.2
 STATUS_EDIT_INTERVAL_SECONDS = 2.0
 STATUS_TEXT_LIMIT = 900
 STDERR_LATE_GRACE_SECONDS = 2.0
@@ -65,6 +67,22 @@ _current_bot: Bot | None = None
 
 # Global Orchestrator reference for transport-level approval callbacks.
 _global_orch: Orchestrator | None = None
+
+# Session factory (async callable returning an AsyncSession context) used to
+# resolve approval requests for threads that aren't loaded in memory yet.
+_db_session_factory: Any = None
+
+
+def set_db_session_factory(factory: Any) -> None:
+    """Wire the DB session factory from ``main.py`` startup.
+
+    ``factory`` should be an async generator (e.g. ``Database.get_session``)
+    that yields an ``AsyncSession``.  It is consumed by
+    :func:`_approval_ui_sender` when a thread-id cannot be resolved in
+    memory (e.g. after a bot restart).
+    """
+    global _db_session_factory
+    _db_session_factory = factory
 
 
 @dataclass(frozen=True)
@@ -104,41 +122,95 @@ def _topic_prompt_text(message: Message) -> str:
     return _command_args(message.text or "", "codex")
 
 
-def _ensure_global_orch(orchestrator: Orchestrator) -> None:
-    """Cache the Orchestrator instance and wire approval UI sender."""
-    global _global_orch
+def _ensure_global_orch(
+    orchestrator: Orchestrator,
+    db_session_factory: Any = None,
+) -> None:
+    """Cache the Orchestrator instance and wire approval UI sender.
+
+    ``db_session_factory`` is an async-callable that yields a context manager
+    producing an ``AsyncSession`` (e.g. ``Database().get_session``). It is
+    used to resolve approval requests for threads not loaded in memory.
+    """
+    global _global_orch, _db_session_factory
     if _global_orch is None:
         _global_orch = orchestrator
         orchestrator.set_approval_ui_sender(_approval_ui_sender)
+    if db_session_factory is not None:
+        _db_session_factory = db_session_factory
 
 
 async def _approval_ui_sender(method: str, params: dict[str, Any]) -> None:
-    """Send approval requests to Telegram using the cached bot instance."""
+    """Send approval requests to Telegram using the cached bot instance.
+
+    All early-return paths log a warning instead of failing silently: a
+    silent skip causes the turn to auto-deny after the timeout with no
+    visible clue, which is the original "button never appeared" bug.
+    """
     if _current_bot is None or _global_orch is None:
+        logger.warning(
+            f"approval UI skipped (no bot/orchestrator wired): method={method}"
+        )
         return
     sm = _global_orch.session_manager
     if sm is None:
+        logger.warning(f"approval UI skipped (no session manager): method={method}")
         return
     thread_id = params.get("threadId", "")
     session_key = sm.reverse_lookup(thread_id)
     if session_key is None:
-        return
+        # Thread not opened in this process (bot restart, daemon reconnect).
+        # Fall back to the database before giving up.
+        if _db_session_factory is not None:
+            try:
+                async for db in _db_session_factory():
+                    session_key = await sm.reverse_lookup_db_fallback(thread_id, db)
+                    break
+            except Exception:
+                logger.exception(
+                    f"approval UI DB fallback failed for thread={thread_id}"
+                )
+        if session_key is None:
+            logger.warning(
+                f"approval UI skipped (thread {thread_id} not resolvable "
+                f"in memory or DB): method={method}"
+            )
+            return
     approval_id = params.get("approvalId", params.get("itemId", "unknown"))
     if method == "item/commandExecution/requestApproval":
         text = _global_orch.approval_handler.format_command_approval_markdown(approval_id, params)
     else:
         text = _global_orch.approval_handler.format_file_change_approval_markdown(approval_id, params)
     keyboard = _global_orch.approval_handler.build_approval_keyboard(approval_id, params)
-    topic_id = sm.get_topic_id(thread_id)
+    topic_id = sm.get_topic_id(thread_id) or session_key.topic_id
+    # Approvals are synchronous gates: if the message never renders, the user
+    # can't see the buttons and the turn auto-denies after the timeout. So we
+    # try Markdown first (nicer rendering), then fall back to plain text if
+    # Telegram rejects the formatting — Codex commands often contain `_`, `*`,
+    # `[` etc. that legacy Markdown treats as markup and 400s on.
     try:
         await _current_bot.send_message(
             chat_id=session_key.chat_id,
             text=text,
             reply_markup=keyboard,
             message_thread_id=topic_id,
+            parse_mode="Markdown",
         )
     except Exception as exc:
-        logger.warning(f"Codex: failed to send approval message to {session_key}: {exc}")
+        logger.warning(
+            f"Codex: approval Markdown send failed, retrying as plain text: {exc}"
+        )
+        try:
+            await _current_bot.send_message(
+                chat_id=session_key.chat_id,
+                text=text,
+                reply_markup=keyboard,
+                message_thread_id=topic_id,
+            )
+        except Exception as exc2:
+            logger.warning(
+                f"Codex: failed to send approval message to {session_key}: {exc2}"
+            )
 
 
 def _bot_token() -> str:
@@ -415,7 +487,7 @@ async def _codex_reply(
         return
     await bot.send_message(
         chat_id=route.chat_id,
-        text=text,
+        text=shorten_plain_telegram_text(text),
         **merged,
     )
 
@@ -672,7 +744,8 @@ async def _execute_codex_prompt(
             logger.debug(f"Codex: failed to set initial reaction: {exc}")
 
     last_flush_len = 0
-    full_accumulated = ""
+    last_flush_at = 0.0
+    latest_rendered = ""
     last_status_edit = 0.0
     last_status_text = "Codex is working..."
 
@@ -685,7 +758,7 @@ async def _execute_codex_prompt(
     last_problem_status = ""
     last_problem_at = 0.0
 
-    async def _edit_status(text: str, *, force: bool = False) -> None:
+    async def _edit_status(text: str, *, force: bool = False, parse_mode: str | None = None) -> None:
         nonlocal last_status_edit, last_status_text
         if stop_msg is None:
             return
@@ -703,6 +776,7 @@ async def _execute_codex_prompt(
                 message_id=stop_msg.message_id,
                 text=safe_text,
                 reply_markup=stop_keyboard,
+                parse_mode=parse_mode,
             )
         except Exception as exc:
             logger.debug(f"Codex: failed to edit status message: {exc}")
@@ -742,23 +816,47 @@ async def _execute_codex_prompt(
 
     remove_stderr_listener = codex_daemon.add_stderr_listener(_on_daemon_stderr)
 
+    async def _push_render_update(rendered: str, *, force: bool = False) -> None:
+        nonlocal last_flush_at, last_flush_len, latest_rendered
+        if not rendered:
+            return
+        latest_rendered = rendered
+        if stream is None:
+            return
+        now = time.monotonic()
+        should_flush = (
+            force
+            or last_flush_at == 0.0
+            or abs(len(rendered) - last_flush_len) >= DRAFT_FLUSH_CHARS
+            or now - last_flush_at >= DRAFT_FLUSH_INTERVAL_SECONDS
+        )
+        if not should_flush:
+            return
+        if await stream.push(rendered):
+            last_flush_len = len(rendered)
+            last_flush_at = now
+
+    async def _on_render_update(rendered: str) -> None:
+        await _push_render_update(rendered)
+
     async def _on_text_delta(delta: str, accumulated: str) -> None:
-        nonlocal last_flush_len, full_accumulated
-        full_accumulated = accumulated
         if reaction_tracker is not None:
             await reaction_tracker.set_state("editing")
         await _edit_status("Codex is writing a response...")
-        if stream is None:
-            return
-        if len(accumulated) - last_flush_len >= DRAFT_FLUSH_CHARS:
-            await stream.push(accumulated)
-            last_flush_len = len(accumulated)
+        if accumulated and accumulated != latest_rendered:
+            await _push_render_update(accumulated)
 
     async def _on_reasoning_delta(delta: str, accumulated: str) -> None:
         if reaction_tracker is not None:
             await reaction_tracker.on_codex_event("item/reasoning/summaryTextDelta")
         preview = _trim_status_text(accumulated, 360)
-        await _edit_status(f"Codex is thinking...\n{preview}" if preview else "Codex is thinking...")
+        if preview:
+            await _edit_status(
+                f"Codex is thinking...\n<i>{html.escape(preview)}</i>",
+                parse_mode="HTML",
+            )
+        else:
+            await _edit_status("Codex is thinking...")
 
     async def _on_command_output_delta(delta: str, accumulated: str) -> None:
         if reaction_tracker is not None:
@@ -836,6 +934,7 @@ async def _execute_codex_prompt(
         on_turn_completed=_on_turn_completed,
         on_codex_error=_on_codex_error,
         on_error=_on_error,
+        on_render_update=_on_render_update,
     )
 
     try:
@@ -877,6 +976,19 @@ async def _execute_codex_prompt(
                 route,
                 topic_id,
             )
+        # The status / stop-button message has served its purpose once the
+        # final answer is on screen. Delete it now instead of leaving
+        # "Codex completed." visible alongside the result until ``finally``
+        # runs — that transient dupe is confusing on success.
+        if success and stop_msg is not None:
+            try:
+                await bot.delete_message(
+                    chat_id=stop_msg.chat.id,
+                    message_id=stop_msg.message_id,
+                )
+                stop_msg = None  # signal ``finally`` it's already gone
+            except Exception as exc:
+                logger.debug(f"Codex: failed to delete status message after finalize: {exc}")
 
     except Exception as exc:
         logger.exception("Codex: turn failed")

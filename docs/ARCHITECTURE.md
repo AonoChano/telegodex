@@ -1,7 +1,7 @@
 ---
 title: Architecture
 category: architecture
-last_updated: 2026-06-20
+last_updated: 2026-06-26
 relevance: high
 summary: Runtime layers, provider contract, Telegram rendering, and Codex bridge boundaries
 related: [PRODUCT_EXPERIENCE.md, CUSTOM_PROVIDERS.md, RICH_MESSAGES.md, STARTUP.md]
@@ -107,17 +107,19 @@ Telegram User
 
 ### Streaming Output
 
-Turn output is streamed via Telegram Rich Message drafts. The handler accumulates `item/agentMessage/delta` notifications, filters short internal status chatter, flushes draft updates every 200 characters, streams command output deltas into the same visible text, and persists the final result with `sendRichMessage`.
+Turn output is streamed via Telegram Rich Message drafts. Assistant prose stays in the main message body, while command execution and tool output are rendered into default-collapsed `<details><summary>Tool activity</summary>` blocks. Tool output inside those blocks is previewed and can be compacted or summarized so collapsed details do not exceed Telegram's Rich Message limits. The handler flushes rendered Rich Markdown updates on content changes and persists the complete result with `sendRichMessage`.
+
+Legacy fallback previews edit the same real message with `editMessageText.rich_message`. If Telegram refuses the edit, the handler stops preview edits instead of sending a new transcript on every update, then sends one final message and removes the stale preview when possible.
 
 Codex app-server stderr is process-global, so the Telegram handler only shows stderr when it can attribute the line to the current turn or to a just-reported turn failure. These lines are still raw runtime detail: the handler does not reinterpret provider quota, auth, rate-limit, or concurrency messages, it forwards the useful text into the live status and final Rich Message while suppressing duplicate generic `Unknown error` noise.
 
 ### Approval Flow
 
 1. Codex sends `item/commandExecution/requestApproval` or `item/fileChange/requestApproval`.
-2. `_on_codex_server_request` asks `ApprovalHandler` to track the request and invokes the Telegram approval UI sender.
-3. The message is sent to the chat and forum topic matching the Codex thread's reverse lookup.
-4. User clicks a button, and `handle_codex_approval` resolves the `ApprovalHandler`.
-5. `ApprovalHandler` returns the decision to the app-server.
+2. `_on_codex_server_request` asks `ApprovalHandler` to register the pending request, then invokes the Telegram approval UI sender while the request is already resolvable.
+3. The message is sent to the chat and forum topic matching the Codex thread's reverse lookup, with inline buttons built from Codex `availableDecisions` when present.
+4. User clicks a button, and `handle_codex_approval` resolves the `ApprovalHandler`; object-shaped command decisions are returned to Codex unchanged.
+5. `ApprovalHandler` returns the decision to the app-server, or auto-denies if the timeout expires.
 
 ## Documentation Rule
 

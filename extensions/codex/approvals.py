@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 import secrets
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -25,7 +27,7 @@ class _PendingApproval:
 
     request_id: str | int
     event: asyncio.Event = field(default_factory=asyncio.Event)
-    decision: str | None = None  # "acceptOnce" | "acceptForSession" | "deny"
+    decision: Any | None = None
     params: dict[str, Any] = field(default_factory=dict)
 
 
@@ -45,13 +47,14 @@ class ApprovalHandler:
         self._timeout: float = float(settings.codex_approval_timeout)
         # Cache of items by item_id for looking up diffs during approval.
         self._item_cache: dict[str, dict[str, Any]] = {}
-        self._callback_tokens: dict[str, tuple[str | int, str]] = {}
+        self._callback_tokens: dict[str, tuple[str | int, Any]] = {}
         self._approval_callback_tokens: dict[str | int, set[str]] = {}
 
     async def handle_server_request(
         self,
         method: str,
         params: dict[str, Any],
+        on_pending: Callable[[str | int, dict[str, Any]], Any] | None = None,
     ) -> dict[str, Any] | None:
         """Process an incoming server request.
 
@@ -62,13 +65,15 @@ class ApprovalHandler:
         deferred approval responses.
         """
         if method == "item/commandExecution/requestApproval":
-            return await self._handle_command_approval(params)
+            return await self._handle_command_approval(params, on_pending)
         elif method == "item/fileChange/requestApproval":
-            return await self._handle_file_change_approval(params)
+            return await self._handle_file_change_approval(params, on_pending)
         return None  # Unknown server request → let transport send error
 
     async def _handle_command_approval(
-        self, params: dict[str, Any]
+        self,
+        params: dict[str, Any],
+        on_pending: Callable[[str | int, dict[str, Any]], Any] | None = None,
     ) -> dict[str, Any] | None:
         """Handle a command execution approval request.
 
@@ -87,26 +92,12 @@ class ApprovalHandler:
             params=params,
         )
         self._pending[approval_id] = pending
-
-        # Start timeout.
-        timeout_task = asyncio.create_task(self._auto_deny_after(approval_id))
-
-        # Wait for user decision (set by Telegram callback).
-        try:
-            await pending.event.wait()
-        finally:
-            timeout_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await timeout_task
-
-        # Build response.
-        decision = pending.decision or "deny"
-        del self._pending[approval_id]
-        self._clear_callback_tokens(approval_id)
-        return {"decision": decision}
+        return await self._wait_for_decision(approval_id, pending, on_pending)
 
     async def _handle_file_change_approval(
-        self, params: dict[str, Any]
+        self,
+        params: dict[str, Any],
+        on_pending: Callable[[str | int, dict[str, Any]], Any] | None = None,
     ) -> dict[str, Any] | None:
         """Handle a file change approval request."""
         approval_id = params.get("approvalId", params.get("itemId", "unknown"))
@@ -122,7 +113,20 @@ class ApprovalHandler:
             params=params,
         )
         self._pending[approval_id] = pending
+        return await self._wait_for_decision(approval_id, pending, on_pending)
 
+    async def _wait_for_decision(
+        self,
+        approval_id: str | int,
+        pending: _PendingApproval,
+        on_pending: Callable[[str | int, dict[str, Any]], Any] | None = None,
+    ) -> dict[str, Any]:
+        if on_pending is not None:
+            result = on_pending(approval_id, pending.params)
+            if inspect.isawaitable(result):
+                await result
+
+        # Start timeout after the UI hook gets a chance to render the prompt.
         timeout_task = asyncio.create_task(self._auto_deny_after(approval_id))
 
         try:
@@ -132,7 +136,7 @@ class ApprovalHandler:
             with contextlib.suppress(asyncio.CancelledError):
                 await timeout_task
 
-        decision = pending.decision or "deny"
+        decision = pending.decision or "decline"
         del self._pending[approval_id]
         self._clear_callback_tokens(approval_id)
         return {"decision": decision}
@@ -144,7 +148,7 @@ class ApprovalHandler:
     async def resolve(
         self,
         approval_id: str | int,
-        decision: str,
+        decision: Any,
     ) -> bool:
         """Resolve a pending approval with a user decision.
 
@@ -163,7 +167,7 @@ class ApprovalHandler:
         pending.event.set()
         return True
 
-    def resolve_callback_token(self, token: str) -> tuple[str | int, str] | None:
+    def resolve_callback_token(self, token: str) -> tuple[str | int, Any] | None:
         """Return ``(approval_id, decision)`` for a Telegram callback token."""
         return self._callback_tokens.pop(token, None)
 
@@ -176,10 +180,10 @@ class ApprovalHandler:
                 f"ApprovalHandler: auto-denying approval {approval_id} "
                 f"(timeout {self._timeout}s)"
             )
-            pending.decision = "Decline"
+            pending.decision = "decline"
             pending.event.set()
 
-    def _new_callback_token(self, approval_id: str | int, decision: str) -> str:
+    def _new_callback_token(self, approval_id: str | int, decision: Any) -> str:
         """Create a short callback token within Telegram's 64-byte limit."""
         while True:
             token = secrets.token_urlsafe(8)
@@ -188,6 +192,68 @@ class ApprovalHandler:
         self._callback_tokens[token] = (approval_id, decision)
         self._approval_callback_tokens.setdefault(approval_id, set()).add(token)
         return token
+
+    @staticmethod
+    def describe_decision(decision: Any) -> str:
+        """Return a short user-facing label for a Codex approval decision."""
+        if isinstance(decision, str):
+            return {
+                "accept": "Approved",
+                "acceptForSession": "Approved (Session)",
+                "decline": "Denied",
+                "cancel": "Cancelled",
+            }.get(decision, decision)
+        if isinstance(decision, dict):
+            key = next(iter(decision), "approval")
+            if key == "acceptWithExecpolicyAmendment":
+                return "Approved matching commands"
+            if key == "applyNetworkPolicyAmendment":
+                amendment = decision.get(key, {}).get("network_policy_amendment", {})
+                action = amendment.get("action", "apply")
+                host = amendment.get("host")
+                if host:
+                    return f"Network rule: {action} {host}"
+                return f"Network rule: {action}"
+            return key
+        return str(decision)
+
+    @staticmethod
+    def _normalise_available_decisions(available: Any) -> list[Any]:
+        if not available:
+            return ["accept", "acceptForSession", "decline"]
+        if not isinstance(available, list):
+            return ["accept", "acceptForSession", "decline"]
+        return [decision for decision in available if decision]
+
+    @staticmethod
+    def _button_for_decision(decision: Any) -> tuple[str, Any, bool]:
+        """Return ``(label, callback_value, is_decline_family)``."""
+        if isinstance(decision, str):
+            key = decision.lower()
+            decision_map = {
+                "accept": ("Approve", "accept", False),
+                "acceptforsession": ("Approve for session", "acceptForSession", False),
+                "decline": ("Deny", "decline", True),
+                "cancel": ("Cancel turn", "cancel", True),
+            }
+            return decision_map.get(key, (decision.title(), decision, key in {"decline", "cancel"}))
+
+        if isinstance(decision, dict):
+            key = next(iter(decision), "")
+            if key == "acceptWithExecpolicyAmendment":
+                return ("Approve matching commands", decision, False)
+            if key == "applyNetworkPolicyAmendment":
+                amendment = decision.get(key, {}).get("network_policy_amendment", {})
+                action = str(amendment.get("action", "apply")).lower()
+                host = amendment.get("host")
+                label = f"{action.title()} network rule"
+                if host:
+                    label = f"{action.title()} {host}"
+                return (label, decision, action == "deny")
+            return (key or "Decision", decision, "decline" in key.lower() or "deny" in key.lower())
+
+        label = str(decision)
+        return (label, decision, False)
 
     def _clear_callback_tokens(self, approval_id: str | int) -> None:
         tokens = self._approval_callback_tokens.pop(approval_id, set())
@@ -251,32 +317,37 @@ class ApprovalHandler:
     ) -> InlineKeyboardMarkup:
         """Build an inline keyboard with Approve/Deny buttons.
 
-        Adapts to ``available_decisions`` from the app-server when provided.
+        Adapts to ``availableDecisions`` from the app-server when provided.
+        Command approvals may include object decisions such as
+        ``acceptWithExecpolicyAmendment`` and ``applyNetworkPolicyAmendment``;
+        callback tokens store the original decision payload so the JSON-RPC
+        response matches the Codex protocol.
+
+        Buttons are stacked one per row so labels stay full-width.
         """
         params = params or {}
-        available = params.get("availableDecisions", [])
-        if not available:
-            # Default: show all options.
-            available = ["Accept", "AcceptForSession", "Decline"]
+        available = self._normalise_available_decisions(params.get("availableDecisions"))
 
-        decision_map = {
-            "Accept": ("Approve", "Accept"),
-            "AcceptForSession": ("Approve (Session)", "AcceptForSession"),
-            "Decline": ("Deny", "Decline"),
-            "Cancel": ("Cancel", "Cancel"),
-        }
+        approve_buttons: list[InlineKeyboardButton] = []
+        decline_buttons: list[InlineKeyboardButton] = []
 
-        buttons: list[InlineKeyboardButton] = []
         for decision in available:
-            label, callback_value = decision_map.get(
-                decision, (decision, decision.lower())
-            )
+            label, callback_value, is_decline_family = self._button_for_decision(decision)
             token = self._new_callback_token(approval_id, callback_value)
-            buttons.append(
-                InlineKeyboardButton(
-                    text=label,
-                    callback_data=f"codex_approval:{token}",
-                )
+            btn = InlineKeyboardButton(
+                text=label,
+                callback_data=f"codex_approval:{token}",
             )
+            if is_decline_family:
+                decline_buttons.append(btn)
+            else:
+                approve_buttons.append(btn)
 
-        return InlineKeyboardMarkup(inline_keyboard=[buttons])
+        # One button per row so Telegram never truncates labels.
+        rows: list[list[InlineKeyboardButton]] = [
+            [btn] for btn in approve_buttons
+        ] + [
+            [btn] for btn in decline_buttons
+        ]
+
+        return InlineKeyboardMarkup(inline_keyboard=rows)

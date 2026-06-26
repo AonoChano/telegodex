@@ -21,7 +21,7 @@ def test_approval_keyboard_uses_telegram_safe_callback_tokens() -> None:
 
     markup = handler.build_approval_keyboard(
         long_approval_id,
-        {"availableDecisions": ["Accept", "AcceptForSession", "Decline", "Cancel"]},
+        {"availableDecisions": ["accept", "acceptForSession", "decline", "cancel"]},
     )
 
     callback_data = _keyboard_callback_data(markup)
@@ -31,12 +31,55 @@ def test_approval_keyboard_uses_telegram_safe_callback_tokens() -> None:
     assert all(long_approval_id not in data for data in callback_data)
 
 
+def test_approval_keyboard_supports_object_decisions() -> None:
+    handler = ApprovalHandler()
+    object_decision = {
+        "acceptWithExecpolicyAmendment": {
+            "execpolicy_amendment": ["read-only-safe-command"],
+        },
+    }
+
+    markup = handler.build_approval_keyboard(
+        "approval-object",
+        {"availableDecisions": [object_decision, "decline"]},
+    )
+
+    labels = [button.text for row in markup.inline_keyboard for button in row]
+    assert labels == ["Approve matching commands", "Deny"]
+    token = markup.inline_keyboard[0][0].callback_data.split(":", 1)[1]
+    assert handler.resolve_callback_token(token) == ("approval-object", object_decision)
+
+
+@pytest.mark.asyncio
+async def test_command_approval_invokes_pending_hook_after_registration() -> None:
+    handler = ApprovalHandler()
+    handler._timeout = 0
+    seen: list[str | int] = []
+
+    async def on_pending(approval_id: str | int, params: dict) -> None:
+        assert approval_id in handler._pending
+        assert params["command"] == "Get-Date -Format o"
+        seen.append(approval_id)
+
+    result = await handler.handle_server_request(
+        "item/commandExecution/requestApproval",
+        {
+            "approvalId": "approval-pending",
+            "command": "Get-Date -Format o",
+        },
+        on_pending,
+    )
+
+    assert seen == ["approval-pending"]
+    assert result == {"decision": "decline"}
+
+
 @pytest.mark.asyncio
 async def test_codex_approval_callback_resolves_token_via_orchestrator() -> None:
     handler = ApprovalHandler()
     markup = handler.build_approval_keyboard(
         "approval-1",
-        {"availableDecisions": ["AcceptForSession"]},
+        {"availableDecisions": ["acceptForSession"]},
     )
     callback_data = _keyboard_callback_data(markup)[0]
     message = SimpleNamespace(
@@ -55,9 +98,43 @@ async def test_codex_approval_callback_resolves_token_via_orchestrator() -> None
 
     await handle_codex_approval(callback, orchestrator)
 
-    resolve.assert_awaited_once_with("approval-1", "AcceptForSession")
+    resolve.assert_awaited_once_with("approval-1", "acceptForSession")
     message.edit_text.assert_awaited_once()
     callback.answer.assert_awaited_once_with("Approved (Session)")
+
+
+@pytest.mark.asyncio
+async def test_codex_approval_callback_resolves_object_decision() -> None:
+    handler = ApprovalHandler()
+    object_decision = {
+        "acceptWithExecpolicyAmendment": {
+            "execpolicy_amendment": ["Get-Date"],
+        },
+    }
+    markup = handler.build_approval_keyboard(
+        "approval-object-callback",
+        {"availableDecisions": [object_decision]},
+    )
+    callback_data = _keyboard_callback_data(markup)[0]
+    message = SimpleNamespace(
+        text="Approve matching commands",
+        caption=None,
+        edit_text=AsyncMock(),
+    )
+    callback = SimpleNamespace(
+        data=callback_data,
+        message=message,
+        answer=AsyncMock(),
+    )
+    orchestrator = SimpleNamespace(approval_handler=handler)
+    resolve = AsyncMock(return_value=True)
+    handler.resolve = resolve  # type: ignore[method-assign]
+
+    await handle_codex_approval(callback, orchestrator)
+
+    resolve.assert_awaited_once_with("approval-object-callback", object_decision)
+    message.edit_text.assert_awaited_once()
+    callback.answer.assert_awaited_once_with("Approved matching commands")
 
 
 @pytest.mark.asyncio
@@ -86,5 +163,5 @@ async def test_command_approval_auto_deny_does_not_drop_pending_before_waiter_re
         }
     )
 
-    assert result == {"decision": "Decline"}
+    assert result == {"decision": "decline"}
     assert "approval-timeout" not in handler._pending
