@@ -100,43 +100,46 @@ def print_banner() -> None:
     """Print the startup banner."""
     blue = "\033[38;2;34;158;217m"
     white = "\033[97m"
-    dim = "\033[2m"
     reset = "\033[0m"
     repo_url = "https://github.com/AonoChano/telegodex"
     repo_label = "github.com/AonoChano/telegodex"
     repo_link = _terminal_link(repo_label, repo_url)
     version = _project_version()
-    lines = [
-        f"{blue}TELEGODEX{reset}",
-        "Telegram Workbench for AI agents",
-        "",
-        f"Version : v{version}",
-        f"Repo    : {repo_link}",
-        "Runtime : Telegram + Rich Messages + Codex app-server",
-        "",
-        f"{dim}Startup phases{reset}",
-        "  1. Preflight - validate local configuration only",
-        "  2. Runtime   - initialize DB, Telegram, providers, Codex",
+    logo_lines = [
+        "   ████████╗███████╗██╗     ███████╗ ██████╗  ██████╗ ██████╗ ███████╗██╗  ██╗   ",
+        "   ╚══██╔══╝██╔════╝██║     ██╔════╝██╔════╝ ██╔═══██╗██╔══██╗██╔════╝╚██╗██╔╝   ",
+        "      ██║   █████╗  ██║     █████╗  ██║  ███╗██║   ██║██║  ██║█████╗   ╚███╔╝    ",
+        "      ██║   ██╔══╝  ██║     ██╔══╝  ██║   ██║██║   ██║██║  ██║██╔══╝   ██╔██╗    ",
+        "      ██║   ███████╗███████╗███████╗╚██████╔╝╚██████╔╝██████╔╝███████╗██╔╝ ██╗   ",
+        "      ╚═╝   ╚══════╝╚══════╝╚══════╝ ╚═════╝  ╚═════╝ ╚═════╝ ╚══════╝╚═╝  ╚═╝   ",
     ]
+    tagline = "       AI Workbench Telegram Bot   |   Codex, ClaudeCode, and more"
+    repo_line = f"  {repo_label}                  v{version}"
     ansi_pattern = re.compile(r"\033\]8;;.*?\033\\|\033\]8;;\033\\|\033\[[0-9;]*m")
 
     def visible_len(content: str) -> int:
         plain = content.replace(repo_link, repo_label)
         return len(ansi_pattern.sub("", plain))
 
-    width = max(64, max(visible_len(line) for line in lines))
+    width = max(81, max(visible_len(line) for line in logo_lines + [tagline, repo_line]))
 
     def box_line(content: str = "") -> str:
         padding = " " * max(width - visible_len(content), 0)
-        return f"{white}|{reset} {content}{padding} {white}|{reset}"
+        return f"{white}║{reset}{content}{padding}{white}║{reset}"
 
     print()
-    print(f"{white}+{'-' * (width + 2)}+{reset}")
-    for line in lines:
-        print(box_line(line))
-    print(f"{white}+{'-' * (width + 2)}+{reset}")
+    print(f"{white}╔{'═' * width}╗{reset}")
+    print(box_line())
+    for index, line in enumerate(logo_lines):
+        color = blue if index % 2 == 0 else white
+        print(box_line(f"{color}{line}{reset}"))
+    print(box_line())
+    print(box_line(f"{white}{tagline}{reset}"))
+    print(box_line())
+    print(box_line(f"{blue}  {repo_link}{reset}{white}                  v{version}{reset}"))
+    print(box_line())
+    print(f"{white}╚{'═' * width}╝{reset}")
     print()
-
 
 async def main() -> None:
     """Run the startup flow."""
