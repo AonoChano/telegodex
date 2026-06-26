@@ -87,7 +87,6 @@ def _extract_codex_error_notification(params: dict[str, Any]) -> tuple[str, str 
     return message_text, detail_text, bool(params.get("willRetry", False)), str(codex_error_info or "")
 
 
-
 def _markdown_code_fence(text: str, language: str = "text") -> str:
     """Return a Markdown fence that can contain *text* safely."""
     fence = "```"
@@ -326,9 +325,7 @@ class _CodexTurnRenderer:
                     )
                     command_blocks.append(_markdown_code_fence(output, "text"))
                 else:
-                    command_blocks.append(
-                        f"_Tool output omitted for Telegram ({len(command.output)} chars)._"
-                    )
+                    command_blocks.append(f"_Tool output omitted for Telegram ({len(command.output)} chars)._")
 
             if command.exit_code is not None:
                 try:
@@ -497,6 +494,7 @@ class Orchestrator:
         if method in (
             "item/commandExecution/requestApproval",
             "item/fileChange/requestApproval",
+            "item/permissions/requestApproval",
         ):
 
             async def send_approval_ui(
@@ -514,10 +512,7 @@ class Orchestrator:
                     # still need to await the handler so the turn can auto-deny.
                     # But silently swallowing makes "button never appeared"
                     # impossible to diagnose — log it.
-                    logger.exception(
-                        f"approval UI sender failed for {method}; "
-                        f"turn will auto-deny after timeout"
-                    )
+                    logger.exception(f"approval UI sender failed for {method}; turn will auto-deny after timeout")
 
             return await self._approval_handler.handle_server_request(
                 method,
@@ -1028,7 +1023,9 @@ class Orchestrator:
 
                     if status == "failed":
                         error = turn.get("error", {})
-                        error_msg, additional_details, _, codex_err = _extract_codex_error_notification({"error": error})
+                        error_msg, additional_details, _, codex_err = _extract_codex_error_notification(
+                            {"error": error}
+                        )
                         block = f"\n\n**Error:** {error_msg}" + (f" (`{codex_err}`)" if codex_err else "")
                         if additional_details and additional_details != error_msg:
                             block += f"\n\n{additional_details}"

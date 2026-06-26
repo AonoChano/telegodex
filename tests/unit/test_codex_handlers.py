@@ -374,6 +374,51 @@ async def test_approval_ui_sender_sends_inline_keyboard_to_topic(monkeypatch: py
     assert kwargs["reply_markup"].inline_keyboard[1][0].text == "Deny"
 
 
+@pytest.mark.asyncio
+async def test_approval_ui_sender_sends_permissions_prompt_to_topic(monkeypatch: pytest.MonkeyPatch) -> None:
+    bot = AsyncMock()
+    session_key = SessionKey.from_telegram_message(100, 222)
+    session_manager = SimpleNamespace(
+        reverse_lookup=MagicMock(return_value=session_key),
+        get_topic_id=MagicMock(return_value=222),
+    )
+    approval_handler = ApprovalHandler()
+    orchestrator = SimpleNamespace(
+        session_manager=session_manager,
+        approval_handler=approval_handler,
+    )
+
+    monkeypatch.setattr(codex, "_current_bot", bot)
+    monkeypatch.setattr(codex, "_global_orch", orchestrator)
+    monkeypatch.setattr(codex, "_db_session_factory", None)
+
+    await codex._approval_ui_sender(
+        "item/permissions/requestApproval",
+        {
+            "threadId": "thread-abcdef",
+            "itemId": "perm-telegram",
+            "cwd": "C:/repo",
+            "reason": "Need workspace write",
+            "permissions": {
+                "network": {"enabled": True},
+                "fileSystem": {"write": ["C:/repo/out"]},
+            },
+        },
+    )
+
+    bot.send_message.assert_awaited_once()
+    _, kwargs = bot.send_message.await_args
+    assert kwargs["chat_id"] == 100
+    assert kwargs["message_thread_id"] == 222
+    assert kwargs["parse_mode"] == "Markdown"
+    assert "additional permissions" in kwargs["text"]
+    assert "Need workspace write" in kwargs["text"]
+    assert "C:/repo/out" in kwargs["text"]
+    assert kwargs["reply_markup"].inline_keyboard[0][0].text == "Approve"
+    assert kwargs["reply_markup"].inline_keyboard[1][0].text == "Approve for session"
+    assert kwargs["reply_markup"].inline_keyboard[2][0].text == "Deny"
+
+
 def test_format_command_status_escapes_html_command() -> None:
     status = codex._format_command_status(command='echo "<ok>" & done')
 
@@ -475,6 +520,7 @@ async def test_execute_codex_prompt_pushes_render_updates_to_draft(monkeypatch: 
     assert "<details><summary>Tool activity</summary>" in pushed[0]
     remove_stderr_listener.assert_called_once()
 
+
 @pytest.mark.asyncio
 async def test_execute_codex_prompt_updates_status_on_streaming_error(monkeypatch: pytest.MonkeyPatch) -> None:
     bot = AsyncMock()
@@ -520,10 +566,7 @@ async def test_execute_codex_prompt_updates_status_when_stderr_arrives_after_unk
     context = SimpleNamespace(session=AsyncMock())
     remove_stderr_listener = MagicMock()
     stderr_listener = None
-    raw_stderr = (
-        "Error: unexpected status 403 Forbidden: "
-        "Only one Codex conversation can run at a time"
-    )
+    raw_stderr = "Error: unexpected status 403 Forbidden: Only one Codex conversation can run at a time"
     session_manager = SimpleNamespace(
         active_turn_count=MagicMock(return_value=0),
         is_turn_active=MagicMock(return_value=False),

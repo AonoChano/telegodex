@@ -99,7 +99,7 @@ Telegram User
 - **CodexDaemon**: Manages the `codex app-server` subprocess lifecycle with auto-start, restart on crash, stderr logging, and graceful shutdown.
 - **JsonRpcTransport**: Implements newline-delimited JSON-RPC over stdio. Handles request/response matching, server notifications, and server requests.
 - **CodexSessionManager**: Maps Telegram `SessionKey` (`transport`, `chat_id`, `topic_id`) to Codex `threadId`, persisted via `Conversation.codex_thread_id` and the Codex provider bucket. Supports session creation, resume, topic binding, fork, and shell command execution.
-- **ApprovalHandler**: Converts `item/commandExecution/requestApproval` and `item/fileChange/requestApproval` server requests into Telegram inline button messages with Approve/Deny options. Auto-denies after configurable timeout.
+- **ApprovalHandler**: Converts `item/commandExecution/requestApproval`, `item/fileChange/requestApproval`, and `item/permissions/requestApproval` server requests into Telegram inline button messages with Approve/Deny options. Command/file approvals return Codex decisions; permissions approvals return granted permission subsets plus turn/session scope. Auto-denies after configurable timeout.
 - **Instruction Support**: `/codex /skill` lists available skills, `/codex !command` executes shell commands, `/codex @path` reads directory listings.
 - **Telegram Controls**: `bot/handlers/toolbar.py` owns temporary ReplyKeyboard controls while a Codex turn or Shell process is active. Slash commands such as `/stop`, `/live`, `/last`, and `/status` remain available without the keyboard.
 - **MessageBus**: `core/bus/` carries background results through explicit delivery modes and can inject eligible updates back into an active session.
@@ -115,11 +115,11 @@ Codex app-server stderr is process-global, so the Telegram handler only shows st
 
 ### Approval Flow
 
-1. Codex sends `item/commandExecution/requestApproval` or `item/fileChange/requestApproval`.
+1. Codex sends `item/commandExecution/requestApproval`, `item/fileChange/requestApproval`, or `item/permissions/requestApproval`.
 2. `_on_codex_server_request` asks `ApprovalHandler` to register the pending request, then invokes the Telegram approval UI sender while the request is already resolvable.
 3. The message is sent to the chat and forum topic matching the Codex thread's reverse lookup, with inline buttons built from Codex `availableDecisions` when present.
-4. User clicks a button, and `handle_codex_approval` resolves the `ApprovalHandler`; object-shaped command decisions are returned to Codex unchanged. The temporary approval prompt is then deleted when possible, or compacted to a one-line handled status if Telegram refuses deletion.
-5. `ApprovalHandler` returns the decision to the app-server, or auto-denies if the timeout expires.
+4. User clicks a button, and `handle_codex_approval` resolves the `ApprovalHandler`; object-shaped command decisions are returned to Codex unchanged, while permissions approvals return the requested granted subset with `turn` or `session` scope. The temporary approval prompt is then deleted when possible, or compacted to a one-line handled status if Telegram refuses deletion.
+5. `ApprovalHandler` returns the protocol-specific response to the app-server, or auto-denies if the timeout expires. Permission auto-deny returns an empty permissions grant scoped to the current turn.
 
 ## Documentation Rule
 

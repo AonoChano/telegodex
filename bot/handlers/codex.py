@@ -148,9 +148,7 @@ async def _approval_ui_sender(method: str, params: dict[str, Any]) -> None:
     visible clue, which is the original "button never appeared" bug.
     """
     if _current_bot is None or _global_orch is None:
-        logger.warning(
-            f"approval UI skipped (no bot/orchestrator wired): method={method}"
-        )
+        logger.warning(f"approval UI skipped (no bot/orchestrator wired): method={method}")
         return
     sm = _global_orch.session_manager
     if sm is None:
@@ -167,20 +165,20 @@ async def _approval_ui_sender(method: str, params: dict[str, Any]) -> None:
                     session_key = await sm.reverse_lookup_db_fallback(thread_id, db)
                     break
             except Exception:
-                logger.exception(
-                    f"approval UI DB fallback failed for thread={thread_id}"
-                )
+                logger.exception(f"approval UI DB fallback failed for thread={thread_id}")
         if session_key is None:
-            logger.warning(
-                f"approval UI skipped (thread {thread_id} not resolvable "
-                f"in memory or DB): method={method}"
-            )
+            logger.warning(f"approval UI skipped (thread {thread_id} not resolvable in memory or DB): method={method}")
             return
     approval_id = params.get("approvalId", params.get("itemId", "unknown"))
     if method == "item/commandExecution/requestApproval":
         text = _global_orch.approval_handler.format_command_approval_markdown(approval_id, params)
-    else:
+    elif method == "item/fileChange/requestApproval":
         text = _global_orch.approval_handler.format_file_change_approval_markdown(approval_id, params)
+    elif method == "item/permissions/requestApproval":
+        text = _global_orch.approval_handler.format_permissions_approval_markdown(approval_id, params)
+    else:
+        logger.warning(f"approval UI skipped (unsupported method): method={method}")
+        return
     keyboard = _global_orch.approval_handler.build_approval_keyboard(approval_id, params)
     topic_id = sm.get_topic_id(thread_id) or session_key.topic_id
     # Approvals are synchronous gates: if the message never renders, the user
@@ -197,9 +195,7 @@ async def _approval_ui_sender(method: str, params: dict[str, Any]) -> None:
             parse_mode="Markdown",
         )
     except Exception as exc:
-        logger.warning(
-            f"Codex: approval Markdown send failed, retrying as plain text: {exc}"
-        )
+        logger.warning(f"Codex: approval Markdown send failed, retrying as plain text: {exc}")
         try:
             await _current_bot.send_message(
                 chat_id=session_key.chat_id,
@@ -208,9 +204,7 @@ async def _approval_ui_sender(method: str, params: dict[str, Any]) -> None:
                 message_thread_id=topic_id,
             )
         except Exception as exc2:
-            logger.warning(
-                f"Codex: failed to send approval message to {session_key}: {exc2}"
-            )
+            logger.warning(f"Codex: failed to send approval message to {session_key}: {exc2}")
 
 
 def _bot_token() -> str:

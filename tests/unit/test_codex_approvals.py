@@ -75,6 +75,110 @@ async def test_command_approval_invokes_pending_hook_after_registration() -> Non
 
 
 @pytest.mark.asyncio
+async def test_permissions_approval_accept_grants_requested_permissions_turn_scope() -> None:
+    handler = ApprovalHandler()
+    seen: list[str | int] = []
+    params = {
+        "itemId": "perm-1",
+        "cwd": "C:/repo",
+        "environmentId": "local",
+        "reason": "Need workspace write",
+        "permissions": {
+            "network": {"enabled": True},
+            "fileSystem": {
+                "read": ["C:/repo"],
+                "write": ["C:/repo/out"],
+            },
+        },
+    }
+
+    async def on_pending(approval_id: str | int, pending_params: dict) -> None:
+        assert approval_id in handler._pending
+        assert pending_params is params
+        seen.append(approval_id)
+        await handler.resolve(approval_id, "accept")
+
+    result = await handler.handle_server_request(
+        "item/permissions/requestApproval",
+        params,
+        on_pending,
+    )
+
+    assert seen == ["perm-1"]
+    assert result == {
+        "permissions": {
+            "network": {"enabled": True},
+            "fileSystem": {
+                "read": ["C:/repo"],
+                "write": ["C:/repo/out"],
+            },
+        },
+        "scope": "turn",
+    }
+
+
+@pytest.mark.asyncio
+async def test_permissions_approval_accept_for_session_sets_session_scope() -> None:
+    handler = ApprovalHandler()
+    params = {
+        "itemId": "perm-session",
+        "permissions": {"network": {"enabled": True}},
+    }
+
+    async def on_pending(approval_id: str | int, _params: dict) -> None:
+        await handler.resolve(approval_id, "acceptForSession")
+
+    result = await handler.handle_server_request(
+        "item/permissions/requestApproval",
+        params,
+        on_pending,
+    )
+
+    assert result == {
+        "permissions": {"network": {"enabled": True}},
+        "scope": "session",
+    }
+
+
+@pytest.mark.asyncio
+async def test_permissions_approval_auto_deny_returns_empty_turn_scope() -> None:
+    handler = ApprovalHandler()
+    handler._timeout = 0
+
+    result = await handler.handle_server_request(
+        "item/permissions/requestApproval",
+        {
+            "itemId": "perm-timeout",
+            "permissions": {"network": {"enabled": True}},
+        },
+    )
+
+    assert result == {"permissions": {}, "scope": "turn"}
+
+
+def test_format_permissions_approval_markdown_describes_request() -> None:
+    handler = ApprovalHandler()
+
+    text = handler.format_permissions_approval_markdown(
+        "perm-format",
+        {
+            "cwd": "C:/repo",
+            "environmentId": "local",
+            "reason": "Need workspace write",
+            "permissions": {
+                "network": {"enabled": True},
+                "fileSystem": {"write": ["C:/repo/out"]},
+            },
+        },
+    )
+
+    assert "additional permissions" in text
+    assert "Need workspace write" in text
+    assert "C:/repo/out" in text
+    assert "Network access: enabled" in text
+
+
+@pytest.mark.asyncio
 async def test_codex_approval_callback_resolves_token_via_orchestrator() -> None:
     handler = ApprovalHandler()
     markup = handler.build_approval_keyboard(

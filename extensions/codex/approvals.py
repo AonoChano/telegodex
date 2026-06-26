@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import inspect
+import json
 import secrets
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -29,6 +30,7 @@ class _PendingApproval:
     event: asyncio.Event = field(default_factory=asyncio.Event)
     decision: Any | None = None
     params: dict[str, Any] = field(default_factory=dict)
+    response_mode: str = "decision"
 
 
 class ApprovalHandler:
@@ -68,6 +70,8 @@ class ApprovalHandler:
             return await self._handle_command_approval(params, on_pending)
         elif method == "item/fileChange/requestApproval":
             return await self._handle_file_change_approval(params, on_pending)
+        elif method == "item/permissions/requestApproval":
+            return await self._handle_permissions_approval(params, on_pending)
         return None  # Unknown server request → let transport send error
 
     async def _handle_command_approval(
@@ -82,10 +86,7 @@ class ApprovalHandler:
         approval_id = params.get("approvalId", params.get("itemId", "unknown"))
         command = params.get("command", "unknown command")
 
-        logger.info(
-            f"ApprovalHandler: command approval "
-            f"id={approval_id} cmd={command}"
-        )
+        logger.info(f"ApprovalHandler: command approval id={approval_id} cmd={command}")
 
         pending = _PendingApproval(
             request_id=approval_id,
@@ -103,14 +104,30 @@ class ApprovalHandler:
         approval_id = params.get("approvalId", params.get("itemId", "unknown"))
         path = params.get("path", "unknown file")
 
-        logger.info(
-            f"ApprovalHandler: file change approval "
-            f"id={approval_id} path={path}"
-        )
+        logger.info(f"ApprovalHandler: file change approval id={approval_id} path={path}")
 
         pending = _PendingApproval(
             request_id=approval_id,
             params=params,
+        )
+        self._pending[approval_id] = pending
+        return await self._wait_for_decision(approval_id, pending, on_pending)
+
+    async def _handle_permissions_approval(
+        self,
+        params: dict[str, Any],
+        on_pending: Callable[[str | int, dict[str, Any]], Any] | None = None,
+    ) -> dict[str, Any] | None:
+        """Handle an additional-permissions approval request."""
+        approval_id = params.get("approvalId", params.get("itemId", "unknown"))
+        cwd = params.get("cwd", "")
+
+        logger.info(f"ApprovalHandler: permissions approval id={approval_id} cwd={cwd}")
+
+        pending = _PendingApproval(
+            request_id=approval_id,
+            params=params,
+            response_mode="permissions",
         )
         self._pending[approval_id] = pending
         return await self._wait_for_decision(approval_id, pending, on_pending)
@@ -139,6 +156,8 @@ class ApprovalHandler:
         decision = pending.decision or "decline"
         del self._pending[approval_id]
         self._clear_callback_tokens(approval_id)
+        if pending.response_mode == "permissions":
+            return self._permissions_response_from_decision(decision, pending.params)
         return {"decision": decision}
 
     def cache_item(self, item_id: str, item: dict[str, Any]) -> None:
@@ -157,10 +176,7 @@ class ApprovalHandler:
         """
         pending = self._pending.get(approval_id)
         if pending is None:
-            logger.warning(
-                f"ApprovalHandler: resolve called for unknown/timed-out "
-                f"approval {approval_id}"
-            )
+            logger.warning(f"ApprovalHandler: resolve called for unknown/timed-out approval {approval_id}")
             return False
 
         pending.decision = decision
@@ -176,10 +192,7 @@ class ApprovalHandler:
         await asyncio.sleep(self._timeout)
         pending = self._pending.get(approval_id)
         if pending is not None and not pending.event.is_set():
-            logger.warning(
-                f"ApprovalHandler: auto-denying approval {approval_id} "
-                f"(timeout {self._timeout}s)"
-            )
+            logger.warning(f"ApprovalHandler: auto-denying approval {approval_id} (timeout {self._timeout}s)")
             pending.decision = "decline"
             pending.event.set()
 
@@ -216,6 +229,67 @@ class ApprovalHandler:
                 return f"Network rule: {action}"
             return key
         return str(decision)
+
+    @classmethod
+    def _permissions_response_from_decision(
+        cls,
+        decision: Any,
+        params: dict[str, Any],
+    ) -> dict[str, Any]:
+        if isinstance(decision, dict) and "permissions" in decision:
+            scope = decision.get("scope", "turn")
+            if scope not in {"turn", "session"}:
+                scope = "turn"
+            response = {
+                "permissions": cls._normalise_permission_profile(decision.get("permissions")),
+                "scope": scope,
+            }
+            if "strictAutoReview" in decision:
+                response["strictAutoReview"] = bool(decision["strictAutoReview"])
+            return response
+
+        if decision == "accept":
+            return {
+                "permissions": cls._requested_permissions(params),
+                "scope": "turn",
+            }
+        if decision == "acceptForSession":
+            return {
+                "permissions": cls._requested_permissions(params),
+                "scope": "session",
+            }
+        return cls._empty_permissions_response()
+
+    @classmethod
+    def _requested_permissions(cls, params: dict[str, Any]) -> dict[str, Any]:
+        return cls._normalise_permission_profile(params.get("permissions"))
+
+    @classmethod
+    def _normalise_permission_profile(cls, permissions: Any) -> dict[str, Any]:
+        if not isinstance(permissions, dict):
+            return {}
+
+        granted: dict[str, Any] = {}
+        for key in ("network", "fileSystem"):
+            value = permissions.get(key)
+            if value is None:
+                continue
+            cleaned = cls._clone_without_none(value)
+            if cleaned != {}:
+                granted[key] = cleaned
+        return granted
+
+    @classmethod
+    def _clone_without_none(cls, value: Any) -> Any:
+        if isinstance(value, dict):
+            return {key: cls._clone_without_none(item) for key, item in value.items() if item is not None}
+        if isinstance(value, list):
+            return [cls._clone_without_none(item) for item in value]
+        return value
+
+    @staticmethod
+    def _empty_permissions_response() -> dict[str, Any]:
+        return {"permissions": {}, "scope": "turn"}
 
     @staticmethod
     def _normalise_available_decisions(available: Any) -> list[Any]:
@@ -310,6 +384,66 @@ class ApprovalHandler:
 
         return "\n".join(lines)
 
+    def format_permissions_approval_markdown(
+        self,
+        approval_id: str | int,
+        params: dict[str, Any],
+    ) -> str:
+        """Format an additional-permissions approval as Rich Markdown."""
+        cwd = params.get("cwd", "")
+        environment_id = params.get("environmentId")
+        reason = params.get("reason", "")
+        permissions = self._normalise_permission_profile(params.get("permissions"))
+
+        lines = ["**Codex wants additional permissions:**", ""]
+        if cwd:
+            lines.append(f"Working directory: `{cwd}`")
+        if environment_id:
+            lines.append(f"Environment: `{environment_id}`")
+        if reason:
+            lines.append(f"Reason: {reason}")
+
+        summary = self._format_permission_summary(permissions)
+        if summary:
+            if len(lines) > 2:
+                lines.append("")
+            lines.extend(summary)
+
+        lines.extend(
+            [
+                "",
+                "Requested permission payload:",
+                f"```json\n{json.dumps(permissions, ensure_ascii=False, indent=2)}\n```",
+            ]
+        )
+        return "\n".join(lines)
+
+    @staticmethod
+    def _format_permission_summary(permissions: dict[str, Any]) -> list[str]:
+        lines: list[str] = []
+        network = permissions.get("network")
+        if isinstance(network, dict):
+            enabled = network.get("enabled")
+            if enabled is True:
+                lines.append("Network access: enabled")
+            elif enabled is False:
+                lines.append("Network access: disabled")
+            else:
+                lines.append("Network access: requested")
+
+        file_system = permissions.get("fileSystem")
+        if isinstance(file_system, dict):
+            read_roots = file_system.get("read") or []
+            write_roots = file_system.get("write") or []
+            entries = file_system.get("entries") or []
+            for root in read_roots:
+                lines.append(f"File read: `{root}`")
+            for root in write_roots:
+                lines.append(f"File write: `{root}`")
+            if entries:
+                lines.append(f"File system entries: {len(entries)} requested")
+        return lines
+
     def build_approval_keyboard(
         self,
         approval_id: str | int,
@@ -344,10 +478,6 @@ class ApprovalHandler:
                 approve_buttons.append(btn)
 
         # One button per row so Telegram never truncates labels.
-        rows: list[list[InlineKeyboardButton]] = [
-            [btn] for btn in approve_buttons
-        ] + [
-            [btn] for btn in decline_buttons
-        ]
+        rows: list[list[InlineKeyboardButton]] = [[btn] for btn in approve_buttons] + [[btn] for btn in decline_buttons]
 
         return InlineKeyboardMarkup(inline_keyboard=rows)
