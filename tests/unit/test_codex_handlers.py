@@ -374,6 +374,16 @@ async def test_approval_ui_sender_sends_inline_keyboard_to_topic(monkeypatch: py
     assert kwargs["reply_markup"].inline_keyboard[1][0].text == "Deny"
 
 
+def test_format_command_status_escapes_html_command() -> None:
+    status = codex._format_command_status(command='echo "<ok>" & done')
+
+    assert status.startswith("Codex is running a command...")
+    assert "<code>" in status
+    assert "&lt;ok&gt;" in status
+    assert "&amp;" in status
+    assert '"<ok>" &' not in status
+
+
 def test_format_collected_stderr_deduplicates_in_order() -> None:
     assert codex._format_collected_stderr(
         [

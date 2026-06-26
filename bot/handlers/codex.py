@@ -225,6 +225,24 @@ def _trim_status_text(text: str, limit: int = STATUS_TEXT_LIMIT) -> str:
     return normalized[: limit - 1].rstrip() + "..."
 
 
+def _format_command_status(
+    *,
+    command: Any | None = None,
+    output_preview: str | None = None,
+) -> str:
+    """Return a short HTML-safe command status message."""
+    title = "Codex is running a command..."
+    if command:
+        preview = _trim_status_text(str(command), 720)
+        if preview:
+            return f"{title}\n<code>{html.escape(preview)}</code>"
+    if output_preview:
+        preview = _trim_status_text(output_preview, 360)
+        if preview:
+            return f"{title}\n<pre>{html.escape(preview)}</pre>"
+    return title
+
+
 def _is_codex_retry_status_line(text: str) -> bool:
     """Return whether a daemon stderr line is useful live turn status."""
     lowered = text.lower()
@@ -861,16 +879,21 @@ async def _execute_codex_prompt(
     async def _on_command_output_delta(delta: str, accumulated: str) -> None:
         if reaction_tracker is not None:
             await reaction_tracker.on_codex_event("item/commandExecution/outputDelta")
-        preview = _trim_status_text(accumulated, 360)
-        await _edit_status(f"Codex is running a command...\n{preview}" if preview else "Codex is running a command...")
+        await _edit_status(
+            _format_command_status(output_preview=accumulated),
+            parse_mode="HTML",
+        )
 
     async def _on_item_started(item_type: str, item: dict[str, Any]) -> None:
         if reaction_tracker is not None:
             await reaction_tracker.on_codex_event("item/started", item_type)
         if item_type == "commandExecution":
             command = item.get("command", "")
-            suffix = f"\n{command}" if command else ""
-            await _edit_status(f"Codex is running a command...{suffix}", force=True)
+            await _edit_status(
+                _format_command_status(command=command),
+                force=True,
+                parse_mode="HTML",
+            )
         elif item_type == "reasoning":
             await _edit_status("Codex is thinking...", force=True)
 

@@ -196,14 +196,22 @@ async def handle_codex_approval(callback: CallbackQuery, orchestrator: Any):
     if resolved:
         decision_label = orchestrator.approval_handler.describe_decision(decision)
         try:
-            # Edit the approval message to remove buttons and show result.
-            original_text = callback.message.text or callback.message.caption or ""
-            await callback.message.edit_text(
-                f"{original_text}\n\n**Result: {decision_label}**",
-                reply_markup=None,
-            )
+            await callback.answer(f"{decision_label}")
         except Exception as exc:
-            logger.warning(f"Failed to edit approval message: {exc}")
-        await callback.answer(f"{decision_label}")
+            logger.debug(f"Failed to answer approval callback: {exc}")
+        try:
+            # Approval prompts are temporary gates. The final Codex message will
+            # include the executed or rejected tool activity, so remove this
+            # prompt instead of leaving a duplicate command block in the topic.
+            await callback.message.delete()
+        except Exception as exc:
+            logger.debug(f"Failed to delete approval message, compacting it: {exc}")
+            try:
+                await callback.message.edit_text(
+                    f"Codex approval handled: {decision_label}",
+                    reply_markup=None,
+                )
+            except Exception as edit_exc:
+                logger.warning(f"Failed to compact approval message: {edit_exc}")
     else:
         await callback.answer("Approval already timed out", show_alert=True)

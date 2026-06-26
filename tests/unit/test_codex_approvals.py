@@ -86,6 +86,7 @@ async def test_codex_approval_callback_resolves_token_via_orchestrator() -> None
         text="Approve this",
         caption=None,
         edit_text=AsyncMock(),
+        delete=AsyncMock(),
     )
     callback = SimpleNamespace(
         data=callback_data,
@@ -99,7 +100,8 @@ async def test_codex_approval_callback_resolves_token_via_orchestrator() -> None
     await handle_codex_approval(callback, orchestrator)
 
     resolve.assert_awaited_once_with("approval-1", "acceptForSession")
-    message.edit_text.assert_awaited_once()
+    message.delete.assert_awaited_once()
+    message.edit_text.assert_not_awaited()
     callback.answer.assert_awaited_once_with("Approved (Session)")
 
 
@@ -120,6 +122,7 @@ async def test_codex_approval_callback_resolves_object_decision() -> None:
         text="Approve matching commands",
         caption=None,
         edit_text=AsyncMock(),
+        delete=AsyncMock(),
     )
     callback = SimpleNamespace(
         data=callback_data,
@@ -133,8 +136,43 @@ async def test_codex_approval_callback_resolves_object_decision() -> None:
     await handle_codex_approval(callback, orchestrator)
 
     resolve.assert_awaited_once_with("approval-object-callback", object_decision)
-    message.edit_text.assert_awaited_once()
+    message.delete.assert_awaited_once()
+    message.edit_text.assert_not_awaited()
     callback.answer.assert_awaited_once_with("Approved matching commands")
+
+
+@pytest.mark.asyncio
+async def test_codex_approval_callback_compacts_message_when_delete_fails() -> None:
+    handler = ApprovalHandler()
+    markup = handler.build_approval_keyboard(
+        "approval-delete-fallback",
+        {"availableDecisions": ["accept"]},
+    )
+    callback_data = _keyboard_callback_data(markup)[0]
+    message = SimpleNamespace(
+        text="Approve this",
+        caption=None,
+        edit_text=AsyncMock(),
+        delete=AsyncMock(side_effect=RuntimeError("delete failed")),
+    )
+    callback = SimpleNamespace(
+        data=callback_data,
+        message=message,
+        answer=AsyncMock(),
+    )
+    orchestrator = SimpleNamespace(approval_handler=handler)
+    resolve = AsyncMock(return_value=True)
+    handler.resolve = resolve  # type: ignore[method-assign]
+
+    await handle_codex_approval(callback, orchestrator)
+
+    resolve.assert_awaited_once_with("approval-delete-fallback", "accept")
+    message.delete.assert_awaited_once()
+    message.edit_text.assert_awaited_once_with(
+        "Codex approval handled: Approved",
+        reply_markup=None,
+    )
+    callback.answer.assert_awaited_once_with("Approved")
 
 
 @pytest.mark.asyncio
