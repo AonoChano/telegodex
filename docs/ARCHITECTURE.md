@@ -116,10 +116,10 @@ Codex app-server stderr is process-global, so the Telegram handler only shows st
 ### Approval Flow
 
 1. Codex sends `item/commandExecution/requestApproval` or `item/fileChange/requestApproval`.
-2. `_on_codex_server_request` asks `ApprovalHandler` to track the request and invokes the Telegram approval UI sender.
-3. The message is sent to the chat and forum topic matching the Codex thread's reverse lookup.
-4. User clicks a button, and `handle_codex_approval` resolves the `ApprovalHandler`.
-5. `ApprovalHandler` returns the decision to the app-server.
+2. `_on_codex_server_request` asks `ApprovalHandler` to register the pending request, then invokes the Telegram approval UI sender while the request is already resolvable.
+3. The message is sent to the chat and forum topic matching the Codex thread's reverse lookup, with inline buttons built from Codex `availableDecisions` when present.
+4. User clicks a button, and `handle_codex_approval` resolves the `ApprovalHandler`; object-shaped command decisions are returned to Codex unchanged.
+5. `ApprovalHandler` returns the decision to the app-server, or auto-denies if the timeout expires.
 
 ## Documentation Rule
 

@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from bot.handlers import codex
 from bot.utils.routing import TelegramRoute
 from core.session import SessionKey
+from extensions.codex.approvals import ApprovalHandler
 from storage.context_manager import ContextManager
 from storage.models import Base, Conversation
 
@@ -330,6 +331,47 @@ async def test_codex_command_with_bot_mention_shows_usage() -> None:
     method = bot.await_args.args[0]
     assert "Usage:" in method.text
     orchestrator.ensure_transport_handlers.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_approval_ui_sender_sends_inline_keyboard_to_topic(monkeypatch: pytest.MonkeyPatch) -> None:
+    bot = AsyncMock()
+    session_key = SessionKey.from_telegram_message(100, 222)
+    session_manager = SimpleNamespace(
+        reverse_lookup=MagicMock(return_value=session_key),
+        get_topic_id=MagicMock(return_value=222),
+    )
+    approval_handler = ApprovalHandler()
+    orchestrator = SimpleNamespace(
+        session_manager=session_manager,
+        approval_handler=approval_handler,
+    )
+    object_decision = {
+        "acceptWithExecpolicyAmendment": {
+            "execpolicy_amendment": ["Get-Date"],
+        },
+    }
+
+    monkeypatch.setattr(codex, "_current_bot", bot)
+    monkeypatch.setattr(codex, "_global_orch", orchestrator)
+    monkeypatch.setattr(codex, "_db_session_factory", None)
+
+    await codex._approval_ui_sender(
+        "item/commandExecution/requestApproval",
+        {
+            "threadId": "thread-abcdef",
+            "approvalId": "approval-telegram",
+            "command": "Get-Date -Format o",
+            "availableDecisions": [object_decision, "decline"],
+        },
+    )
+
+    bot.send_message.assert_awaited_once()
+    _, kwargs = bot.send_message.await_args
+    assert kwargs["chat_id"] == 100
+    assert kwargs["message_thread_id"] == 222
+    assert kwargs["reply_markup"].inline_keyboard[0][0].text == "Approve matching commands"
+    assert kwargs["reply_markup"].inline_keyboard[1][0].text == "Deny"
 
 
 def test_format_collected_stderr_deduplicates_in_order() -> None:

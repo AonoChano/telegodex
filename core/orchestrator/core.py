@@ -494,23 +494,37 @@ class Orchestrator:
                 queue.put_nowait((method, params))
 
     async def _on_codex_server_request(self, method: str, params: dict[str, Any]) -> dict[str, Any] | None:
-        if self._approval_ui_sender is not None and method in (
+        if method in (
             "item/commandExecution/requestApproval",
             "item/fileChange/requestApproval",
         ):
-            try:
-                result = self._approval_ui_sender(method, params)
-                if inspect.isawaitable(result):
-                    await result
-            except Exception:
-                # The approval UI is best-effort: even if delivery fails, we
-                # still need to await the handler so the turn can auto-deny.
-                # But silently swallowing makes "button never appeared"
-                # impossible to diagnose — log it.
-                logger.exception(
-                    f"approval UI sender failed for {method}; "
-                    f"turn will auto-deny after timeout"
-                )
+
+            async def send_approval_ui(
+                _approval_id: str | int,
+                approval_params: dict[str, Any],
+            ) -> None:
+                if self._approval_ui_sender is None:
+                    return
+                try:
+                    result = self._approval_ui_sender(method, approval_params)
+                    if inspect.isawaitable(result):
+                        await result
+                except Exception:
+                    # The approval UI is best-effort: even if delivery fails, we
+                    # still need to await the handler so the turn can auto-deny.
+                    # But silently swallowing makes "button never appeared"
+                    # impossible to diagnose — log it.
+                    logger.exception(
+                        f"approval UI sender failed for {method}; "
+                        f"turn will auto-deny after timeout"
+                    )
+
+            return await self._approval_handler.handle_server_request(
+                method,
+                params,
+                send_approval_ui,
+            )
+
         return await self._approval_handler.handle_server_request(method, params)
 
     # ------------------------------------------------------------------

@@ -194,14 +194,7 @@ async def handle_codex_approval(callback: CallbackQuery, orchestrator: Any):
 
     resolved = await orchestrator.approval_handler.resolve(approval_id, decision)
     if resolved:
-        # ``decision`` is always a Codex wire enum value (lowercase camelCase):
-        # ``accept | acceptForSession | decline | cancel``.
-        decision_label = {
-            "accept": "Approved",
-            "acceptForSession": "Approved (Session)",
-            "decline": "Denied",
-            "cancel": "Cancelled",
-        }.get(decision, decision)
+        decision_label = orchestrator.approval_handler.describe_decision(decision)
         try:
             # Edit the approval message to remove buttons and show result.
             original_text = callback.message.text or callback.message.caption or ""
