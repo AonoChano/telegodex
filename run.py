@@ -39,13 +39,13 @@ def _project_version() -> str:
 
 def check_configuration() -> bool:
     """Validate required local configuration before starting the bot."""
-    logger.info("Checking configuration...")
+    logger.info("Preflight: checking local configuration...")
     errors: list[str] = []
 
     if not settings.telegram_bot_token:
         errors.append("TELEGRAM_BOT_TOKEN is not configured")
     else:
-        logger.info("Telegram Bot Token is configured")
+        logger.info("Preflight: Telegram Bot Token is configured")
 
     ai_providers: list[str] = []
     provider_checks = {
@@ -72,22 +72,22 @@ def check_configuration() -> bool:
     if not ai_providers:
         errors.append("At least one AI provider API key is required")
     else:
-        logger.info(f"Configured AI providers: {', '.join(ai_providers)}")
+        logger.info(f"Preflight: configured AI providers: {', '.join(ai_providers)}")
 
-    logger.info(f"Database: {settings.database_url}")
+    logger.info(f"Preflight: database URL: {settings.database_url}")
 
     if settings.admin_ids:
-        logger.info(f"Admin user IDs: {settings.admin_ids}")
+        logger.info(f"Preflight: admin user IDs: {settings.admin_ids}")
     else:
-        logger.warning("No admin user IDs configured")
+        logger.warning("Preflight: no admin user IDs configured")
 
     if errors:
-        logger.error("Configuration check failed:")
+        logger.error("Preflight: configuration check failed:")
         for error in errors:
             logger.error(f"- {error}")
         return False
 
-    logger.success("Configuration check passed")
+    logger.success("Preflight: configuration check passed")
     return True
 
 
@@ -100,43 +100,41 @@ def print_banner() -> None:
     """Print the startup banner."""
     blue = "\033[38;2;34;158;217m"
     white = "\033[97m"
+    dim = "\033[2m"
     reset = "\033[0m"
     repo_url = "https://github.com/AonoChano/telegodex"
     repo_label = "github.com/AonoChano/telegodex"
     repo_link = _terminal_link(repo_label, repo_url)
     version = _project_version()
-    logo_lines = [
-        "   ████████╗███████╗██╗     ███████╗ ██████╗  ██████╗ ██████╗ ███████╗██╗  ██╗   ",
-        "   ╚══██╔══╝██╔════╝██║     ██╔════╝██╔════╝ ██╔═══██╗██╔══██╗██╔════╝╚██╗██╔╝   ",
-        "      ██║   █████╗  ██║     █████╗  ██║  ███╗██║   ██║██║  ██║█████╗   ╚███╔╝    ",
-        "      ██║   ██╔══╝  ██║     ██╔══╝  ██║   ██║██║   ██║██║  ██║██╔══╝   ██╔██╗    ",
-        "      ██║   ███████╗███████╗███████╗╚██████╔╝╚██████╔╝██████╔╝███████╗██╔╝ ██╗   ",
-        "      ╚═╝   ╚══════╝╚══════╝╚══════╝ ╚═════╝  ╚═════╝ ╚═════╝ ╚══════╝╚═╝  ╚═╝   ",
+    lines = [
+        f"{blue}TELEGODEX{reset}",
+        "Telegram Workbench for AI agents",
+        "",
+        f"Version : v{version}",
+        f"Repo    : {repo_link}",
+        "Runtime : Telegram + Rich Messages + Codex app-server",
+        "",
+        f"{dim}Startup phases{reset}",
+        "  1. Preflight - validate local configuration only",
+        "  2. Runtime   - initialize DB, Telegram, providers, Codex",
     ]
-    tagline = "       AI Workbench Telegram Bot   |   Codex, ClaudeCode, and more"
-    repo_line = f"       {repo_label}                            v{version}"
-    width = max(len(line) for line in logo_lines + [tagline, repo_line])
     ansi_pattern = re.compile(r"\033\]8;;.*?\033\\|\033\]8;;\033\\|\033\[[0-9;]*m")
 
     def visible_len(content: str) -> int:
         plain = content.replace(repo_link, repo_label)
         return len(ansi_pattern.sub("", plain))
 
+    width = max(64, max(visible_len(line) for line in lines))
+
     def box_line(content: str = "") -> str:
-        return f"{white}║{reset}{content}{' ' * max(width - visible_len(content), 0)}{white}║{reset}"
+        padding = " " * max(width - visible_len(content), 0)
+        return f"{white}|{reset} {content}{padding} {white}|{reset}"
 
     print()
-    print(f"{white}╔{'═' * width}╗{reset}")
-    print(box_line())
-    for index, line in enumerate(logo_lines):
-        color = blue if index % 2 == 0 else white
-        print(box_line(f"{color}{line}{reset}"))
-    print(box_line())
-    print(box_line(f"{white}{tagline}{reset}"))
-    print(box_line())
-    print(box_line(f"{blue}  {repo_link}{reset}{white}                  v{version}{reset}"))
-    print(box_line())
-    print(f"{white}╚{'═' * width}╝{reset}")
+    print(f"{white}+{'-' * (width + 2)}+{reset}")
+    for line in lines:
+        print(box_line(line))
+    print(f"{white}+{'-' * (width + 2)}+{reset}")
     print()
 
 
@@ -152,7 +150,7 @@ async def main() -> None:
         logger.error("Fix the configuration errors and restart Telegodex")
         sys.exit(1)
 
-    logger.info("Starting Telegodex...")
+    logger.info("Preflight passed; entering runtime startup...")
     from main import main as bot_main
 
     await bot_main()

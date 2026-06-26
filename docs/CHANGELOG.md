@@ -11,6 +11,7 @@ related: [PRODUCT_EXPERIENCE.md, RICH_MESSAGES.md, STARTUP.md]
 
 ## Unreleased
 
+- Clarified the startup banner and preflight logs so local configuration validation is visually distinct from runtime startup.
 - Fixed Codex approval prompt cleanup so handled inline approval messages no longer remain as unrendered command blocks, and command-running status edits now escape command text before HTML rendering.
 - Fixed Codex approval prompts so command/file approval requests are registered before Telegram UI rendering, object-shaped `availableDecisions` are supported, and inline buttons appear in the active Codex topic.
 - Fixed Codex Telegram finalization for long tool output: collapsed tool details are now previewed/summarized within Rich Message limits, and plain-message fallback is shortened before send.
