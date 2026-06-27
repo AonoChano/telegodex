@@ -11,6 +11,7 @@ related: [PRODUCT_EXPERIENCE.md, RICH_MESSAGES.md, STARTUP.md]
 
 ## Unreleased
 
+- Fixed Telegram shell execution on Windows to run through PowerShell, so generated commands such as `Start-Process notepad` work as intended, and polished shell results into Rich Message summaries with folded stdout/stderr blocks.
 - Improved the normal-chat Telegodex tool prompt so browser/app launch requests such as opening Bilibili or Notepad are treated as shell tool intents instead of generic AI refusals, and ambiguous “run shell” requests no longer invent demo commands.
 - Added normal-chat tool permission modes in Settings: `仅对话`, `用户确认`, and `⚠️ 完全访问`. Normal AI chat now knows it is Telegodex, can request shell tools through a structured Telegodex tool intent, blocks tools in chat-only mode, asks for inline confirmation in confirm mode, and feeds shell results back into the model in full-access mode.
 - Improved `/screenshot` capture reliability by ignoring invalid window bounds, retrying full-screen capture after empty terminal-window images, using pyautogui regions correctly, and showing a non-misleading failure message when capture returns an empty image.

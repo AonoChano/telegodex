@@ -58,6 +58,8 @@ Use raw mode when you already know the exact command:
 
 Dangerous raw commands and dangerous AI-generated proposals still require an inline confirmation before execution. `/shell`, `/shell -h`, `/shell help`, and `/shell --help` show the usage summary. For ordinary tasks, prefer normal chat plus the permission mode that matches how much autonomy you want to grant.
 
+On Windows, Telegodex runs shell commands through PowerShell. Command results are sent as Rich Message summaries with the command, exit code, and folded stdout/stderr blocks.
+
 ## Provider Selection
 
 Configure built-in provider keys in `.env`. Telegodex loads every configured provider on startup and routes requests through `AIRouter`.

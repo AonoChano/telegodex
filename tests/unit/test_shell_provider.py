@@ -7,7 +7,19 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from providers.shell.provider import ShellProvider
+from providers.shell import provider as shell_provider_module
+from providers.shell.provider import ShellProvider, _platform_shell_command
+
+
+def test_windows_commands_are_wrapped_with_powershell(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(shell_provider_module.os, "name", "nt", raising=False)
+
+    wrapped = _platform_shell_command("Start-Process notepad")
+
+    assert wrapped.startswith("powershell.exe")
+    assert "-NoProfile" in wrapped
+    assert "-Command" in wrapped
+    assert "Start-Process notepad" in wrapped
 
 
 class TestDangerousCommandDetection:
@@ -83,17 +95,19 @@ class TestExecute:
         mock_process.kill = MagicMock()
         mock_process.wait = AsyncMock()
 
-        with patch(
-            "asyncio.create_subprocess_shell",
-            new=AsyncMock(return_value=mock_process),
-        ):
-            with patch(
+        with (
+            patch(
+                "asyncio.create_subprocess_shell",
+                new=AsyncMock(return_value=mock_process),
+            ),
+            patch(
                 "asyncio.wait_for",
                 new=AsyncMock(side_effect=TimeoutError),
-            ):
-                provider = ShellProvider()
-                with pytest.raises(TimeoutError):
-                    await provider.execute("sleep 100")
+            ),
+        ):
+            provider = ShellProvider()
+            with pytest.raises(TimeoutError):
+                await provider.execute("sleep 100")
 
         mock_process.kill.assert_called_once()
 
@@ -137,9 +151,7 @@ class TestExecuteStreaming:
             new=AsyncMock(return_value=mock_process),
         ):
             provider = ShellProvider()
-            lines = [
-                line async for line in provider.execute_streaming("echo test")
-            ]
+            lines = [line async for line in provider.execute_streaming("echo test")]
 
         assert "line one\n" in lines
         assert "line two\n" in lines
@@ -163,9 +175,7 @@ class TestExecuteStreaming:
             new=AsyncMock(return_value=mock_process),
         ):
             provider = ShellProvider()
-            lines = [
-                line async for line in provider.execute_streaming("cmd")
-            ]
+            lines = [line async for line in provider.execute_streaming("cmd")]
 
         assert any("[stderr] error here" in line for line in lines)
 
@@ -181,18 +191,20 @@ class TestExecuteStreaming:
         mock_process.kill = MagicMock()
         mock_process.wait = AsyncMock()
 
-        with patch(
-            "asyncio.create_subprocess_shell",
-            new=AsyncMock(return_value=mock_process),
-        ):
-            with patch(
+        with (
+            patch(
+                "asyncio.create_subprocess_shell",
+                new=AsyncMock(return_value=mock_process),
+            ),
+            patch(
                 "asyncio.wait_for",
                 new=AsyncMock(side_effect=TimeoutError),
-            ):
-                provider = ShellProvider()
-                with pytest.raises(TimeoutError):
-                    async for _ in provider.execute_streaming("sleep 100"):
-                        pass
+            ),
+        ):
+            provider = ShellProvider()
+            with pytest.raises(TimeoutError):
+                async for _ in provider.execute_streaming("sleep 100"):
+                    pass
 
         mock_process.kill.assert_called_once()
 

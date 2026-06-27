@@ -420,6 +420,19 @@ async def test_approval_ui_sender_sends_permissions_prompt_to_topic(monkeypatch:
     assert kwargs["reply_markup"].inline_keyboard[2][0].text == "Deny"
 
 
+def test_format_shell_execution_markdown_uses_rich_details_blocks() -> None:
+    text = codex._format_shell_execution_markdown(
+        "Start-Process notepad",
+        {"stdout": "opened", "stderr": "warning", "returncode": 1},
+    )
+
+    assert "**Shell command failed**" in text
+    assert "```powershell\nStart-Process notepad\n```" in text
+    assert "**Exit code:** `1`" in text
+    assert "<details><summary>stdout</summary>" in text
+    assert "<details><summary>stderr</summary>" in text
+
+
 def test_format_command_status_escapes_html_command() -> None:
     status = codex._format_command_status(command='echo "<ok>" & done')
 

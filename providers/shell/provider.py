@@ -3,11 +3,31 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import re
+import subprocess
 from collections.abc import AsyncIterator
 from typing import Any
 
 from loguru import logger
+
+
+def _platform_shell_command(command: str) -> str:
+    """Return the command string executed by create_subprocess_shell."""
+    if os.name != "nt":
+        return command
+    return subprocess.list2cmdline(
+        [
+            "powershell.exe",
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            command,
+        ]
+    )
 
 
 class ShellProvider:
@@ -35,10 +55,7 @@ class ShellProvider:
         """Detect potentially dangerous shell commands."""
         if not command or not command.strip():
             return False
-        for pattern in cls._DANGEROUS_PATTERNS:
-            if pattern.search(command):
-                return True
-        return False
+        return any(pattern.search(command) for pattern in cls._DANGEROUS_PATTERNS)
 
     def __init__(self) -> None:
         self._active_processes: dict[str, asyncio.subprocess.Process] = {}
@@ -78,7 +95,7 @@ class ShellProvider:
         """Run a shell command and return stdout, stderr, and return code."""
         logger.info(f"ShellProvider execute: {command}")
         process = await asyncio.create_subprocess_shell(
-            command,
+            _platform_shell_command(command),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             stdin=asyncio.subprocess.PIPE,
@@ -87,9 +104,7 @@ class ShellProvider:
         if session_id is not None:
             self._active_processes[session_id] = process
         try:
-            stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                process.communicate(), timeout=30.0
-            )
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(process.communicate(), timeout=30.0)
         except TimeoutError:
             logger.warning(f"ShellProvider timeout: {command}")
             try:
@@ -118,7 +133,7 @@ class ShellProvider:
         """Yield output lines as they arrive from the subprocess."""
         logger.info(f"ShellProvider streaming: {command}")
         process = await asyncio.create_subprocess_shell(
-            command,
+            _platform_shell_command(command),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             stdin=asyncio.subprocess.PIPE,
@@ -127,6 +142,7 @@ class ShellProvider:
         if session_id is not None:
             self._active_processes[session_id] = process
         try:
+
             async def _read_lines(
                 stream: asyncio.StreamReader | None,
             ) -> AsyncIterator[str]:
@@ -155,9 +171,7 @@ class ShellProvider:
 
             pending = {stdout_task, stderr_task}
             while pending:
-                done, pending = await asyncio.wait(
-                    pending, return_when=asyncio.FIRST_COMPLETED
-                )
+                done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
                 while not queue.empty():
                     yield queue.get_nowait()
                 for task in done:

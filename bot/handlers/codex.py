@@ -328,6 +328,47 @@ def _append_codex_stderr_detail(text: str, stderr_block: str) -> str:
     return f"{base_text.rstrip()}\n\n---\n{detail}"
 
 
+def _format_shell_execution_markdown(command: str, result: dict[str, Any]) -> str:
+    stdout = str(result.get("stdout") or "").strip()
+    stderr = str(result.get("stderr") or "").strip()
+    returncode = result.get("returncode")
+    ok = returncode == 0
+    title = "**Shell command completed**" if ok else "**Shell command failed**"
+    lines = [
+        title,
+        "",
+        "**Command**",
+        _markdown_code_fence(command, language="powershell"),
+        "",
+        f"**Exit code:** `{returncode}`",
+    ]
+    if stdout:
+        lines.extend(
+            [
+                "",
+                "<details><summary>stdout</summary>",
+                "",
+                _markdown_code_fence(stdout),
+                "",
+                "</details>",
+            ]
+        )
+    if stderr:
+        lines.extend(
+            [
+                "",
+                "<details><summary>stderr</summary>",
+                "",
+                _markdown_code_fence(stderr),
+                "",
+                "</details>",
+            ]
+        )
+    if not stdout and not stderr:
+        lines.extend(["", "_No output._"])
+    return "\n".join(lines).strip()
+
+
 def _format_collected_stderr(lines: list[str]) -> str:
     """Join collected daemon stderr lines into a single user-facing block.
 
@@ -1476,37 +1517,36 @@ async def _execute_shell_telegram(
 ) -> None:
     """Execute a shell command and send the result back to the user."""
     status_msg = await message.answer(
-        f"Executing: `{command}`",
-        parse_mode="Markdown",
+        "Executing shell command...",
         **route.send_kwargs(),
     )
     try:
         result = await orchestrator.shell_provider.execute(command, session_id=session_key.to_string())
-        output = result["stdout"]
-        stderr = result["stderr"]
-        returncode = result["returncode"]
-
-        lines: list[str] = []
-        if output:
-            lines.append(output)
-        if stderr:
-            lines.append(f"[stderr]\n{stderr}")
-        lines.append(f"\nExit code: {returncode}")
-
-        full_text = "\n".join(lines).strip()
-        toolbar_handler.set_last_reply(session_key, full_text)
-        if len(full_text) > 4096:
-            file_bytes = full_text.encode("utf-8")
+        rendered = _format_shell_execution_markdown(command, result)
+        toolbar_handler.set_last_reply(session_key, rendered)
+        if len(rendered) > 12000:
+            file_bytes = rendered.encode("utf-8")
             await status_msg.delete()
             await message.answer_document(
-                document=BufferedInputFile(file_bytes, filename="shell_output.txt"),
-                caption=f"Output for: `{command}`",
+                document=BufferedInputFile(file_bytes, filename="shell_output.md"),
+                caption=f"Shell output for: `{command}`",
                 parse_mode="Markdown",
                 **route.send_kwargs(),
             )
-        else:
-            text = f"```\n{full_text}\n```"
-            await status_msg.edit_text(text, parse_mode="Markdown")
+            return
+
+        with contextlib.suppress(Exception):
+            await status_msg.delete()
+        sent = await send_rich_message(
+            bot_token=_bot_token(),
+            chat_id=route.chat_id,
+            markdown_text=rendered,
+            message_thread_id=route.message_thread_id,
+            direct_messages_topic_id=route.direct_messages_topic_id,
+            business_connection_id=route.business_connection_id,
+        )
+        if not sent:
+            await message.answer(rendered, parse_mode="Markdown", **route.send_kwargs())
     except TimeoutError:
         await status_msg.edit_text(
             f"Command timed out after 30 seconds:\n```\n{command}\n```",
@@ -1709,7 +1749,7 @@ async def handle_shell_ai_callback(
         return
 
     with contextlib.suppress(Exception):
-        await msg.edit_text(f"Running proposed command:\n```\n{command}\n```", parse_mode="Markdown")
+        await msg.delete()
     await callback_query.answer("Executing...")
     await _execute_shell_telegram(message, route, orchestrator, command, session_key)
 
@@ -1758,10 +1798,7 @@ async def handle_shell_approve_callback(
 
     # decision == "confirm"
     with contextlib.suppress(Exception):
-        await msg.edit_text(
-            f"Confirmed. Executing:\n```\n{command}\n```",
-            parse_mode="Markdown",
-        )
+        await msg.delete()
     await callback_query.answer("Executing...")
     await _execute_shell_telegram(message, route, orchestrator, command, session_key)
 
