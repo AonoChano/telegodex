@@ -43,6 +43,8 @@ Open `/settings` and use the `权限:<等级>` button to cycle normal-chat tool 
 
 The normal chat AI receives a Telegodex capability prompt, so it should understand that it is operating inside Telegodex and should not claim it ran tools unless Telegodex actually returns tool results.
 
+Examples of normal-chat tool intents include “帮我打开B站”, which should request `Start-Process https://www.bilibili.com`, and “帮我启动电脑的记事本”, which should request `Start-Process notepad`. If the user only says “执行 shell 指令” without a concrete command or task, the AI should ask what to run instead of inventing a demo command.
+
 ## Shell Commands
 
 `/shell` remains a manual escape hatch. Use `/shell <natural language task>` to ask the active chat AI provider to propose a shell command. Telegodex shows the generated command with Run, Revise, and Cancel buttons; it does not execute the generated command until you choose Run.

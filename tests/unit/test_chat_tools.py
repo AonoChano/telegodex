@@ -50,3 +50,12 @@ def test_build_tool_result_message_formats_stdout_and_stderr() -> None:
     assert "exit_code: 1" in msg.content
     assert "stdout:\nout" in msg.content
     assert "stderr:\nerr" in msg.content
+
+
+def test_capability_prompt_maps_browser_and_app_requests_to_shell_tools() -> None:
+    prompt = build_telegodex_capability_prompt("confirm")
+
+    assert "Do not say you cannot open websites" in prompt
+    assert "Start-Process https://www.bilibili.com" in prompt
+    assert "Start-Process notepad" in prompt
+    assert "Never invent a demo command" in prompt

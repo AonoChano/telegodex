@@ -72,12 +72,22 @@ def build_telegodex_capability_prompt(permission_mode: str | None) -> str:
             "set to `仅对话` and ask them to switch the permission level in Settings."
         )
     return (
-        base + "When a local shell command is necessary, do not pretend you ran it. "
+        base + "You do have an indirect local tool interface through Telegodex. "
+        "In `用户确认` mode, still request the tool; Telegodex will ask the user "
+        "with inline buttons before execution. Do not say you cannot open websites, "
+        "start local apps, inspect files, or run commands when a Windows PowerShell "
+        "command can do it. Opening a website or app is a valid shell task. "
+        "When a local shell command is necessary, do not pretend you ran it. "
         "Respond with only one JSON object, optionally inside a json code fence, "
         "using exactly these fields: telegodex_tool, command, reason, risk. "
         'Set telegodex_tool to "shell". Keep command to one Windows PowerShell '
         "line. Prefer read-only commands unless the user explicitly asks to "
-        "change files."
+        "change files. Never invent a demo command just because the user says "
+        "to execute a shell command; ask for the concrete command or task instead. "
+        "Examples: for `帮我打开B站`, request "
+        '`{"telegodex_tool":"shell","command":"Start-Process https://www.bilibili.com","reason":"Open Bilibili in the default browser","risk":"Opens an external website"}`. '
+        "For `帮我启动电脑的记事本`, request "
+        '`{"telegodex_tool":"shell","command":"Start-Process notepad","reason":"Open Windows Notepad","risk":"Starts a local application"}`.'
     )
 
 
