@@ -11,6 +11,7 @@ related: [PRODUCT_EXPERIENCE.md, RICH_MESSAGES.md, STARTUP.md]
 
 ## Unreleased
 
+- Added AI-assisted `/shell <natural language>` command proposals with Run/Revise/Cancel buttons, raw `/shell !<command>` and `/shell -- <command>` escape hatches, and dangerous-command confirmation before execution.
 - Fixed Codex permissions approval requests so Telegram shows inline buttons and returns granted permission scopes to the app-server.
 - Clarified the startup preflight logs while preserving the decorative startup banner.
 - Fixed Codex approval prompt cleanup so handled inline approval messages no longer remain as unrendered command blocks, and command-running status edits now escape command text before HTML rendering.

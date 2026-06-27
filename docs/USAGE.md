@@ -1,7 +1,7 @@
 ---
 title: Usage
 category: guide
-last_updated: 2026-06-20
+last_updated: 2026-06-27
 relevance: high
 summary: Daily use, commands, provider settings, and rich output behavior
 related: [QUICKSTART.md, PRODUCT_EXPERIENCE.md, CUSTOM_PROVIDERS.md, RICH_MESSAGES.md]
@@ -22,7 +22,7 @@ Telegodex runs as a Telegram Workbench. You can chat with configured providers, 
 | `/help` | Show help |
 | `/codex` | Run Codex CLI tasks through the app-server bridge |
 | `/model` | Switch the current AI provider |
-| `/shell` | Run a shell command through Telegodex |
+| `/shell` | Ask AI to propose a shell command, or run a raw command with `!`/`--` |
 | `/send` | Send a local file or open the file picker |
 | `/history` | Browse conversation history |
 | `/status` | Show current session status |
@@ -32,6 +32,19 @@ Telegodex runs as a Telegram Workbench. You can chat with configured providers, 
 | `/screenshot` | Capture the current desktop |
 
 Telegodex syncs this command menu with Telegram on startup through `setMyCommands`. BotFather is still where the bot token and platform-level bot settings live, but users should not need to maintain the slash-command menu manually.
+
+## Shell Commands
+
+Use `/shell <natural language task>` to ask the active chat AI provider to propose a shell command. Telegodex shows the generated command with Run, Revise, and Cancel buttons; it does not execute the generated command until you choose Run.
+
+Use raw mode when you already know the exact command:
+
+```text
+/shell !git status
+/shell -- git status
+```
+
+Dangerous raw commands and dangerous AI-generated proposals still require an inline confirmation before execution. `/shell`, `/shell -h`, `/shell help`, and `/shell --help` show the usage summary.
 
 ## Provider Selection
 
