@@ -119,36 +119,60 @@ async def capture_terminal_screenshot() -> bytes | None:
     """
     loop = asyncio.get_running_loop()
 
+    def _valid_bbox(bbox: tuple[int, int, int, int] | None) -> tuple[int, int, int, int] | None:
+        if bbox is None:
+            return None
+        left, top, right, bottom = bbox
+        if right <= left or bottom <= top:
+            logger.warning(f"Ignoring invalid screenshot bbox: {bbox}")
+            return None
+        return bbox
+
+    def _save_png(img: Any) -> bytes | None:
+        width, height = getattr(img, "size", (0, 0))
+        if width <= 0 or height <= 0:
+            raise ValueError(f"empty image size: {width}x{height}")
+        buffer = BytesIO()
+        img.save(buffer, format="PNG")
+        data = buffer.getvalue()
+        if not data:
+            raise ValueError("empty PNG buffer")
+        return data
+
     def _capture() -> bytes | None:
         if not _HAS_PIL and not _HAS_PYAUTOGUI:
-            logger.warning(
-                "No screenshot library available. Install Pillow or pyautogui."
-            )
+            logger.warning("No screenshot library available. Install Pillow or pyautogui.")
             return None
 
-        bbox = _get_terminal_window_rect()
+        bbox = _valid_bbox(_get_terminal_window_rect())
+        attempts: list[tuple[str, tuple[int, int, int, int] | None]] = []
+        if bbox is not None:
+            attempts.append(("terminal-window", bbox))
+        attempts.append(("full-screen", None))
 
-        try:
-            if _HAS_PIL:
-                if bbox:
-                    img = ImageGrab.grab(bbox=bbox)
-                else:
-                    img = ImageGrab.grab()
-                buffer = BytesIO()
-                img.save(buffer, format="PNG")
-                return buffer.getvalue()
+        if _HAS_PIL:
+            for label, grab_bbox in attempts:
+                try:
+                    img = ImageGrab.grab(bbox=grab_bbox) if grab_bbox else ImageGrab.grab()
+                    data = _save_png(img)
+                    if data:
+                        return data
+                except Exception as exc:
+                    logger.warning(f"Pillow screenshot capture failed ({label}): {exc}")
 
-            if _HAS_PYAUTOGUI:
-                if bbox:
-                    img = pyautogui.screenshot(region=bbox)
-                else:
-                    img = pyautogui.screenshot()
-                buffer = BytesIO()
-                img.save(buffer, format="PNG")
-                return buffer.getvalue()
-        except Exception as exc:
-            logger.warning(f"Screenshot capture failed: {exc}")
-            return None
+        if _HAS_PYAUTOGUI:
+            for label, grab_bbox in attempts:
+                try:
+                    if grab_bbox:
+                        left, top, right, bottom = grab_bbox
+                        img = pyautogui.screenshot(region=(left, top, right - left, bottom - top))
+                    else:
+                        img = pyautogui.screenshot()
+                    data = _save_png(img)
+                    if data:
+                        return data
+                except Exception as exc:
+                    logger.warning(f"pyautogui screenshot capture failed ({label}): {exc}")
 
         return None
 
@@ -161,10 +185,22 @@ async def capture_terminal_screenshot() -> bytes | None:
 
 # Standard 16 ANSI colors (0-15)
 _ANSI_16: list[tuple[int, int, int]] = [
-    (0, 0, 0), (170, 0, 0), (0, 170, 0), (170, 85, 0),
-    (0, 0, 170), (170, 0, 170), (0, 170, 170), (170, 170, 170),
-    (85, 85, 85), (255, 85, 85), (85, 255, 85), (255, 255, 85),
-    (85, 85, 255), (255, 85, 255), (85, 255, 255), (255, 255, 255),
+    (0, 0, 0),
+    (170, 0, 0),
+    (0, 170, 0),
+    (170, 85, 0),
+    (0, 0, 170),
+    (170, 0, 170),
+    (0, 170, 170),
+    (170, 170, 170),
+    (85, 85, 85),
+    (255, 85, 85),
+    (85, 255, 85),
+    (255, 255, 85),
+    (85, 85, 255),
+    (255, 85, 255),
+    (85, 255, 255),
+    (255, 255, 255),
 ]
 
 # Precomputed 256-color palette
@@ -174,11 +210,13 @@ _ANI_256: list[tuple[int, int, int]] = _ANSI_16[:]
 for r in range(6):
     for g in range(6):
         for b in range(6):
-            _ANI_256.append((
-                0 if r == 0 else 55 + r * 40,
-                0 if g == 0 else 55 + g * 40,
-                0 if b == 0 else 55 + b * 40,
-            ))
+            _ANI_256.append(
+                (
+                    0 if r == 0 else 55 + r * 40,
+                    0 if g == 0 else 55 + g * 40,
+                    0 if b == 0 else 55 + b * 40,
+                )
+            )
 
 # Grayscale ramp (232-255)
 for i in range(24):
@@ -242,10 +280,7 @@ def ansi_to_png(
     Returns PNG bytes or ``None`` if rendering fails.
     """
     if not _HAS_PIL or not _HAS_PYTE:
-        logger.warning(
-            "ansi_to_png requires pyte and Pillow. "
-            "Install them: pip install pyte Pillow"
-        )
+        logger.warning("ansi_to_png requires pyte and Pillow. Install them: pip install pyte Pillow")
         return None
 
     try:
@@ -341,20 +376,14 @@ def ansi_to_html(ansi_text: str) -> str:
     text = re.sub(r"\x1b\]\d+;.*?\x07", "", text)
 
     # Escape HTML first so we don't escape the spans we insert later.
-    text = (
-        text.replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-    )
+    text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
     # Simple SGR matcher.
     text = re.sub(r"\x1b\[(\d*(?:;\d*)*)m", _ansi_to_html_replace, text)
 
     # Wrap in a pre block with a dark background.
     return (
-        '<pre style="background:#000;color:#ccc;padding:8px;'
-        'font-family:monospace;white-space:pre-wrap;">'
-        f"{text}</pre>"
+        f'<pre style="background:#000;color:#ccc;padding:8px;font-family:monospace;white-space:pre-wrap;">{text}</pre>'
     )
 
 
@@ -366,8 +395,9 @@ async def send_screenshot_to_chat(
     png_bytes = await capture_terminal_screenshot()
     if png_bytes is None:
         await message.answer(
-            "Failed to capture screenshot. "
-            "Please install Pillow (`pip install Pillow`) or pyautogui.",
+            "Failed to capture screenshot. Pillow/pyautogui may be missing, "
+            "or the current desktop/window returned an empty image. "
+            "Try focusing or unminimizing the terminal and retry.",
             **route.send_kwargs(),
         )
         return

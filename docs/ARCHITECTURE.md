@@ -65,6 +65,10 @@ The storage layer keeps user preferences and conversation messages. The short-te
 
 `core/session` normalizes active runtime state through `SessionKey(transport, chat_id, topic_id)`. Provider-specific buckets keep OpenAI-compatible, Anthropic, Codex, and future agent contexts isolated under the same Telegram route.
 
+## Normal Chat Tool Permissions
+
+Normal AI chat is still provider-agnostic, but the system prompt now includes a Telegodex capability addendum and the user's tool permission mode. Providers can request a shell tool by returning a strict Telegodex JSON object with `telegodex_tool: "shell"`. The Telegram handler gates that request through the stored permission mode: chat-only blocks it, confirm mode creates an inline shell proposal, and full-access mode executes through the shared shell provider and appends the command result as a system message before asking the provider for the final answer.
+
 ## CodexBridge v2
 
 The Codex bridge lives under `extensions/codex/` and runs Codex CLI as a persistent `codex app-server` subprocess communicating via JSON-RPC 2.0 over stdio. Users trigger it with `/codex <prompt>` in Telegram.

@@ -1,5 +1,6 @@
-
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
+
+from core.orchestrator.chat_tools import permission_mode_label
 
 
 def get_main_menu() -> ReplyKeyboardMarkup:
@@ -29,10 +30,7 @@ def get_provider_selector(available_providers: list[str], current_provider: str)
         if provider == current_provider:
             label = f"✅ {label}"
 
-        buttons.append([InlineKeyboardButton(
-            text=label,
-            callback_data=f"provider:{provider}"
-        )])
+        buttons.append([InlineKeyboardButton(text=label, callback_data=f"provider:{provider}")])
 
     buttons.append([InlineKeyboardButton(text="« 返回", callback_data="settings:back")])
 
@@ -48,23 +46,22 @@ def get_model_selector(provider: str, models: list[str], current_model: str | No
         if model == current_model:
             label = f"✅ {label}"
 
-        buttons.append([InlineKeyboardButton(
-            text=label,
-            callback_data=f"model:{provider}:{model}"
-        )])
+        buttons.append([InlineKeyboardButton(text=label, callback_data=f"model:{provider}:{model}")])
 
     buttons.append([InlineKeyboardButton(text="« 返回", callback_data="settings:provider")])
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def get_settings_menu() -> InlineKeyboardMarkup:
+def get_settings_menu(permission_mode: str | None = None) -> InlineKeyboardMarkup:
     """设置菜单"""
+    permission_label = permission_mode_label(permission_mode)
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="🤖 切换 AI 服务商", callback_data="settings:provider")],
             [InlineKeyboardButton(text="🎯 选择模型", callback_data="settings:model")],
             [InlineKeyboardButton(text="🌡️ 调整温度参数", callback_data="settings:temperature")],
+            [InlineKeyboardButton(text=f"权限:{permission_label}", callback_data="settings:permission")],
             [InlineKeyboardButton(text="📊 查看使用统计", callback_data="settings:stats")],
             [InlineKeyboardButton(text="« 关闭", callback_data="settings:close")],
         ]
@@ -81,10 +78,7 @@ def get_conversation_list_keyboard(conversations: list) -> InlineKeyboardMarkup:
         title = conv.title[:30] + "..." if len(conv.title) > 30 else conv.title
         status = "🟢" if conv.is_active else "⚪"
 
-        buttons.append([InlineKeyboardButton(
-            text=f"{status} {title}",
-            callback_data=f"conv:load:{conv.id}"
-        )])
+        buttons.append([InlineKeyboardButton(text=f"{status} {title}", callback_data=f"conv:load:{conv.id}")])
 
     buttons.append([InlineKeyboardButton(text="🗑️ 清空历史", callback_data="conv:clear_all")])
     buttons.append([InlineKeyboardButton(text="« 返回", callback_data="conv:back")])

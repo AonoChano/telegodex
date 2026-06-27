@@ -1,7 +1,7 @@
 ---
 title: Changelog
 category: changelog
-last_updated: 2026-06-26
+last_updated: 2026-06-27
 relevance: medium
 summary: Human-maintained release notes for Telegodex
 related: [PRODUCT_EXPERIENCE.md, RICH_MESSAGES.md, STARTUP.md]
@@ -11,6 +11,8 @@ related: [PRODUCT_EXPERIENCE.md, RICH_MESSAGES.md, STARTUP.md]
 
 ## Unreleased
 
+- Added normal-chat tool permission modes in Settings: `仅对话`, `用户确认`, and `⚠️ 完全访问`. Normal AI chat now knows it is Telegodex, can request shell tools through a structured Telegodex tool intent, blocks tools in chat-only mode, asks for inline confirmation in confirm mode, and feeds shell results back into the model in full-access mode.
+- Improved `/screenshot` capture reliability by ignoring invalid window bounds, retrying full-screen capture after empty terminal-window images, using pyautogui regions correctly, and showing a non-misleading failure message when capture returns an empty image.
 - Added AI-assisted `/shell <natural language>` command proposals with Run/Revise/Cancel buttons, raw `/shell !<command>` and `/shell -- <command>` escape hatches, and dangerous-command confirmation before execution.
 - Fixed Codex permissions approval requests so Telegram shows inline buttons and returns granted permission scopes to the app-server.
 - Clarified the startup preflight logs while preserving the decorative startup banner.

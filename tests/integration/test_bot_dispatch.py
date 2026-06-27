@@ -7,6 +7,7 @@ without calling real Telegram or AI APIs.
 from __future__ import annotations
 
 from datetime import datetime
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -14,7 +15,7 @@ import pytest
 from aiogram import Dispatcher
 from aiogram.types import Message, Update
 
-from ai.base import MessageRole
+from ai.base import AIResponse, MessageRole
 from bot.handlers import codex_router, messages_router
 
 
@@ -238,6 +239,71 @@ class TestTextMessageRouting:
         mock_send_rich.assert_awaited_once()
         _, kwargs = mock_send_rich.call_args
         assert "Hello world" in kwargs["markdown_text"]
+
+    @pytest.mark.asyncio
+    async def test_full_access_chat_tool_result_is_fed_back_to_ai(
+        self,
+        dp: Dispatcher,
+        mock_context_manager: AsyncMock,
+    ) -> None:
+        async def _tool_stream(*args: Any, **kwargs: Any):
+            yield '{"telegodex_tool":"shell","command":"Get-Location","reason":"check cwd","risk":"read-only"}'
+
+        provider = MagicMock()
+        provider.chat_stream = MagicMock(side_effect=_tool_stream)
+        provider.chat = AsyncMock(
+            return_value=AIResponse(content="The current directory is C:/repo.", model="test-model")
+        )
+
+        user = MagicMock(
+            preferred_provider="openai",
+            preferred_model="test-model",
+            temperature="0.7",
+            tool_permission_mode="full",
+        )
+        mock_context_manager.get_or_create_user = AsyncMock(return_value=user)
+
+        shell_provider = SimpleNamespace(
+            execute=AsyncMock(return_value={"returncode": 0, "stdout": "C:/repo", "stderr": ""})
+        )
+        orchestrator = SimpleNamespace(shell_provider=shell_provider)
+
+        ai_router = MagicMock()
+        ai_router.get_provider = MagicMock(return_value=provider)
+        ai_router.get_default_provider = MagicMock(return_value=provider)
+        ai_router.is_provider_available = MagicMock(return_value=True)
+
+        @dp.message.middleware()
+        async def inject_deps(handler, event, data):
+            data["context_manager"] = mock_context_manager
+            data["ai_router"] = ai_router
+            data["orchestrator"] = orchestrator
+            return await handler(event, data)
+
+        bot = AsyncMock()
+        message = _make_mock_message(text="where am I", chat_type="group")
+        update = _make_update(message)
+
+        mock_settings = MagicMock()
+        mock_settings.telegram_bot_token = "123:fake"
+        mock_settings.max_tokens = 4096
+
+        with (
+            patch("bot.handlers.messages.settings", mock_settings),
+            patch("bot.handlers.messages.send_rich_message", AsyncMock(return_value=True)) as mock_send_rich,
+        ):
+            await dp.feed_update(bot, update)
+
+        shell_provider.execute.assert_awaited_once_with(
+            "Get-Location",
+            session_id="telegram:123456",
+        )
+        provider.chat.assert_awaited_once()
+        followup_messages = provider.chat.await_args.kwargs["messages"]
+        assert any("stdout:\nC:/repo" in msg.content for msg in followup_messages)
+        mock_send_rich.assert_awaited_once()
+        _, kwargs = mock_send_rich.call_args
+        assert kwargs["markdown_text"] == "The current directory is C:/repo."
 
     @pytest.mark.asyncio
     async def test_terminal_provider_error_does_not_retry_non_streaming(

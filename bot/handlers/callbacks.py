@@ -12,6 +12,7 @@ from bot.keyboards import (
     get_provider_selector,
     get_settings_menu,
 )
+from core.orchestrator.chat_tools import next_permission_mode, permission_mode_label
 from storage import ContextManager, User
 
 router = Router()
@@ -24,46 +25,44 @@ async def handle_settings_callback(callback: CallbackQuery, context_manager: Con
 
     if action == "provider":
         # 显示 AI 服务商选择器
-        user = await context_manager.session.execute(
-            select(User).where(User.id == callback.from_user.id)
-        )
+        user = await context_manager.session.execute(select(User).where(User.id == callback.from_user.id))
         user_obj = user.scalar_one()
 
         available_providers = ai_router.list_available_providers()
         keyboard = get_provider_selector(available_providers, user_obj.preferred_provider)
 
-        await callback.message.edit_text(
-            "🤖 选择 AI 服务商：",
-            reply_markup=keyboard
-        )
+        await callback.message.edit_text("🤖 选择 AI 服务商：", reply_markup=keyboard)
 
     elif action == "model":
         # 显示模型选择器
-        user = await context_manager.session.execute(
-            select(User).where(User.id == callback.from_user.id)
-        )
+        user = await context_manager.session.execute(select(User).where(User.id == callback.from_user.id))
         user_obj = user.scalar_one()
 
         provider = ai_router.get_provider(user_obj.preferred_provider)
         if provider:
             models = provider.get_available_models()
-            keyboard = get_model_selector(
-                user_obj.preferred_provider,
-                models,
-                user_obj.preferred_model
-            )
+            keyboard = get_model_selector(user_obj.preferred_provider, models, user_obj.preferred_model)
 
-            await callback.message.edit_text(
-                f"🎯 选择模型 ({provider.provider_name})：",
-                reply_markup=keyboard
-            )
+            await callback.message.edit_text(f"🎯 选择模型 ({provider.provider_name})：", reply_markup=keyboard)
 
     elif action == "back":
         # 返回设置主菜单
+        user = await context_manager.session.execute(select(User).where(User.id == callback.from_user.id))
+        user_obj = user.scalar_one()
+        await callback.message.edit_text("⚙️ 设置", reply_markup=get_settings_menu(user_obj.tool_permission_mode))
+
+    elif action == "permission":
+        user = await context_manager.session.execute(select(User).where(User.id == callback.from_user.id))
+        user_obj = user.scalar_one()
+        user_obj.tool_permission_mode = next_permission_mode(user_obj.tool_permission_mode)
+        await context_manager.session.commit()
+        label = permission_mode_label(user_obj.tool_permission_mode)
         await callback.message.edit_text(
             "⚙️ 设置",
-            reply_markup=get_settings_menu()
+            reply_markup=get_settings_menu(user_obj.tool_permission_mode),
         )
+        await callback.answer(f"权限:{label}", show_alert=False)
+        return
 
     elif action == "close":
         # 关闭设置菜单
@@ -77,9 +76,7 @@ async def handle_provider_change(callback: CallbackQuery, context_manager: Conte
     """处理服务商切换"""
     provider = callback.data.split(":", 1)[1]
 
-    user = await context_manager.session.execute(
-        select(User).where(User.id == callback.from_user.id)
-    )
+    user = await context_manager.session.execute(select(User).where(User.id == callback.from_user.id))
     user_obj = user.scalar_one()
     user_obj.preferred_provider = provider
     user_obj.preferred_model = None  # 重置模型选择
@@ -87,10 +84,7 @@ async def handle_provider_change(callback: CallbackQuery, context_manager: Conte
     await context_manager.session.commit()
 
     await callback.answer(f"✅ 已切换到 {provider}", show_alert=True)
-    await callback.message.edit_text(
-        "⚙️ 设置",
-        reply_markup=get_settings_menu()
-    )
+    await callback.message.edit_text("⚙️ 设置", reply_markup=get_settings_menu(user_obj.tool_permission_mode))
 
 
 @router.callback_query(lambda c: c.data and c.data.startswith("model:"))
@@ -99,19 +93,14 @@ async def handle_model_change(callback: CallbackQuery, context_manager: ContextM
     parts = callback.data.split(":", 2)
     model = parts[2]
 
-    user = await context_manager.session.execute(
-        select(User).where(User.id == callback.from_user.id)
-    )
+    user = await context_manager.session.execute(select(User).where(User.id == callback.from_user.id))
     user_obj = user.scalar_one()
     user_obj.preferred_model = model
 
     await context_manager.session.commit()
 
     await callback.answer(f"✅ 已切换到 {model}", show_alert=True)
-    await callback.message.edit_text(
-        "⚙️ 设置",
-        reply_markup=get_settings_menu()
-    )
+    await callback.message.edit_text("⚙️ 设置", reply_markup=get_settings_menu(user_obj.tool_permission_mode))
 
 
 @router.callback_query(lambda c: c.data and c.data.startswith("conv:"))
@@ -127,7 +116,7 @@ async def handle_conversation_callback(callback: CallbackQuery, context_manager:
         # 显示确认对话框
         await callback.message.edit_text(
             "⚠️ 确定要清空所有对话历史吗？此操作不可撤销！",
-            reply_markup=get_confirmation_keyboard("clear_all_conversations")
+            reply_markup=get_confirmation_keyboard("clear_all_conversations"),
         )
 
     elif action == "back":
@@ -165,6 +154,7 @@ async def handle_cancel(callback: CallbackQuery):
 # ---------------------------------------------------------------------------
 # CodexBridge approval callbacks
 # ---------------------------------------------------------------------------
+
 
 @router.callback_query(lambda c: c.data and c.data.startswith("codex_approval:"))
 async def handle_codex_approval(callback: CallbackQuery, orchestrator: Any):

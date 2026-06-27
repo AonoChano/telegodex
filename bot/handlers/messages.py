@@ -1,8 +1,11 @@
 import time
+from inspect import isawaitable
+from typing import Any
+from uuid import uuid4
 
 from aiogram import F, Router
 from aiogram.filters import Command
-from aiogram.types import Message
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 from loguru import logger
 from sqlalchemy import select
 
@@ -15,10 +18,18 @@ from bot.utils.markdown import format_markdown_v2
 from bot.utils.rich_messages import send_rich_message
 from bot.utils.routing import TelegramRoute
 from config import settings
+from core.orchestrator.chat_tools import (
+    build_telegodex_capability_prompt,
+    build_tool_result_message,
+    normalize_permission_mode,
+    parse_chat_tool_request,
+    permission_mode_label,
+)
+from core.orchestrator.shell_pipeline import ShellCommandProposal, format_shell_proposal_html
 from core.session import SessionData, SessionKey, session_manager
 from prompts import get_prompt_manager
 from storage import ContextManager
-from storage.models import Conversation
+from storage.models import Conversation, User
 
 router = Router()
 
@@ -63,9 +74,9 @@ async def _push_draft(stream: DraftStream | None, text: str) -> None:
 
 def escape_markdown(text: str) -> str:
     """转义 Telegram MarkdownV2 特殊字符（用于 Bot 自身消息）"""
-    special_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
+    special_chars = ["_", "*", "[", "]", "(", ")", "~", "`", ">", "#", "+", "-", "=", "|", "{", "}", ".", "!"]
     for char in special_chars:
-        text = text.replace(char, f'\\{char}')
+        text = text.replace(char, f"\\{char}")
     return text
 
 
@@ -135,19 +146,19 @@ async def cmd_start(message: Message, context_manager: ContextManager, ai_router
         language_code=user.language_code,
     )
 
-    user_name = escape_markdown(user.first_name or 'User')
+    user_name = escape_markdown(user.first_name or "User")
     providers = []
-    if ai_router.is_provider_available('openai'):
-        providers.append('• ✅ OpenAI \\(GPT\\)')
-    if ai_router.is_provider_available('anthropic'):
-        providers.append('• ✅ Anthropic \\(Claude\\)')
-    if ai_router.is_provider_available('google'):
-        providers.append('• ✅ Google \\(Gemini\\)')
+    if ai_router.is_provider_available("openai"):
+        providers.append("• ✅ OpenAI \\(GPT\\)")
+    if ai_router.is_provider_available("anthropic"):
+        providers.append("• ✅ Anthropic \\(Claude\\)")
+    if ai_router.is_provider_available("google"):
+        providers.append("• ✅ Google \\(Gemini\\)")
     for provider_name in ai_router.list_available_providers():
         if provider_name.lower() not in {"openai", "anthropic", "google"}:
             providers.append(f"• ✅ {escape_markdown(provider_name)}")
 
-    providers_text = '\n'.join(providers) if providers else '• ⚠️ 无可用服务商'
+    providers_text = "\n".join(providers) if providers else "• ⚠️ 无可用服务商"
 
     welcome_text = f"""👋 欢迎使用 **Telegodex**\\!
 
@@ -202,12 +213,22 @@ async def cmd_help(message: Message):
 
 
 @router.message(Command("settings"))
-async def cmd_settings(message: Message) -> None:
+async def cmd_settings(message: Message, context_manager: ContextManager | None = None) -> None:
     """Open the settings menu."""
     route = TelegramRoute.from_message(message)
+    permission_mode = None
+    if context_manager is not None and message.from_user is not None:
+        try:
+            result = await context_manager.session.execute(select(User).where(User.id == message.from_user.id))
+            user = result.scalar_one_or_none()
+            if isawaitable(user):
+                user = await user
+            permission_mode = getattr(user, "tool_permission_mode", None)
+        except Exception as exc:
+            logger.debug(f"Failed to load settings permission mode: {exc}")
     await message.answer(
         "Settings",
-        reply_markup=get_settings_menu(),
+        reply_markup=get_settings_menu(permission_mode),
         **route.send_kwargs(),
     )
 
@@ -220,9 +241,7 @@ async def cmd_new(message: Message, context_manager: ContextManager):
     thread_id = route.storage_thread_id
 
     # 创建新对话（按 topic 隔离）
-    await context_manager.create_new_conversation(
-        user_id, thread_id=thread_id, chat_id=route.chat_id
-    )
+    await context_manager.create_new_conversation(user_id, thread_id=thread_id, chat_id=route.chat_id)
 
     await message.answer(
         "✅ 已开始新对话\\!",
@@ -238,9 +257,7 @@ async def cmd_clear(message: Message, context_manager: ContextManager):
     route = TelegramRoute.from_message(message)
     thread_id = route.storage_thread_id
 
-    conversation = await context_manager.get_or_create_conversation(
-        user_id, thread_id=thread_id, chat_id=route.chat_id
-    )
+    conversation = await context_manager.get_or_create_conversation(user_id, thread_id=thread_id, chat_id=route.chat_id)
 
     await context_manager.clear_conversation(conversation.id)
 
@@ -298,11 +315,146 @@ async def _resolve_provider_conversation(
             return conv
 
     # No bucket or stale session_id: create a fresh conversation.
-    conv = await context_manager.create_new_conversation(
-        user_id, thread_id=thread_id, chat_id=session_key.chat_id
-    )
+    conv = await context_manager.create_new_conversation(user_id, thread_id=thread_id, chat_id=session_key.chat_id)
     bucket.session_id = str(conv.id)
     return conv
+
+
+def _looks_like_chat_tool_request_prefix(text: str) -> bool:
+    stripped = text.lstrip()
+    if not stripped:
+        return False
+    if stripped.startswith("{") and "telegodex_tool" in stripped[:500]:
+        return True
+    return stripped.startswith("```") and "telegodex_tool" in stripped[:700]
+
+
+async def _handle_chat_tool_request(
+    *,
+    tool_response_text: str,
+    message: Message,
+    route: TelegramRoute,
+    context_manager: ContextManager,
+    conversation: Conversation,
+    messages_with_system: list[AIMessage],
+    provider: Any,
+    orchestrator: Any | None,
+    session_key: SessionKey,
+    permission_mode: str | None,
+    model_name: str | None,
+    temperature: float,
+) -> tuple[str, str | None, int | None] | None:
+    """Handle a normal-chat tool request.
+
+    Returns replacement assistant text/model/tokens for full-access execution.
+    Returns ``None`` when the request was blocked or deferred to an inline button.
+    """
+    request = parse_chat_tool_request(tool_response_text)
+    if request is None:
+        return None
+
+    mode = normalize_permission_mode(permission_mode)
+    label = permission_mode_label(mode)
+
+    if mode == "chat":
+        text = (
+            "权限当前为 `仅对话`。我不会运行命令或调用本地工具。\n\n"
+            "需要我查看本地环境、执行命令或使用工具时，请在设置里把权限切到 `用户确认` "
+            "或 `⚠️ 完全访问` 后再继续。"
+        )
+        await context_manager.add_message(
+            conversation_id=conversation.id,
+            role=MessageRole.ASSISTANT,
+            content=text,
+        )
+        await message.answer(text, parse_mode="Markdown", **route.send_kwargs())
+        return None
+
+    if mode == "confirm":
+        if orchestrator is None or not hasattr(orchestrator, "pending_shell_commands"):
+            text = "Telegodex detected a tool request, but approval handling is not available in this chat runtime."
+            await context_manager.add_message(
+                conversation_id=conversation.id,
+                role=MessageRole.ASSISTANT,
+                content=text,
+            )
+            await message.answer(text, **route.send_kwargs())
+            return None
+
+        approval_id = f"chat-{uuid4().hex[:12]}"
+        orchestrator.pending_shell_commands[approval_id] = {
+            "command": request.command,
+            "message": message,
+            "route": route,
+            "session_key": session_key,
+            "source": "chat_tool",
+        }
+        proposal = ShellCommandProposal(
+            command=request.command,
+            explanation=request.reason or "The chat AI requested this command to complete the task.",
+            risk=request.risk or f"Permission mode: {label}",
+        )
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(text="Run", callback_data=f"shell_ai:{approval_id}:run"),
+                    InlineKeyboardButton(text="Cancel", callback_data=f"shell_ai:{approval_id}:cancel"),
+                ]
+            ]
+        )
+        await message.answer(
+            format_shell_proposal_html(proposal),
+            parse_mode="HTML",
+            reply_markup=keyboard,
+            **route.send_kwargs(),
+        )
+        audit_text = f"Requested user confirmation for shell command: `{request.command}`"
+        await context_manager.add_message(
+            conversation_id=conversation.id,
+            role=MessageRole.ASSISTANT,
+            content=audit_text,
+        )
+        return None
+
+    shell_provider = getattr(orchestrator, "shell_provider", None) if orchestrator is not None else None
+    if shell_provider is None or not hasattr(shell_provider, "execute"):
+        text = "Telegodex full-access tool execution is unavailable because no shell provider is attached."
+        await context_manager.add_message(
+            conversation_id=conversation.id,
+            role=MessageRole.ASSISTANT,
+            content=text,
+        )
+        await message.answer(text, **route.send_kwargs())
+        return None
+
+    current_text = tool_response_text
+    current_messages = list(messages_with_system)
+    response_model = model_name
+    response_tokens: int | None = None
+    for _ in range(3):
+        request = parse_chat_tool_request(current_text)
+        if request is None:
+            return current_text, response_model, response_tokens
+        result = await shell_provider.execute(request.command, session_id=session_key.to_string())
+        current_messages.extend(
+            [
+                AIMessage(role=MessageRole.ASSISTANT, content=current_text),
+                build_tool_result_message(request, result),
+            ]
+        )
+        response = await provider.chat(
+            messages=current_messages,
+            model=model_name,
+            temperature=temperature,
+            max_tokens=settings.max_tokens,
+        )
+        current_text = normalize_rich_markdown_latex(response.content)
+        response_model = response.model
+        response_tokens = response.usage.get("total_tokens") if response.usage else None
+
+    if parse_chat_tool_request(current_text) is not None:
+        current_text = "Tool loop stopped after 3 rounds. Please review the latest command result and try again."
+    return current_text, response_model, response_tokens
 
 
 @router.message(Command("model"))
@@ -319,7 +471,7 @@ async def cmd_model(
 
     prompt = message.text or ""
     if prompt.startswith("/model"):
-        prompt = prompt[len("/model"):].strip()
+        prompt = prompt[len("/model") :].strip()
 
     if not prompt:
         available = ai_router.list_available_providers()
@@ -343,9 +495,7 @@ async def cmd_model(
         return
 
     user = await context_manager.get_or_create_user(user_id)
-    conversation = await context_manager.get_or_create_conversation(
-        user_id, thread_id=thread_id, chat_id=route.chat_id
-    )
+    conversation = await context_manager.get_or_create_conversation(user_id, thread_id=thread_id, chat_id=route.chat_id)
 
     session_data = await _load_session_data(conversation, session_key)
 
@@ -367,15 +517,16 @@ async def cmd_model(
     await context_manager.session.commit()
 
     await message.answer(
-        f"✅ Switched to `{provider_name}`\\.\n"
-        f"_Messages in this thread are now isolated per provider\\._",
+        f"✅ Switched to `{provider_name}`\\.\n_Messages in this thread are now isolated per provider\\._",
         parse_mode="MarkdownV2",
         **route.send_kwargs(),
     )
 
 
 @router.message(F.text)
-async def handle_message(message: Message, context_manager: ContextManager, ai_router: AIRouter):
+async def handle_message(
+    message: Message, context_manager: ContextManager, ai_router: AIRouter, orchestrator: Any | None = None
+):
     """处理普通文本消息"""
     user_id = message.from_user.id
     user_text = message.text
@@ -384,6 +535,7 @@ async def handle_message(message: Message, context_manager: ContextManager, ai_r
 
     # 输入验证和清理
     from security import sanitize_input
+
     user_text = sanitize_input(user_text, max_length=4000)
 
     if not user_text:
@@ -396,7 +548,7 @@ async def handle_message(message: Message, context_manager: ContextManager, ai_r
             await cmd_new(message, context_manager)
             return
         if user_text == "⚙️ 设置":
-            await cmd_settings(message)
+            await cmd_settings(message, context_manager)
             return
         if user_text == "ℹ️ 帮助":
             await cmd_help(message)
@@ -410,9 +562,7 @@ async def handle_message(message: Message, context_manager: ContextManager, ai_r
     session_key = SessionKey.from_telegram_message(route.chat_id, route.message_thread_id)
 
     # Bootstrap session data from the current active conversation.
-    base_conv = await context_manager.get_or_create_conversation(
-        user_id, thread_id=thread_id, chat_id=route.chat_id
-    )
+    base_conv = await context_manager.get_or_create_conversation(user_id, thread_id=thread_id, chat_id=route.chat_id)
     session_data = await _load_session_data(base_conv, session_key)
 
     provider_name = user.preferred_provider or "openai"
@@ -436,11 +586,7 @@ async def handle_message(message: Message, context_manager: ContextManager, ai_r
     await _save_session_data(conversation, session_key)
 
     # 添加用户消息到历史
-    await context_manager.add_message(
-        conversation_id=conversation.id,
-        role=MessageRole.USER,
-        content=user_text
-    )
+    await context_manager.add_message(conversation_id=conversation.id, role=MessageRole.USER, content=user_text)
 
     # 获取对话历史
     history = await context_manager.get_conversation_history(conversation.id)
@@ -458,28 +604,30 @@ async def handle_message(message: Message, context_manager: ContextManager, ai_r
         prompt_manager = get_prompt_manager()
         system_prompt = prompt_manager.get_system_prompt(
             provider=user.preferred_provider
-        )
+        ) + build_telegodex_capability_prompt(getattr(user, "tool_permission_mode", None))
 
         # 构建包含系统提示词的消息历史
-        messages_with_system = [
-            AIMessage(role=MessageRole.SYSTEM, content=system_prompt)
-        ] + history
+        messages_with_system = [AIMessage(role=MessageRole.SYSTEM, content=system_prompt)] + history
 
         bot_token = settings.telegram_bot_token
-        if hasattr(bot_token, 'get_secret_value'):
+        if hasattr(bot_token, "get_secret_value"):
             bot_token = bot_token.get_secret_value()
 
         # 仅私有 chat 支持 draft API；其它场景（群组/频道）跳过预览
         use_draft = message.chat.type == "private"
-        stream = DraftStream(
-            bot_token=bot_token,
-            chat_id=route.chat_id,
-            message_thread_id=route.draft_thread_id(),
-            direct_messages_topic_id=route.direct_messages_topic_id,
-            business_connection_id=route.business_connection_id,
-            use_rich=True,
-            max_draft_calls=DRAFT_MAX_CALLS_PER_ID,
-        ) if use_draft else None
+        stream = (
+            DraftStream(
+                bot_token=bot_token,
+                chat_id=route.chat_id,
+                message_thread_id=route.draft_thread_id(),
+                direct_messages_topic_id=route.direct_messages_topic_id,
+                business_connection_id=route.business_connection_id,
+                use_rich=True,
+                max_draft_calls=DRAFT_MAX_CALLS_PER_ID,
+            )
+            if use_draft
+            else None
+        )
         model_name = user.preferred_model
         temperature = float(user.temperature or 0.7)
 
@@ -509,16 +657,13 @@ async def handle_message(message: Message, context_manager: ContextManager, ai_r
                 buffer += chunk
                 now = time.monotonic()
                 # 草稿会带动画；按字符数 + 时间双触发，但短回复不推草稿
-                if (
-                    len(buffer) >= DRAFT_FLUSH_CHARS
-                    or (now - last_flush) >= DRAFT_FLUSH_INTERVAL
-                ):
-                    if len(response_text) >= DRAFT_MIN_RESPONSE_CHARS:
+                if len(buffer) >= DRAFT_FLUSH_CHARS or (now - last_flush) >= DRAFT_FLUSH_INTERVAL:
+                    if len(response_text) >= DRAFT_MIN_RESPONSE_CHARS and not _looks_like_chat_tool_request_prefix(
+                        response_text
+                    ):
                         await _push_draft(
                             stream,
-                            normalize_rich_markdown_latex(
-                                response_text[-DRAFT_MAX_CHARS:]
-                            ),
+                            normalize_rich_markdown_latex(response_text[-DRAFT_MAX_CHARS:]),
                         )
                     buffer = ""
                     last_flush = now
@@ -529,27 +674,23 @@ async def handle_message(message: Message, context_manager: ContextManager, ai_r
                 and stream is not None
                 and response_text
                 and len(response_text) >= DRAFT_MIN_RESPONSE_CHARS
+                and not _looks_like_chat_tool_request_prefix(response_text)
             ):
                 await _push_draft(
                     stream,
-                    normalize_rich_markdown_latex(
-                        response_text[-DRAFT_MAX_CHARS:]
-                    ),
+                    normalize_rich_markdown_latex(response_text[-DRAFT_MAX_CHARS:]),
                 )
         except Exception as stream_err:
             if _is_terminal_provider_error(stream_err):
                 logger.warning(
-                    f"流式 chat_stream 遇到终止性服务商错误，不再回退非流式: "
-                    f"{type(stream_err).__name__}: {stream_err}"
+                    f"流式 chat_stream 遇到终止性服务商错误，不再回退非流式: {type(stream_err).__name__}: {stream_err}"
                 )
                 await message.answer(
                     _format_provider_error(stream_err, provider_name),
                     **route.send_kwargs(),
                 )
                 return
-            logger.warning(
-                f"流式 chat_stream 失败，回退非流式: {type(stream_err).__name__}: {stream_err}"
-            )
+            logger.warning(f"流式 chat_stream 失败，回退非流式: {type(stream_err).__name__}: {stream_err}")
             stream_used = False
             response_text = ""
 
@@ -571,23 +712,39 @@ async def handle_message(message: Message, context_manager: ContextManager, ai_r
                 return
             response_text = response.content
             response_model = response.model
-            response_tokens = (
-                response.usage.get("total_tokens") if response.usage else None
-            )
+            response_tokens = response.usage.get("total_tokens") if response.usage else None
             # 非流式时尝试一次草稿，让用户在持久化前先看到完整预览
             if (
                 stream is not None
                 and response_text
                 and len(response_text) >= DRAFT_MIN_RESPONSE_CHARS
+                and not _looks_like_chat_tool_request_prefix(response_text)
             ):
                 await _push_draft(
                     stream,
-                    normalize_rich_markdown_latex(
-                        response_text[-DRAFT_MAX_CHARS:]
-                    ),
+                    normalize_rich_markdown_latex(response_text[-DRAFT_MAX_CHARS:]),
                 )
 
         response_text = normalize_rich_markdown_latex(response_text)
+
+        tool_outcome = await _handle_chat_tool_request(
+            tool_response_text=response_text,
+            message=message,
+            route=route,
+            context_manager=context_manager,
+            conversation=conversation,
+            messages_with_system=messages_with_system,
+            provider=provider,
+            orchestrator=orchestrator,
+            session_key=session_key,
+            permission_mode=getattr(user, "tool_permission_mode", None),
+            model_name=model_name,
+            temperature=temperature,
+        )
+        if parse_chat_tool_request(response_text) is not None:
+            if tool_outcome is None:
+                return
+            response_text, response_model, response_tokens = tool_outcome
 
         if not response_text.strip():
             await message.answer(

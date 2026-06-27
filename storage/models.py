@@ -2,6 +2,7 @@ from datetime import datetime
 
 from loguru import logger
 from sqlalchemy import (
+    JSON,
     BigInteger,
     Boolean,
     Column,
@@ -9,7 +10,6 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
-    JSON,
     String,
     Text,
     text,
@@ -22,6 +22,7 @@ Base = declarative_base()
 
 class User(Base):
     """用户表"""
+
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True)  # Telegram User ID
@@ -38,13 +39,14 @@ class User(Base):
     preferred_provider = Column(String(50), default="openai")  # AI 服务商
     preferred_model = Column(String(100), nullable=True)
     temperature = Column(String(10), default="0.7")
-
+    tool_permission_mode = Column(String(20), default="confirm")
     # 关系
     conversations = relationship("Conversation", back_populates="user", cascade="all, delete-orphan")
 
 
 class Conversation(Base):
     """对话会话表"""
+
     __tablename__ = "conversations"
 
     id: Mapped[int] = Column(Integer, primary_key=True, autoincrement=True)
@@ -72,7 +74,9 @@ class Conversation(Base):
 
     # 关系
     user: Mapped["User"] = relationship("User", back_populates="conversations")
-    messages: Mapped[list["ConversationMessage"]] = relationship("ConversationMessage", back_populates="conversation", cascade="all, delete-orphan")
+    messages: Mapped[list["ConversationMessage"]] = relationship(
+        "ConversationMessage", back_populates="conversation", cascade="all, delete-orphan"
+    )
 
     __table_args__ = (
         # 一个用户在同一 thread 内只保留少量活跃会话，定位最快
@@ -82,6 +86,7 @@ class Conversation(Base):
 
 class ConversationMessage(Base):
     """对话消息表"""
+
     __tablename__ = "conversation_messages"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -105,45 +110,24 @@ class Database:
 
     def __init__(self, database_url: str):
         self.engine = create_async_engine(database_url, echo=False)
-        self.async_session = async_sessionmaker(
-            self.engine,
-            class_=AsyncSession,
-            expire_on_commit=False
-        )
+        self.async_session = async_sessionmaker(self.engine, class_=AsyncSession, expire_on_commit=False)
 
     async def init_db(self):
         """初始化数据库表，并对老库做轻量列补齐"""
         async with self.engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
-            await self._ensure_column(
-                conn, "conversations", "chat_id", "BIGINT"
-            )
-            await self._ensure_column(
-                conn, "conversations", "thread_id", "BIGINT"
-            )
-            await self._ensure_column(
-                conn, "conversations", "transport", "VARCHAR"
-            )
-            await self._ensure_column(
-                conn, "conversations", "topic_id", "BIGINT"
-            )
-            await self._ensure_column(
-                conn, "conversations", "codex_thread_id", "VARCHAR"
-            )
-            await self._ensure_column(
-                conn, "conversations", "codex_thread_path", "VARCHAR"
-            )
-            await self._ensure_column(
-                conn, "conversations", "cwd", "VARCHAR"
-            )
-            await self._ensure_column(
-                conn, "conversations", "provider_sessions", "JSON"
-            )
+            await self._ensure_column(conn, "conversations", "chat_id", "BIGINT")
+            await self._ensure_column(conn, "conversations", "thread_id", "BIGINT")
+            await self._ensure_column(conn, "conversations", "transport", "VARCHAR")
+            await self._ensure_column(conn, "conversations", "topic_id", "BIGINT")
+            await self._ensure_column(conn, "conversations", "codex_thread_id", "VARCHAR")
+            await self._ensure_column(conn, "conversations", "codex_thread_path", "VARCHAR")
+            await self._ensure_column(conn, "conversations", "cwd", "VARCHAR")
+            await self._ensure_column(conn, "conversations", "provider_sessions", "JSON")
+            await self._ensure_column(conn, "users", "tool_permission_mode", "VARCHAR(20)")
         logger.info("✓ 数据库初始化完成")
 
-    async def _ensure_column(
-        self, conn, table_name: str, column_name: str, column_type: str
-    ) -> None:
+    async def _ensure_column(self, conn, table_name: str, column_name: str, column_type: str) -> None:
         """
         轻量 schema 迁移：列已存在则跳过，不存在则 ADD COLUMN。
 
@@ -156,17 +140,10 @@ class Database:
             existing = {row[1] for row in result.fetchall()}
             if column_name in existing:
                 return
-            await conn.execute(
-                text(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}")
-            )
+            await conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}"))
         else:
             # PostgreSQL 9.6+ / MySQL 8.0+ 都支持 IF NOT EXISTS
-            await conn.execute(
-                text(
-                    f"ALTER TABLE {table_name} ADD COLUMN IF NOT EXISTS "
-                    f"{column_name} {column_type}"
-                )
-            )
+            await conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN IF NOT EXISTS {column_name} {column_type}"))
         logger.info(f"Schema migration: added {table_name}.{column_name}")
 
     async def get_session(self) -> AsyncSession:

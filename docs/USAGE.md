@@ -33,9 +33,19 @@ Telegodex runs as a Telegram Workbench. You can chat with configured providers, 
 
 Telegodex syncs this command menu with Telegram on startup through `setMyCommands`. BotFather is still where the bot token and platform-level bot settings live, but users should not need to maintain the slash-command menu manually.
 
+## Chat Tool Permissions
+
+Open `/settings` and use the `权限:<等级>` button to cycle normal-chat tool access:
+
+- `仅对话` blocks local tools. If the AI tries to inspect local state, run commands, or call a capability, Telegodex stops it and tells you to raise the permission level.
+- `用户确认` lets the chat AI request a local shell command, but Telegodex shows the proposed command, reason, and risk with inline Run/Cancel buttons before anything executes.
+- `⚠️ 完全访问` lets approved chat tools run directly. Shell output is fed back into the model so the AI can retry or finish the answer based on the real command result.
+
+The normal chat AI receives a Telegodex capability prompt, so it should understand that it is operating inside Telegodex and should not claim it ran tools unless Telegodex actually returns tool results.
+
 ## Shell Commands
 
-Use `/shell <natural language task>` to ask the active chat AI provider to propose a shell command. Telegodex shows the generated command with Run, Revise, and Cancel buttons; it does not execute the generated command until you choose Run.
+`/shell` remains a manual escape hatch. Use `/shell <natural language task>` to ask the active chat AI provider to propose a shell command. Telegodex shows the generated command with Run, Revise, and Cancel buttons; it does not execute the generated command until you choose Run.
 
 Use raw mode when you already know the exact command:
 
@@ -44,7 +54,7 @@ Use raw mode when you already know the exact command:
 /shell -- git status
 ```
 
-Dangerous raw commands and dangerous AI-generated proposals still require an inline confirmation before execution. `/shell`, `/shell -h`, `/shell help`, and `/shell --help` show the usage summary.
+Dangerous raw commands and dangerous AI-generated proposals still require an inline confirmation before execution. `/shell`, `/shell -h`, `/shell help`, and `/shell --help` show the usage summary. For ordinary tasks, prefer normal chat plus the permission mode that matches how much autonomy you want to grant.
 
 ## Provider Selection
 
@@ -129,3 +139,5 @@ Keep `.env`, `custom_providers.json`, database files, and logs out of commits. `
 `Conflict: terminated by other getUpdates request` means another process uses the same token. Stop the other process or switch one instance to a different bot token.
 
 If a provider call fails, confirm the API key, base URL, model name, and network path. For custom providers, test the endpoint with a minimal OpenAI-compatible chat-completions request.
+
+If `/screenshot` fails with an empty-image warning even though Pillow is installed, focus or unminimize the terminal/window and retry. Telegodex falls back from terminal-window capture to full-screen capture, but Windows can still return an empty image for minimized, protected, or unavailable capture surfaces.
