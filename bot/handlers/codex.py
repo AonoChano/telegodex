@@ -23,7 +23,7 @@ from aiogram.types import (
 )
 from loguru import logger
 
-from bot.codex import command_ui, model_ui, reply_ui, session_ui, shell_ui
+from bot.codex import command_flow, command_ui, model_ui, reply_ui, session_ui, shell_ui
 from bot.codex.approval_ui import approval_ui_bridge
 from bot.codex.topic_filter import IsCodexBoundTopic
 from bot.codex.topic_recovery import TopicRecoveryPrompt, TopicRecoveryRequest, topic_recovery_store
@@ -363,89 +363,20 @@ async def cmd_codex_v2(
     context_manager: Any,
     orchestrator: Orchestrator,
 ) -> None:
-    """Handle /codex <prompt> with the persistent app-server architecture."""
-    bot = message.bot
-    if bot is None:
-        return
-    approval_ui_bridge.set_bot(bot)
-
-    route = TelegramRoute.from_message(message)
-    chat_id = route.chat_id
-    user_id = message.from_user.id if message.from_user else 0
-    session_key = SessionKey.from_telegram_message(chat_id, route.message_thread_id)
-
-    if route.message_thread_id is not None:
-        state = await _codex_topic_state(route.message_thread_id, context_manager, chat_id=route.chat_id)
-        prompt = command_ui.topic_prompt_text(message)
-        if state == _CODEX_TOPIC_RECOVERABLE:
-            await _send_topic_recovery_prompt(message, route, prompt)
-            return
-        if state != _CODEX_TOPIC_BOUND:
-            await message.answer(
-                "Codex is only available from the main chat screen.\n\n"
-                "Switch to <b>All</b> and send <code>/codex &lt;prompt&gt;</code> there.",
-                parse_mode="HTML",
-                **route.send_kwargs(),
-            )
-            return
-    else:
-        # In main chat — extract prompt after /codex
-        prompt = command_ui.command_args(message.text or "", "codex")
-
-    if not prompt:
-        await message.answer(
-            command_ui.CODEX_USAGE_HTML,
-            parse_mode="HTML",
-            **route.send_kwargs(),
-        )
-        return
-
-    # Check daemon readiness.
-    if not codex_daemon.is_alive():
-        await message.answer(
-            "Codex daemon is not running. Please restart the bot.",
-            **route.send_kwargs(),
-        )
-        return
-
-    orchestrator.ensure_transport_handlers()
-    _ensure_global_orch(orchestrator)
-
-    # Delegate sub-command routing and execution to the Orchestrator.
-    # For non-streaming results we just send the returned text.
-    # For streaming results (_execute_codex_prompt) the Orchestrator provides
-    # callbacks and the handler manages DraftStream.
-    stripped = prompt.strip().lower()
-    if command_ui.is_streaming_prompt(prompt):
-        await _execute_codex_prompt(message, route, context_manager, orchestrator, prompt)
-        return
-
-    # Special handling for "/codex new" — create a forum topic.
-    if stripped == "new":
-        await _handle_codex_new(message, route, context_manager, orchestrator, session_key, user_id)
-        return
-
-    # Non-streaming command — use Orchestrator.handle_message.
-    try:
-        result_text = await orchestrator.handle_message(
-            key=session_key,
-            text=f"/codex {prompt}",
-            db=context_manager.session,
-            user_id=user_id,
-        )
-        await message.answer(
-            result_text,
-            parse_mode="Markdown",
-            **route.send_kwargs(),
-        )
-    except Exception as exc:
-        logger.exception("Codex: command execution failed")
-        await message.answer(
-            f"Codex error: {exc}",
-            **route.send_kwargs(),
-        )
-
-
+    await command_flow.handle_codex_command(
+        message,
+        context_manager,
+        orchestrator,
+        approval_ui_bridge=approval_ui_bridge,
+        codex_daemon=codex_daemon,
+        codex_topic_state=_codex_topic_state,
+        send_topic_recovery_prompt=_send_topic_recovery_prompt,
+        ensure_global_orch=_ensure_global_orch,
+        execute_codex_prompt=_execute_codex_prompt,
+        handle_codex_new=_handle_codex_new,
+        codex_topic_bound=_CODEX_TOPIC_BOUND,
+        codex_topic_recoverable=_CODEX_TOPIC_RECOVERABLE,
+    )
 # ---------------------------------------------------------------------------
 # Codex-bound topic message handler
 # ---------------------------------------------------------------------------
