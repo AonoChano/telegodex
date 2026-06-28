@@ -22,11 +22,18 @@ from aiogram.types import (
     Message,
 )
 from loguru import logger
-from sqlalchemy import select
 
 from bot.codex import shell_ui
 from bot.codex.approval_ui import approval_ui_bridge
 from bot.codex.topic_recovery import TopicRecoveryPrompt, TopicRecoveryRequest, topic_recovery_store
+from bot.codex.topic_state import (
+    CODEX_TOPIC_BOUND,
+    CODEX_TOPIC_NOT_CODEX,
+    CODEX_TOPIC_RECOVERABLE,
+    bind_codex_thread_to_topic,
+    codex_topic_state,
+    is_codex_bound_topic,
+)
 from bot.codex.turn import CodexTurnActor
 from bot.handlers import toolbar as toolbar_handler
 from bot.streaming import ReactionTracker
@@ -51,9 +58,9 @@ STDERR_LATE_GRACE_SECONDS = 2.0
 STDERR_FLUSH_GRACE_SECONDS = 0.25
 
 
-_CODEX_TOPIC_BOUND = "bound"
-_CODEX_TOPIC_RECOVERABLE = "recoverable"
-_CODEX_TOPIC_NOT_CODEX = "not_codex"
+_CODEX_TOPIC_BOUND = CODEX_TOPIC_BOUND
+_CODEX_TOPIC_RECOVERABLE = CODEX_TOPIC_RECOVERABLE
+_CODEX_TOPIC_NOT_CODEX = CODEX_TOPIC_NOT_CODEX
 
 
 def set_db_session_factory(factory: Any) -> None:
@@ -246,45 +253,14 @@ async def _bind_codex_thread_to_topic(
     user_id: int,
     cwd: str | None = None,
 ) -> None:
-    """Persist that a Codex app-server thread belongs to a Telegram topic."""
-    from core.session import ProviderSessionData
-    from storage.models import Conversation
-
-    db = context_manager.session
-    result = await db.execute(
-        select(Conversation).where(
-            Conversation.chat_id == int(chat_id),
-            Conversation.codex_thread_id == thread_id,
-        )
+    await bind_codex_thread_to_topic(
+        context_manager=context_manager,
+        chat_id=chat_id,
+        topic_id=topic_id,
+        thread_id=thread_id,
+        user_id=user_id,
+        cwd=cwd,
     )
-    conv = result.scalars().first()
-    if conv is None:
-        logger.warning(
-            "Codex topic bind: missing conversation for chat_id={} thread_id={}; creating binding row",
-            chat_id,
-            thread_id,
-        )
-        conv = Conversation(
-            user_id=user_id,
-            chat_id=int(chat_id),
-            codex_thread_id=thread_id,
-            cwd=None if cwd == "default" else cwd,
-        )
-        db.add(conv)
-
-    conv.user_id = user_id
-    conv.chat_id = int(chat_id)
-    conv.transport = "telegram"
-    conv.topic_id = topic_id
-    conv.thread_id = topic_id
-    conv.codex_thread_id = thread_id
-    if cwd is not None and cwd != "default":
-        conv.cwd = cwd
-    conv.is_active = True
-    provider_sessions = dict(conv.provider_sessions or {})
-    provider_sessions["codex"] = ProviderSessionData(session_id=thread_id).to_dict()
-    conv.provider_sessions = provider_sessions
-    await db.commit()
 
 
 async def _is_codex_bound_topic(
@@ -292,8 +268,7 @@ async def _is_codex_bound_topic(
     context_manager: Any,
     chat_id: int | str | None = None,
 ) -> bool:
-    """Check whether a Telegram thread is bound to a Codex session."""
-    return await _codex_topic_state(thread_id, context_manager, chat_id=chat_id) == _CODEX_TOPIC_BOUND
+    return await is_codex_bound_topic(thread_id, context_manager, chat_id=chat_id)
 
 
 async def _codex_topic_state(
@@ -301,42 +276,7 @@ async def _codex_topic_state(
     context_manager: Any,
     chat_id: int | str | None = None,
 ) -> str:
-    """Classify a Telegram topic for Codex routing."""
-    from sqlalchemy import or_, select
-
-    from storage.models import Conversation
-
-    db = context_manager.session
-    scope = [
-        or_(
-            Conversation.thread_id == thread_id,
-            Conversation.topic_id == thread_id,
-        ),
-        Conversation.codex_thread_id.isnot(None),
-    ]
-    if chat_id is not None:
-        scope.append(Conversation.chat_id == int(chat_id))
-    stmt = select(Conversation).where(
-        *scope,
-        Conversation.is_active.is_(True),
-    )
-    result = await db.execute(stmt)
-    conv = result.scalars().first()
-    if conv is not None:
-        logger.debug(f"Codex topic check: chat_id={chat_id}, thread_id={thread_id}, state=bound, conv=id={conv.id}")
-        return _CODEX_TOPIC_BOUND
-
-    stmt = select(Conversation).where(*scope)
-    result = await db.execute(stmt)
-    conv = result.scalars().first()
-    if conv is not None:
-        logger.debug(
-            f"Codex topic check: chat_id={chat_id}, thread_id={thread_id}, state=recoverable, conv=id={conv.id}"
-        )
-        return _CODEX_TOPIC_RECOVERABLE
-
-    logger.debug(f"Codex topic check: chat_id={chat_id}, thread_id={thread_id}, state=not_codex")
-    return _CODEX_TOPIC_NOT_CODEX
+    return await codex_topic_state(thread_id, context_manager, chat_id=chat_id)
 
 
 # ---------------------------------------------------------------------------
