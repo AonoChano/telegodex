@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import contextlib
 import uuid
-from dataclasses import dataclass
 from typing import Any
 
 from aiogram import Bot, F, Router
@@ -29,6 +28,7 @@ from sqlalchemy import select
 
 from bot.codex import formatting as fmt
 from bot.codex.approval_ui import approval_ui_bridge
+from bot.codex.topic_recovery import TopicRecoveryPrompt, TopicRecoveryRequest, topic_recovery_store
 from bot.codex.turn import CodexTurnActor
 from bot.handlers import toolbar as toolbar_handler
 from bot.streaming import ReactionTracker
@@ -69,22 +69,10 @@ def set_db_session_factory(factory: Any) -> None:
     approval_ui_bridge.set_db_session_factory(factory)
 
 
-@dataclass(frozen=True)
-class _TopicRecoveryRequest:
-    chat_id: int | str
-    topic_id: int
-    prompt: str
-    user_id: int
-
-
-@dataclass(frozen=True)
-class _TopicRecoveryPrompt:
-    request_id: str
-    message_id: int
-
-
-_topic_recovery_requests: dict[str, _TopicRecoveryRequest] = {}
-_topic_recovery_prompts: dict[tuple[int | str, int], _TopicRecoveryPrompt] = {}
+_TopicRecoveryRequest = TopicRecoveryRequest
+_TopicRecoveryPrompt = TopicRecoveryPrompt
+_topic_recovery_requests = topic_recovery_store.requests
+_topic_recovery_prompts = topic_recovery_store.prompts
 
 
 def _command_args(text: str, command: str) -> str:
@@ -246,62 +234,15 @@ async def _codex_reply(
 
 
 def _topic_recovery_key(route: TelegramRoute) -> tuple[int | str, int] | None:
-    if route.message_thread_id is None:
-        return None
-    return route.chat_id, route.message_thread_id
+    return topic_recovery_store.key_for_route(route)
 
 
 async def _delete_previous_topic_recovery_prompt(bot: Bot, route: TelegramRoute) -> None:
-    key = _topic_recovery_key(route)
-    if key is None:
-        return
-    previous = _topic_recovery_prompts.pop(key, None)
-    if previous is None:
-        return
-    _topic_recovery_requests.pop(previous.request_id, None)
-    with contextlib.suppress(Exception):
-        await bot.delete_message(chat_id=route.chat_id, message_id=previous.message_id)
+    await topic_recovery_store.delete_previous_prompt(bot, route)
 
 
 async def _send_topic_recovery_prompt(message: Message, route: TelegramRoute, prompt: str) -> None:
-    """Ask the user whether to create a fresh Codex session for this topic."""
-    bot = message.bot
-    if bot is None or route.message_thread_id is None:
-        return
-
-    await _delete_previous_topic_recovery_prompt(bot, route)
-    request_id = str(uuid.uuid4())
-    _topic_recovery_requests[request_id] = _TopicRecoveryRequest(
-        chat_id=route.chat_id,
-        topic_id=route.message_thread_id,
-        prompt=prompt,
-        user_id=message.from_user.id if message.from_user else 0,
-    )
-    sent = await bot.send_message(
-        chat_id=route.chat_id,
-        message_thread_id=route.message_thread_id,
-        text=(
-            "This topic looks like a Codex topic, but no active Codex thread is bound to it.\n\n"
-            "Create a new Codex session here and run the message you just sent?"
-        ),
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text="Create new Codex session",
-                        callback_data=f"codex_topic_recover|{request_id}|create",
-                    ),
-                    InlineKeyboardButton(
-                        text="Cancel",
-                        callback_data=f"codex_topic_recover|{request_id}|cancel",
-                    ),
-                ]
-            ]
-        ),
-    )
-    key = _topic_recovery_key(route)
-    if key is not None and getattr(sent, "message_id", None) is not None:
-        _topic_recovery_prompts[key] = _TopicRecoveryPrompt(request_id=request_id, message_id=sent.message_id)
+    await topic_recovery_store.send_prompt(message, route, prompt)
 
 
 async def _bind_codex_thread_to_topic(
