@@ -23,7 +23,7 @@ from aiogram.types import (
 )
 from loguru import logger
 
-from bot.codex import shell_ui
+from bot.codex import model_ui, shell_ui
 from bot.codex.approval_ui import approval_ui_bridge
 from bot.codex.topic_recovery import TopicRecoveryPrompt, TopicRecoveryRequest, topic_recovery_store
 from bot.codex.topic_state import (
@@ -42,7 +42,7 @@ from bot.utils.rich_messages import send_rich_message
 from bot.utils.routing import TelegramRoute
 from config import settings
 from core.orchestrator import Orchestrator
-from core.session import SessionKey, session_manager
+from core.session import SessionKey
 from extensions.codex.commands import parse_instruction_prefix
 from extensions.codex.daemon import codex_daemon
 from storage.context_manager import ContextManager
@@ -659,75 +659,7 @@ async def cmd_model(
     context_manager: ContextManager,
     orchestrator: Orchestrator,
 ) -> None:
-    """Switch AI provider without losing other provider context."""
-    from bot.handlers.messages import (
-        _load_session_data,
-        _resolve_provider_conversation,
-        _save_session_data,
-    )
-
-    user_id = message.from_user.id
-    route = TelegramRoute.from_message(message)
-    thread_id = route.storage_thread_id
-    session_key = SessionKey.from_telegram_message(route.chat_id, route.message_thread_id)
-
-    prompt = message.text or ""
-    if prompt.startswith("/model"):
-        prompt = prompt[len("/model") :].strip()
-
-    if not prompt:
-        available = orchestrator.providers.list_available()
-        lines = ["**Usage:** `/model <provider>`", "", "**Available providers:**"]
-        for name in available:
-            lines.append(f"- `{name}`")
-        await message.answer(
-            "\n".join(lines),
-            parse_mode="Markdown",
-            **route.send_kwargs(),
-        )
-        return
-
-    provider_name = prompt.lower()
-    if provider_name not in orchestrator.providers.list_available():
-        await message.answer(
-            f"❌ Unknown provider: `{provider_name}`",
-            parse_mode="Markdown",
-            **route.send_kwargs(),
-        )
-        return
-
-    user = await context_manager.get_or_create_user(user_id)
-    conversation = await context_manager.get_or_create_conversation(
-        user_id,
-        thread_id=thread_id,
-        chat_id=route.chat_id,
-    )
-
-    session_data = await _load_session_data(conversation, session_key)
-
-    # Save current provider bucket before switching.
-    if user.preferred_provider:
-        old_bucket = session_data.get_or_create_bucket(user.preferred_provider)
-        old_bucket.session_id = str(conversation.id)
-
-    # Switch active provider.
-    user.preferred_provider = provider_name
-    session_manager.set_active_provider(session_key, provider_name)
-
-    # Resolve or create the provider-specific conversation.
-    provider_conv = await _resolve_provider_conversation(
-        context_manager, session_key, session_data, user_id, thread_id, provider_name
-    )
-
-    await _save_session_data(provider_conv, session_key)
-    await context_manager.session.commit()
-
-    await message.answer(
-        f"✅ Switched to `{provider_name}`\\.\n_Messages in this thread are now isolated per provider\\._",
-        parse_mode="MarkdownV2",
-        **route.send_kwargs(),
-    )
-
+    await model_ui.handle_model_command(message, context_manager, orchestrator)
 
 # ---------------------------------------------------------------------------
 # /shell command handler

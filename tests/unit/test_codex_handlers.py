@@ -644,6 +644,21 @@ async def test_topic_recovery_create_starts_session_in_current_topic(
     finally:
         codex._topic_recovery_requests.clear()
         codex._topic_recovery_prompts.clear()
+
+
+@pytest.mark.asyncio
+async def test_cmd_model_delegates_to_model_ui(monkeypatch: pytest.MonkeyPatch) -> None:
+    message = _message("/model deepseek")
+    context = SimpleNamespace()
+    orchestrator = SimpleNamespace()
+    handle_model_command = AsyncMock()
+    monkeypatch.setattr(codex.model_ui, "handle_model_command", handle_model_command)
+
+    await codex.cmd_model(message, context, orchestrator)
+
+    handle_model_command.assert_awaited_once_with(message, context, orchestrator)
+
+
 @pytest.mark.asyncio
 async def test_cmd_shell_delegates_to_shell_ui(monkeypatch: pytest.MonkeyPatch) -> None:
     message = _message("/shell help")
