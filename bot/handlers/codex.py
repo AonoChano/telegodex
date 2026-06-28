@@ -23,7 +23,7 @@ from aiogram.types import (
 )
 from loguru import logger
 
-from bot.codex import model_ui, session_ui, shell_ui
+from bot.codex import command_ui, model_ui, session_ui, shell_ui
 from bot.codex.approval_ui import approval_ui_bridge
 from bot.codex.topic_recovery import TopicRecoveryPrompt, TopicRecoveryRequest, topic_recovery_store
 from bot.codex.topic_state import (
@@ -43,7 +43,6 @@ from bot.utils.routing import TelegramRoute
 from config import settings
 from core.orchestrator import Orchestrator
 from core.session import SessionKey
-from extensions.codex.commands import parse_instruction_prefix
 from extensions.codex.daemon import codex_daemon
 from storage.context_manager import ContextManager
 from utils.screenshot import send_screenshot_to_chat
@@ -72,25 +71,6 @@ _TopicRecoveryRequest = TopicRecoveryRequest
 _TopicRecoveryPrompt = TopicRecoveryPrompt
 _topic_recovery_requests = topic_recovery_store.requests
 _topic_recovery_prompts = topic_recovery_store.prompts
-
-
-def _command_args(text: str, command: str) -> str:
-    """Return text after a Telegram command, accepting /command@botname."""
-    stripped = text.strip()
-    prefix = f"/{command}"
-    if not stripped.startswith(prefix):
-        return stripped
-    rest = stripped[len(prefix) :]
-    if rest.startswith("@"):
-        if " " not in rest:
-            return ""
-        rest = rest.split(" ", 1)[1]
-    return rest.strip()
-
-
-def _topic_prompt_text(message: Message) -> str:
-    """Return user prompt text inside a Codex topic, without a leading /codex."""
-    return _command_args(message.text or "", "codex")
 
 
 def _ensure_global_orch(
@@ -415,7 +395,7 @@ async def cmd_codex_v2(
 
     if route.message_thread_id is not None:
         state = await _codex_topic_state(route.message_thread_id, context_manager, chat_id=route.chat_id)
-        prompt = _topic_prompt_text(message)
+        prompt = command_ui.topic_prompt_text(message)
         if state == _CODEX_TOPIC_RECOVERABLE:
             await _send_topic_recovery_prompt(message, route, prompt)
             return
@@ -429,23 +409,11 @@ async def cmd_codex_v2(
             return
     else:
         # In main chat — extract prompt after /codex
-        prompt = _command_args(message.text or "", "codex")
+        prompt = command_ui.command_args(message.text or "", "codex")
 
     if not prompt:
         await message.answer(
-            "<b>Usage:</b> <code>/codex &lt;prompt&gt;</code>\n\n"
-            "<b>Commands:</b>\n"
-            "- <code>/codex status</code> — Show session status\n"
-            "- <code>/codex cd &lt;path&gt;</code> — Change working directory\n"
-            "- <code>/codex pwd</code> — Show working directory\n"
-            "- <code>/codex threads</code> — List sessions\n"
-            "- <code>/codex archive</code> — Archive current session\n"
-            "- <code>/codex switch &lt;id&gt;</code> — Switch session\n"
-            "- <code>/codex !command</code> — Execute shell command\n"
-            "- <code>/codex @path</code> — Read file at path\n"
-            "- <code>/codex new</code> — Start a fresh session\n"
-            "- <code>/screenshot</code> — Capture terminal screenshot\n\n"
-            "<b>Example:</b> <code>/codex list all Python files</code>",
+            command_ui.CODEX_USAGE_HTML,
             parse_mode="HTML",
             **route.send_kwargs(),
         )
@@ -466,25 +434,8 @@ async def cmd_codex_v2(
     # For non-streaming results we just send the returned text.
     # For streaming results (_execute_codex_prompt) the Orchestrator provides
     # callbacks and the handler manages DraftStream.
-    prefix, rest = parse_instruction_prefix(prompt)
-
-    # Determine if this should be treated as a streaming prompt or a command.
     stripped = prompt.strip().lower()
-    is_prompt = (
-        stripped
-        not in {
-            "new",
-            "status",
-            "pwd",
-            "threads",
-            "archive",
-        }
-        and not stripped.startswith("cd ")
-        and not stripped.startswith("switch ")
-        and prefix not in {"slash", "file"}
-    )
-
-    if is_prompt:
+    if command_ui.is_streaming_prompt(prompt):
         await _execute_codex_prompt(message, route, context_manager, orchestrator, prompt)
         return
 
@@ -545,7 +496,7 @@ async def handle_codex_topic_message(
     """
     logger.info(f"handle_codex_topic_message: received message in thread {message.message_thread_id}")
     route = TelegramRoute.from_message(message)
-    prompt = _topic_prompt_text(message)
+    prompt = command_ui.topic_prompt_text(message)
 
     if not prompt:
         raise SkipHandler
