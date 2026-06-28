@@ -1,8 +1,11 @@
 """Telegodex capability prompts."""
 
 from pathlib import Path
+from prompts._utils import load_prompt
 
-TELEGODEX_CAPABILITY_CHAT_PROMPT: str = Path(__file__).parent.joinpath("capability_chat.md").read_text(encoding="utf-8")
-TELEGODEX_CAPABILITY_TOOL_TEMPLATE: str = Path(__file__).parent.joinpath("capability_tool.md").read_text(encoding="utf-8")
+_base_dir = Path(__file__).parent
+
+TELEGODEX_CAPABILITY_CHAT_PROMPT: str = load_prompt("capability_chat", _base_dir)
+TELEGODEX_CAPABILITY_TOOL_TEMPLATE: str = load_prompt("capability_tool", _base_dir)
 
 __all__ = ["TELEGODEX_CAPABILITY_CHAT_PROMPT", "TELEGODEX_CAPABILITY_TOOL_TEMPLATE"]

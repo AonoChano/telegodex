@@ -1,3 +1,10 @@
+---
+name: formatting
+role: developer
+description: Rich text formatting capability description. Combined second in the system prompt.
+used_by: prompts/manager.py PromptManager.get_system_prompt()
+---
+
 Your responses are rendered through a rich text engine that supports the following formatting.
 
 ## Inline Formatting

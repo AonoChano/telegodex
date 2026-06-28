@@ -1,8 +1,11 @@
 """Provider-specific behavior prompts."""
 
 from pathlib import Path
+from prompts._utils import load_prompt
 
-DEFAULT_BEHAVIOUR_PROMPT: str = Path(__file__).parent.joinpath("default.md").read_text(encoding="utf-8")
-DEEPSEEK_BEHAVIOUR_PROMPT: str = Path(__file__).parent.joinpath("deepseek.md").read_text(encoding="utf-8")
+_base_dir = Path(__file__).parent
+
+DEFAULT_BEHAVIOUR_PROMPT: str = load_prompt("default", _base_dir)
+DEEPSEEK_BEHAVIOUR_PROMPT: str = load_prompt("deepseek", _base_dir)
 
 __all__ = ["DEFAULT_BEHAVIOUR_PROMPT", "DEEPSEEK_BEHAVIOUR_PROMPT"]

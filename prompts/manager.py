@@ -8,6 +8,8 @@ from pathlib import Path
 
 from loguru import logger
 
+from prompts._utils import load_prompt
+
 
 class PromptManager:
     """提示词管理器
@@ -76,17 +78,15 @@ class PromptManager:
     # ------------------------------------------------------------------
 
     def _load(self, name: str) -> str | None:
-        """加载单个提示词片段"""
-        path = self._base_dir / f"{name}.md"
-        if not path.exists():
+        """加载单个提示词片段，剥离 YAML frontmatter"""
+        if not (self._base_dir / f"{name}.md").exists():
             if name.startswith("providers/"):
-                # provider 文件不存在是正常的，静默 skip
                 return None
-            logger.warning(f"提示词文件不存在: {path}")
+            logger.warning(f"提示词文件不存在: {self._base_dir / f'{name}.md'}")
             return None
 
         try:
-            return path.read_text(encoding="utf-8")
+            return load_prompt(name, self._base_dir)
         except Exception:
             logger.exception(f"加载提示词失败: {name}")
             return None
