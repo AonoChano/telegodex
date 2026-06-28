@@ -14,7 +14,7 @@ from typing import Any
 
 from aiogram import Bot, F, Router
 from aiogram.dispatcher.event.bases import SkipHandler
-from aiogram.filters import BaseFilter, Command
+from aiogram.filters import Command
 from aiogram.types import (
     CallbackQuery,
     InlineKeyboardButton,
@@ -25,6 +25,7 @@ from loguru import logger
 
 from bot.codex import command_ui, model_ui, reply_ui, session_ui, shell_ui
 from bot.codex.approval_ui import approval_ui_bridge
+from bot.codex.topic_filter import IsCodexBoundTopic
 from bot.codex.topic_recovery import TopicRecoveryPrompt, TopicRecoveryRequest, topic_recovery_store
 from bot.codex.topic_state import (
     CODEX_TOPIC_BOUND,
@@ -448,19 +449,6 @@ async def cmd_codex_v2(
 # ---------------------------------------------------------------------------
 # Codex-bound topic message handler
 # ---------------------------------------------------------------------------
-
-
-class IsCodexBoundTopic(BaseFilter):
-    """Filter: catch candidate text messages in Telegram forum topics."""
-
-    async def __call__(self, message: Message, context_manager: Any | None = None) -> bool:
-        if message.message_thread_id is None:
-            logger.debug("IsCodexBoundTopic: message_thread_id is None, skipping")
-            return False
-        if message.text is None:
-            logger.debug("IsCodexBoundTopic: text is None, skipping")
-            return False
-        return not message.text.strip().startswith("/codex")
 
 
 @router.message(F.text, IsCodexBoundTopic())
