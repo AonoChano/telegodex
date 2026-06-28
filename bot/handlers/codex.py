@@ -9,10 +9,7 @@ Telegram-specific layer: delegates all business logic to the
 
 from __future__ import annotations
 
-import asyncio
 import contextlib
-import html
-import time
 import uuid
 from dataclasses import dataclass
 from typing import Any
@@ -31,13 +28,14 @@ from loguru import logger
 from sqlalchemy import select
 
 from bot.codex import formatting as fmt
+from bot.codex.turn import CodexTurnActor
 from bot.handlers import toolbar as toolbar_handler
 from bot.streaming import ReactionTracker
 from bot.telegram_draft import DraftStream, shorten_plain_telegram_text
 from bot.utils.rich_messages import send_rich_message
 from bot.utils.routing import TelegramRoute
 from config import settings
-from core.orchestrator import Orchestrator, StreamingCallbacks
+from core.orchestrator import Orchestrator
 from core.orchestrator.shell_pipeline import (
     build_shell_proposal_messages,
     format_shell_proposal_html,
@@ -586,222 +584,32 @@ async def _execute_codex_prompt(
         except Exception as exc:
             logger.debug(f"Codex: failed to set initial reaction: {exc}")
 
-    last_flush_len = 0
-    last_flush_at = 0.0
-    latest_rendered = ""
-    last_status_edit = 0.0
-    last_status_text = "Codex is working..."
-
-    # Codex may surface retry/failure details through app-server structured
-    # error notifications or the subprocess stderr stream. Collect the
-    # actionable detail so final output does not collapse to generic
-    # ``Unknown error`` payloads.
-    runtime_detail_collector: list[str] = []
-    turn_problem_seen = False
-    last_problem_status = ""
-    last_problem_at = 0.0
-
-    async def _edit_status(text: str, *, force: bool = False, parse_mode: str | None = None) -> None:
-        nonlocal last_status_edit, last_status_text
-        if stop_msg is None:
-            return
-        safe_text = fmt.trim_status_text(text)
-        now = time.monotonic()
-        if not force and safe_text == last_status_text:
-            return
-        if not force and now - last_status_edit < STATUS_EDIT_INTERVAL_SECONDS:
-            return
-        last_status_edit = now
-        last_status_text = safe_text
-        try:
-            await bot.edit_message_text(
-                chat_id=stop_msg.chat.id,
-                message_id=stop_msg.message_id,
-                text=safe_text,
-                reply_markup=stop_keyboard,
-                parse_mode=parse_mode,
-            )
-        except Exception as exc:
-            logger.debug(f"Codex: failed to edit status message: {exc}")
-
-    def _single_active_turn() -> bool:
-        sm = orchestrator.session_manager
-        if sm is None:
-            return False
-        active_count = getattr(sm, "active_turn_count", lambda: 0)()
-        return active_count == 1 and sm.is_turn_active(session_key)
-
-    def _problem_is_recent() -> bool:
-        return turn_problem_seen and (time.monotonic() - last_problem_at) <= STDERR_LATE_GRACE_SECONDS
-
-    async def _edit_problem_status_with_runtime_detail() -> None:
-        stderr_block = fmt.format_collected_stderr(runtime_detail_collector)
-        status_text = last_problem_status or "Codex error.\nUnknown error"
-        if stderr_block:
-            status_text += f"\n\nCodex runtime detail:\n{stderr_block}"
-        await _edit_status(status_text, force=True)
-
-    async def _on_daemon_stderr(text: str) -> None:
-        if not fmt.is_codex_retry_status_line(text):
-            return
-        can_show_live = _single_active_turn()
-        can_attach_to_recent_error = _problem_is_recent()
-        if not can_show_live and not can_attach_to_recent_error:
-            logger.debug(f"Codex: stderr status kept in logs because it cannot be safely attributed: {text}")
-            return
-        # Preserve the raw line so the final message can echo it back verbatim
-        # instead of the generic "Unknown error" from turn/completed.
-        fmt.append_unique_runtime_detail(runtime_detail_collector, text)
-        if can_attach_to_recent_error:
-            await _edit_problem_status_with_runtime_detail()
-        else:
-            await _edit_status(f"Codex connection issue. Retrying...\n{text}", force=True)
-
-    remove_stderr_listener = codex_daemon.add_stderr_listener(_on_daemon_stderr)
-
-    async def _push_render_update(rendered: str, *, force: bool = False) -> None:
-        nonlocal last_flush_at, last_flush_len, latest_rendered
-        if not rendered:
-            return
-        latest_rendered = rendered
-        if stream is None:
-            return
-        now = time.monotonic()
-        should_flush = (
-            force
-            or last_flush_at == 0.0
-            or abs(len(rendered) - last_flush_len) >= DRAFT_FLUSH_CHARS
-            or now - last_flush_at >= DRAFT_FLUSH_INTERVAL_SECONDS
-        )
-        if not should_flush:
-            return
-        if await stream.push(rendered):
-            last_flush_len = len(rendered)
-            last_flush_at = now
-
-    async def _on_render_update(rendered: str) -> None:
-        await _push_render_update(rendered)
-
-    async def _on_text_delta(delta: str, accumulated: str) -> None:
-        if reaction_tracker is not None:
-            await reaction_tracker.set_state("editing")
-        await _edit_status("Codex is writing a response...")
-        if accumulated and accumulated != latest_rendered:
-            await _push_render_update(accumulated)
-
-    async def _on_reasoning_delta(delta: str, accumulated: str) -> None:
-        if reaction_tracker is not None:
-            await reaction_tracker.on_codex_event("item/reasoning/summaryTextDelta")
-        preview = fmt.trim_status_text(accumulated, 360)
-        if preview:
-            await _edit_status(
-                f"Codex is thinking...\n<i>{html.escape(preview)}</i>",
-                parse_mode="HTML",
-            )
-        else:
-            await _edit_status("Codex is thinking...")
-
-    async def _on_command_output_delta(delta: str, accumulated: str) -> None:
-        if reaction_tracker is not None:
-            await reaction_tracker.on_codex_event("item/commandExecution/outputDelta")
-        await _edit_status(
-            fmt.format_command_status(output_preview=accumulated),
-            parse_mode="HTML",
-        )
-
-    async def _on_item_started(item_type: str, item: dict[str, Any]) -> None:
-        if reaction_tracker is not None:
-            await reaction_tracker.on_codex_event("item/started", item_type)
-        if item_type == "commandExecution":
-            command = item.get("command", "")
-            await _edit_status(
-                fmt.format_command_status(command=command),
-                force=True,
-                parse_mode="HTML",
-            )
-        elif item_type == "reasoning":
-            await _edit_status("Codex is thinking...", force=True)
-
-    async def _on_turn_completed(turn: dict[str, Any], final_text: str) -> None:
-        nonlocal turn_problem_seen, last_problem_status, last_problem_at
-        status = turn.get("status", "")
-        if reaction_tracker is not None:
-            if status == "failed":
-                await reaction_tracker.clear()
-            else:
-                await reaction_tracker.set_state("done")
-        if status == "failed":
-            error = turn.get("error", {})
-            error_msg = error.get("message", "Unknown error")
-            additional_details = error.get("additionalDetails") or error.get("additional_details")
-            fmt.append_unique_runtime_detail(runtime_detail_collector, additional_details)
-            turn_problem_seen = True
-            if fmt.is_generic_unknown_error_line(f"Error: {error_msg}") and (
-                last_problem_status or runtime_detail_collector
-            ):
-                if not last_problem_status:
-                    last_problem_status = "Codex failed."
-                last_problem_at = time.monotonic()
-                await _edit_problem_status_with_runtime_detail()
-                return
-            last_problem_status = f"Codex failed.\n{error_msg}"
-            last_problem_at = time.monotonic()
-            await _edit_problem_status_with_runtime_detail()
-        elif status == "interrupted":
-            await _edit_status("Codex was interrupted.", force=True)
-        else:
-            await _edit_status("Codex completed.", force=True)
-
-    async def _on_codex_error(error_message: str, additional_details: str | None, will_retry: bool) -> None:
-        nonlocal turn_problem_seen, last_problem_status, last_problem_at
-        fmt.append_unique_runtime_detail(runtime_detail_collector, additional_details)
-        if will_retry:
-            await _edit_status(fmt.format_codex_retry_status(error_message, additional_details), force=True)
-            return
-        if reaction_tracker is not None:
-            await reaction_tracker.clear()
-        turn_problem_seen = True
-        last_problem_status = f"Codex error.\n{error_message}"
-        last_problem_at = time.monotonic()
-        await _edit_problem_status_with_runtime_detail()
-
-    async def _on_error(error_message: str) -> None:
-        nonlocal turn_problem_seen, last_problem_status, last_problem_at
-        if reaction_tracker is not None:
-            await reaction_tracker.clear()
-        turn_problem_seen = True
-        last_problem_status = f"Codex error.\n{error_message}"
-        last_problem_at = time.monotonic()
-        await _edit_problem_status_with_runtime_detail()
-
-    callbacks = StreamingCallbacks(
-        on_text_delta=_on_text_delta,
-        on_reasoning_delta=_on_reasoning_delta,
-        on_command_output_delta=_on_command_output_delta,
-        on_item_started=_on_item_started,
-        on_turn_completed=_on_turn_completed,
-        on_codex_error=_on_codex_error,
-        on_error=_on_error,
-        on_render_update=_on_render_update,
+    actor = CodexTurnActor(
+        bot=bot,
+        route=route,
+        session_key=session_key,
+        orchestrator=orchestrator,
+        stop_msg=stop_msg,
+        stop_keyboard=stop_keyboard,
+        stream=stream,
+        reaction_tracker=reaction_tracker,
+        status_edit_interval=STATUS_EDIT_INTERVAL_SECONDS,
+        draft_flush_chars=DRAFT_FLUSH_CHARS,
+        draft_flush_interval=DRAFT_FLUSH_INTERVAL_SECONDS,
+        stderr_late_grace=STDERR_LATE_GRACE_SECONDS,
+        stderr_flush_grace=STDERR_FLUSH_GRACE_SECONDS,
     )
-
+    remove_stderr_listener = codex_daemon.add_stderr_listener(actor.on_daemon_stderr)
     try:
         final_text = await orchestrator.handle_message_streaming(
             key=session_key,
             text=prompt,
             db=context_manager.session,
             user_id=user_id,
-            callbacks=callbacks,
+            callbacks=actor.build_callbacks(),
         )
 
-        # If Codex emitted actionable detail on its stderr stream (e.g. a 403
-        # quota-exhausted banner), the structured turn payload won't carry it —
-        # append the collected lines verbatim so the user sees the real cause.
-        if turn_problem_seen:
-            await asyncio.sleep(STDERR_FLUSH_GRACE_SECONDS)
-        stderr_block = fmt.format_collected_stderr(runtime_detail_collector)
-        final_text = fmt.clean_codex_error_text(final_text, stderr_block)
-        final_text = fmt.append_codex_stderr_detail(final_text, stderr_block)
+        final_text = await actor.prepare_final_text(final_text)
 
         toolbar_handler.set_last_reply(session_key, final_text)
 
@@ -840,7 +648,7 @@ async def _execute_codex_prompt(
 
     except Exception as exc:
         logger.exception("Codex: turn failed")
-        await _edit_status(f"Codex error.\n{exc}", force=True)
+        await actor.edit_status(f"Codex error.\n{exc}", force=True)
         await _codex_reply(
             message,
             f"Codex error: {exc}",
