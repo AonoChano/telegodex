@@ -23,7 +23,7 @@ from aiogram.types import (
 )
 from loguru import logger
 
-from bot.codex import command_ui, model_ui, session_ui, shell_ui
+from bot.codex import command_ui, model_ui, reply_ui, session_ui, shell_ui
 from bot.codex.approval_ui import approval_ui_bridge
 from bot.codex.topic_recovery import TopicRecoveryPrompt, TopicRecoveryRequest, topic_recovery_store
 from bot.codex.topic_state import (
@@ -37,7 +37,7 @@ from bot.codex.topic_state import (
 from bot.codex.turn import CodexTurnActor
 from bot.handlers import toolbar as toolbar_handler
 from bot.streaming import ReactionTracker
-from bot.telegram_draft import DraftStream, shorten_plain_telegram_text
+from bot.telegram_draft import DraftStream
 from bot.utils.rich_messages import send_rich_message
 from bot.utils.routing import TelegramRoute
 from config import settings
@@ -114,11 +114,7 @@ async def _handle_codex_new(
     )
 
 def _codex_send_kwargs(route: TelegramRoute, topic_id: int | None) -> dict[str, Any]:
-    """Build send kwargs, adding ``message_thread_id`` when a forum topic exists."""
-    kwargs = dict(route.send_kwargs())
-    if topic_id is not None:
-        kwargs["message_thread_id"] = topic_id
-    return kwargs
+    return reply_ui.codex_send_kwargs(route, topic_id)
 
 
 async def _codex_reply(
@@ -128,23 +124,7 @@ async def _codex_reply(
     topic_id: int | None,
     **kwargs: Any,
 ) -> None:
-    """Send a reply routed to the Codex topic.
-
-    Uses ``bot.send_message`` directly to avoid ``message.answer()``
-    auto-including ``message_thread_id`` when the message originated from
-    a different topic.
-    """
-    merged = _codex_send_kwargs(route, topic_id)
-    merged.update(kwargs)
-    bot = message.bot
-    if bot is None:
-        return
-    await bot.send_message(
-        chat_id=route.chat_id,
-        text=shorten_plain_telegram_text(text),
-        **merged,
-    )
-
+    await reply_ui.codex_reply(message, text, route, topic_id, **kwargs)
 
 def _topic_recovery_key(route: TelegramRoute) -> tuple[int | str, int] | None:
     return topic_recovery_store.key_for_route(route)
