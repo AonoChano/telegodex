@@ -9,7 +9,7 @@ from typing import Any
 STATUS_TEXT_LIMIT = 900
 
 _TRACE_ID_RE = re.compile(r"[（(]traceid:\s*([^)）]+)[)）]", re.IGNORECASE)
-_URL_RE = re.compile(r",\s*url:\s*(\S+)", re.IGNORECASE)
+_URL_RE = re.compile(r",\s*url:\s*([^,\s]+)", re.IGNORECASE)
 _CF_RAY_RE = re.compile(r",\s*cf-ray:\s*(\S+)", re.IGNORECASE)
 
 

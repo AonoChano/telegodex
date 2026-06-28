@@ -30,37 +30,8 @@ from aiogram.types import (
 from loguru import logger
 from sqlalchemy import select
 
+from bot.codex import formatting as fmt
 from bot.handlers import toolbar as toolbar_handler
-from bot.handlers.codex_formatting import (
-    append_codex_stderr_detail as _append_codex_stderr_detail,
-)
-from bot.handlers.codex_formatting import (
-    append_unique_runtime_detail as _append_unique_runtime_detail,
-)
-from bot.handlers.codex_formatting import (
-    clean_codex_error_text as _clean_codex_error_text,
-)
-from bot.handlers.codex_formatting import (
-    format_codex_retry_status as _format_codex_retry_status,
-)
-from bot.handlers.codex_formatting import (
-    format_collected_stderr as _format_collected_stderr,
-)
-from bot.handlers.codex_formatting import (
-    format_command_status as _format_command_status,
-)
-from bot.handlers.codex_formatting import (
-    format_shell_execution_markdown as _format_shell_execution_markdown,
-)
-from bot.handlers.codex_formatting import (
-    is_codex_retry_status_line as _is_codex_retry_status_line,
-)
-from bot.handlers.codex_formatting import (
-    is_generic_unknown_error_line as _is_generic_unknown_error_line,
-)
-from bot.handlers.codex_formatting import (
-    trim_status_text as _trim_status_text,
-)
 from bot.streaming import ReactionTracker
 from bot.telegram_draft import DraftStream, shorten_plain_telegram_text
 from bot.utils.rich_messages import send_rich_message
@@ -634,7 +605,7 @@ async def _execute_codex_prompt(
         nonlocal last_status_edit, last_status_text
         if stop_msg is None:
             return
-        safe_text = _trim_status_text(text)
+        safe_text = fmt.trim_status_text(text)
         now = time.monotonic()
         if not force and safe_text == last_status_text:
             return
@@ -664,14 +635,14 @@ async def _execute_codex_prompt(
         return turn_problem_seen and (time.monotonic() - last_problem_at) <= STDERR_LATE_GRACE_SECONDS
 
     async def _edit_problem_status_with_runtime_detail() -> None:
-        stderr_block = _format_collected_stderr(runtime_detail_collector)
+        stderr_block = fmt.format_collected_stderr(runtime_detail_collector)
         status_text = last_problem_status or "Codex error.\nUnknown error"
         if stderr_block:
             status_text += f"\n\nCodex runtime detail:\n{stderr_block}"
         await _edit_status(status_text, force=True)
 
     async def _on_daemon_stderr(text: str) -> None:
-        if not _is_codex_retry_status_line(text):
+        if not fmt.is_codex_retry_status_line(text):
             return
         can_show_live = _single_active_turn()
         can_attach_to_recent_error = _problem_is_recent()
@@ -680,7 +651,7 @@ async def _execute_codex_prompt(
             return
         # Preserve the raw line so the final message can echo it back verbatim
         # instead of the generic "Unknown error" from turn/completed.
-        _append_unique_runtime_detail(runtime_detail_collector, text)
+        fmt.append_unique_runtime_detail(runtime_detail_collector, text)
         if can_attach_to_recent_error:
             await _edit_problem_status_with_runtime_detail()
         else:
@@ -721,7 +692,7 @@ async def _execute_codex_prompt(
     async def _on_reasoning_delta(delta: str, accumulated: str) -> None:
         if reaction_tracker is not None:
             await reaction_tracker.on_codex_event("item/reasoning/summaryTextDelta")
-        preview = _trim_status_text(accumulated, 360)
+        preview = fmt.trim_status_text(accumulated, 360)
         if preview:
             await _edit_status(
                 f"Codex is thinking...\n<i>{html.escape(preview)}</i>",
@@ -734,7 +705,7 @@ async def _execute_codex_prompt(
         if reaction_tracker is not None:
             await reaction_tracker.on_codex_event("item/commandExecution/outputDelta")
         await _edit_status(
-            _format_command_status(output_preview=accumulated),
+            fmt.format_command_status(output_preview=accumulated),
             parse_mode="HTML",
         )
 
@@ -744,7 +715,7 @@ async def _execute_codex_prompt(
         if item_type == "commandExecution":
             command = item.get("command", "")
             await _edit_status(
-                _format_command_status(command=command),
+                fmt.format_command_status(command=command),
                 force=True,
                 parse_mode="HTML",
             )
@@ -763,9 +734,9 @@ async def _execute_codex_prompt(
             error = turn.get("error", {})
             error_msg = error.get("message", "Unknown error")
             additional_details = error.get("additionalDetails") or error.get("additional_details")
-            _append_unique_runtime_detail(runtime_detail_collector, additional_details)
+            fmt.append_unique_runtime_detail(runtime_detail_collector, additional_details)
             turn_problem_seen = True
-            if _is_generic_unknown_error_line(f"Error: {error_msg}") and (
+            if fmt.is_generic_unknown_error_line(f"Error: {error_msg}") and (
                 last_problem_status or runtime_detail_collector
             ):
                 if not last_problem_status:
@@ -783,9 +754,9 @@ async def _execute_codex_prompt(
 
     async def _on_codex_error(error_message: str, additional_details: str | None, will_retry: bool) -> None:
         nonlocal turn_problem_seen, last_problem_status, last_problem_at
-        _append_unique_runtime_detail(runtime_detail_collector, additional_details)
+        fmt.append_unique_runtime_detail(runtime_detail_collector, additional_details)
         if will_retry:
-            await _edit_status(_format_codex_retry_status(error_message, additional_details), force=True)
+            await _edit_status(fmt.format_codex_retry_status(error_message, additional_details), force=True)
             return
         if reaction_tracker is not None:
             await reaction_tracker.clear()
@@ -828,9 +799,9 @@ async def _execute_codex_prompt(
         # append the collected lines verbatim so the user sees the real cause.
         if turn_problem_seen:
             await asyncio.sleep(STDERR_FLUSH_GRACE_SECONDS)
-        stderr_block = _format_collected_stderr(runtime_detail_collector)
-        final_text = _clean_codex_error_text(final_text, stderr_block)
-        final_text = _append_codex_stderr_detail(final_text, stderr_block)
+        stderr_block = fmt.format_collected_stderr(runtime_detail_collector)
+        final_text = fmt.clean_codex_error_text(final_text, stderr_block)
+        final_text = fmt.append_codex_stderr_detail(final_text, stderr_block)
 
         toolbar_handler.set_last_reply(session_key, final_text)
 
@@ -1335,7 +1306,7 @@ async def _execute_shell_telegram(
     )
     try:
         result = await orchestrator.shell_provider.execute(command, session_id=session_key.to_string())
-        rendered = _format_shell_execution_markdown(command, result)
+        rendered = fmt.format_shell_execution_markdown(command, result)
         toolbar_handler.set_last_reply(session_key, rendered)
         if len(rendered) > 12000:
             file_bytes = rendered.encode("utf-8")

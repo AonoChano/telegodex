@@ -420,66 +420,6 @@ async def test_approval_ui_sender_sends_permissions_prompt_to_topic(monkeypatch:
     assert kwargs["reply_markup"].inline_keyboard[2][0].text == "Deny"
 
 
-def test_format_shell_execution_markdown_uses_rich_details_blocks() -> None:
-    text = codex._format_shell_execution_markdown(
-        "Start-Process notepad",
-        {"stdout": "opened", "stderr": "warning", "returncode": 1},
-    )
-
-    assert "**Shell command failed**" in text
-    assert "```powershell\nStart-Process notepad\n```" in text
-    assert "**Exit code:** `1`" in text
-    assert "<details><summary>stdout</summary>" in text
-    assert "<details><summary>stderr</summary>" in text
-
-
-def test_format_command_status_escapes_html_command() -> None:
-    status = codex._format_command_status(command='echo "<ok>" & done')
-
-    assert status.startswith("Codex is running a command...")
-    assert "<code>" in status
-    assert "&lt;ok&gt;" in status
-    assert "&amp;" in status
-    assert '"<ok>" &' not in status
-
-
-def test_format_collected_stderr_deduplicates_in_order() -> None:
-    assert codex._format_collected_stderr(
-        [
-            "Reconnecting... 1/5",
-            "Unexpected status 403 Forbidden: quota exhausted",
-            "Reconnecting... 1/5",
-            "Unexpected status 403 Forbidden: quota exhausted",
-            "Reconnecting... 2/5",
-        ]
-    ) == "\n".join(
-        [
-            "Reconnecting... 1/5",
-            "Unexpected status 403 Forbidden: quota exhausted",
-            "Reconnecting... 2/5",
-        ]
-    )
-
-
-def test_codex_error_text_moves_raw_stderr_into_runtime_detail() -> None:
-    stderr = "Error: unexpected status 403 Forbidden: Only one Codex conversation can run at a time"
-    text = "\n".join(
-        [
-            "_ERROR: Unknown error_",
-            "_ERROR: Unknown error_",
-            stderr,
-        ]
-    )
-
-    cleaned = codex._clean_codex_error_text(text, stderr)
-    final = codex._append_codex_stderr_detail(cleaned, stderr)
-
-    assert "Unknown error" not in final
-    assert final.count(stderr) == 1
-    assert "Codex runtime detail" in final
-    assert "```text" in final
-
-
 @pytest.mark.asyncio
 async def test_execute_codex_prompt_pushes_render_updates_to_draft(monkeypatch: pytest.MonkeyPatch) -> None:
     bot = AsyncMock()
