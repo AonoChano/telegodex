@@ -9,6 +9,7 @@ from html import escape
 from typing import Literal
 
 from ai.base import Message, MessageRole
+from prompts.shell import SHELL_PROPOSAL_PROMPT, SHELL_TOOL_RESULT_TEMPLATE
 
 ShellRequestMode = Literal["ai", "raw"]
 
@@ -46,17 +47,9 @@ def parse_shell_request(text: str) -> ShellRequest:
 
 def build_shell_proposal_messages(request: str) -> list[Message]:
     """Build a provider-agnostic prompt for command proposal generation."""
-    system = (
-        "You translate a user's natural-language shell task into one safe, concrete "
-        "Windows PowerShell command. Return JSON only with these string fields: "
-        "command, explanation, risk. The command field must be a single line and "
-        "must not contain Markdown fences. If the request is ambiguous, destructive, "
-        "or impossible to satisfy safely, return an empty command and explain why. "
-        "Prefer read-only commands unless the user explicitly asks to change files."
-    )
     user = f"Task: {request}"
     return [
-        Message(role=MessageRole.SYSTEM, content=system),
+        Message(role=MessageRole.SYSTEM, content=SHELL_PROPOSAL_PROMPT),
         Message(role=MessageRole.USER, content=user),
     ]
 

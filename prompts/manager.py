@@ -1,7 +1,7 @@
 """
-提示词管理模块
+Prompt management module.
 
-负责加载和组合系统提示词，支持按 provider 分层组合。
+Loads and composes system prompts using a layered structure by provider.
 """
 
 from pathlib import Path

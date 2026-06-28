@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from ai.base import Message, MessageRole
+from prompts.shell import SHELL_TOOL_RESULT_TEMPLATE
+from prompts.telegodex import TELEGODEX_CAPABILITY_CHAT_PROMPT, TELEGODEX_CAPABILITY_TOOL_TEMPLATE
 
 ToolPermissionMode = Literal["chat", "confirm", "full"]
 
@@ -59,36 +61,11 @@ def build_telegodex_capability_prompt(permission_mode: str | None) -> str:
     """Build the normal-chat system addendum for Telegodex capability awareness."""
     mode = normalize_permission_mode(permission_mode)
     label = permission_mode_label(mode)
-    base = (
-        "\n\nYou are Telegodex, a Telegram Workbench assistant. You can answer "
-        "normal chat questions, explain Telegodex features, and, when permitted, "
-        "request local tools through Telegodex. The current tool permission mode "
-        f"is `{label}`.\n"
-    )
+
     if mode == "chat":
-        return (
-            base + "Tool use is disabled. If the user asks you to inspect files, run "
-            "commands, or call local capabilities, explain that permissions are "
-            "set to `仅对话` and ask them to switch the permission level in Settings."
-        )
-    return (
-        base + "You do have an indirect local tool interface through Telegodex. "
-        "In `用户确认` mode, still request the tool; Telegodex will ask the user "
-        "with inline buttons before execution. Do not say you cannot open websites, "
-        "start local apps, inspect files, or run commands when a Windows PowerShell "
-        "command can do it. Opening a website or app is a valid shell task. "
-        "When a local shell command is necessary, do not pretend you ran it. "
-        "Respond with only one JSON object, optionally inside a json code fence, "
-        "using exactly these fields: telegodex_tool, command, reason, risk. "
-        'Set telegodex_tool to "shell". Keep command to one Windows PowerShell '
-        "line. Prefer read-only commands unless the user explicitly asks to "
-        "change files. Never invent a demo command just because the user says "
-        "to execute a shell command; ask for the concrete command or task instead. "
-        "Examples: for `帮我打开B站`, request "
-        '`{"telegodex_tool":"shell","command":"Start-Process https://www.bilibili.com","reason":"Open Bilibili in the default browser","risk":"Opens an external website"}`. '
-        "For `帮我启动电脑的记事本`, request "
-        '`{"telegodex_tool":"shell","command":"Start-Process notepad","reason":"Open Windows Notepad","risk":"Starts a local application"}`.'
-    )
+        return "\n\n" + TELEGODEX_CAPABILITY_CHAT_PROMPT
+
+    return "\n\n" + TELEGODEX_CAPABILITY_TOOL_TEMPLATE.format(mode=label)
 
 
 def parse_chat_tool_request(text: str) -> ChatToolRequest | None:
@@ -125,19 +102,22 @@ def build_tool_result_message(request: ChatToolRequest, result: dict[str, Any]) 
     stderr = str(result.get("stderr") or "").strip()
     exit_code = result.get("returncode", result.get("exit_code", "unknown"))
     timed_out = bool(result.get("timeout"))
-    lines = [
-        "Telegodex tool result:",
-        f"tool: {request.tool}",
-        f"command: {request.command}",
-        f"exit_code: {exit_code}",
-        f"timed_out: {timed_out}",
-    ]
+
+    output_parts = []
     if stdout:
-        lines.extend(["stdout:", _limit(stdout)])
+        output_parts.append(f"stdout:\n{_limit(stdout)}")
     if stderr:
-        lines.extend(["stderr:", _limit(stderr)])
-    lines.append("Use this result to answer the user. If it failed, explain the failure and propose the next step.")
-    return Message(role=MessageRole.SYSTEM, content="\n".join(lines))
+        output_parts.append(f"stderr:\n{_limit(stderr)}")
+    output = "\n".join(output_parts)
+
+    content = SHELL_TOOL_RESULT_TEMPLATE.format(
+        tool=request.tool,
+        command=request.command,
+        exit_code=exit_code,
+        timed_out=timed_out,
+        output=output,
+    )
+    return Message(role=MessageRole.SYSTEM, content=content)
 
 
 def _json_candidates(text: str) -> list[str]:

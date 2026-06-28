@@ -1,7 +1,20 @@
-"""
-提示词管理模块
-"""
+"""Prompt management module."""
 
 from .manager import PromptManager, get_prompt_manager
+from .base import IDENTITY_PROMPT, FORMATTING_PROMPT
+from .providers import DEFAULT_BEHAVIOUR_PROMPT, DEEPSEEK_BEHAVIOUR_PROMPT
+from .shell import SHELL_PROPOSAL_PROMPT, SHELL_TOOL_RESULT_TEMPLATE
+from .telegodex import TELEGODEX_CAPABILITY_CHAT_PROMPT, TELEGODEX_CAPABILITY_TOOL_TEMPLATE
 
-__all__ = ['PromptManager', 'get_prompt_manager']
+__all__ = [
+    "PromptManager",
+    "get_prompt_manager",
+    "IDENTITY_PROMPT",
+    "FORMATTING_PROMPT",
+    "DEFAULT_BEHAVIOUR_PROMPT",
+    "DEEPSEEK_BEHAVIOUR_PROMPT",
+    "SHELL_PROPOSAL_PROMPT",
+    "SHELL_TOOL_RESULT_TEMPLATE",
+    "TELEGODEX_CAPABILITY_CHAT_PROMPT",
+    "TELEGODEX_CAPABILITY_TOOL_TEMPLATE",
+]
