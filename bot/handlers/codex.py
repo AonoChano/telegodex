@@ -23,7 +23,7 @@ from aiogram.types import (
 )
 from loguru import logger
 
-from bot.codex import model_ui, shell_ui
+from bot.codex import model_ui, session_ui, shell_ui
 from bot.codex.approval_ui import approval_ui_bridge
 from bot.codex.topic_recovery import TopicRecoveryPrompt, TopicRecoveryRequest, topic_recovery_store
 from bot.codex.topic_state import (
@@ -123,81 +123,15 @@ async def _handle_codex_new(
     session_key: SessionKey,
     user_id: int,
 ) -> None:
-    """Handle /codex new — create a new Codex session in a new forum topic."""
-    bot = message.bot
-    if bot is None:
-        await message.answer(
-            "Bot instance unavailable.",
-            **route.send_kwargs(),
-        )
-        return
-
-    try:
-        # Create the new Codex session first.
-        info = await orchestrator.codex_new_session(session_key, context_manager.session, user_id)
-        thread_id = info["thread_id"]
-        cwd = info.get("cwd", "default")
-
-        # Create a forum topic for this session.
-        # Topic name: "Codex: <short_thread_id>"
-        short_thread = thread_id[:8]
-        topic_name = f"Codex: {short_thread}"
-
-        forum_topic = await bot.create_forum_topic(
-            chat_id=route.chat_id,
-            name=topic_name,
-        )
-        topic_id = forum_topic.message_thread_id
-
-        # Update the session manager to map this thread to the topic.
-        sm = orchestrator.session_manager
-        if sm is not None:
-            sm.set_topic_id(thread_id, topic_id)
-
-            # Update the SessionKey mapping from (topic_id=None) to (topic_id=N)
-            old_key = SessionKey.from_telegram_message(route.chat_id, None)
-            new_key = SessionKey.from_telegram_message(route.chat_id, topic_id)
-            updated = sm.update_session_key(old_key, new_key)
-            logger.info(
-                f"_handle_codex_new: updated session key mapping: old={old_key}, new={new_key}, success={updated}"
-            )
-
-        await _bind_codex_thread_to_topic(
-            context_manager=context_manager,
-            chat_id=route.chat_id,
-            topic_id=topic_id,
-            thread_id=thread_id,
-            user_id=user_id,
-            cwd=cwd,
-        )
-
-        # Send a welcome message to the new topic.
-        await bot.send_message(
-            chat_id=route.chat_id,
-            message_thread_id=topic_id,
-            text=(
-                f"**New Codex Session**\n\n"
-                f"Thread: `{thread_id}`\n"
-                f"CWD: `{cwd}`\n\n"
-                f"Send your prompts here directly (no `/codex` prefix needed)."
-            ),
-            parse_mode="Markdown",
-        )
-
-        # Send a confirmation to the original chat.
-        await message.answer(
-            f"✅ Created new Codex session in topic **{topic_name}**.",
-            parse_mode="Markdown",
-            **route.send_kwargs(),
-        )
-
-    except Exception as exc:
-        logger.exception("Failed to create Codex session with forum topic")
-        await message.answer(
-            f"❌ Failed to create new session: {exc}",
-            **route.send_kwargs(),
-        )
-
+    await session_ui.handle_codex_new(
+        message,
+        route,
+        context_manager,
+        orchestrator,
+        session_key,
+        user_id,
+        bind_codex_thread_to_topic=_bind_codex_thread_to_topic,
+    )
 
 def _codex_send_kwargs(route: TelegramRoute, topic_id: int | None) -> dict[str, Any]:
     """Build send kwargs, adding ``message_thread_id`` when a forum topic exists."""

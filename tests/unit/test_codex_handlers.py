@@ -129,20 +129,14 @@ async def test_codex_bound_topic_filter_skips_codex_commands() -> None:
 
 
 @pytest.mark.asyncio
-async def test_handle_codex_new_creates_topic_and_rebinds_session(monkeypatch: pytest.MonkeyPatch) -> None:
-    bot = AsyncMock()
-    bot.create_forum_topic.return_value = SimpleNamespace(message_thread_id=222)
-    message = _message("/codex new", bot=bot)
+async def test_handle_codex_new_delegates_to_session_ui(monkeypatch: pytest.MonkeyPatch) -> None:
+    message = _message("/codex new")
     route = TelegramRoute.from_message(message)
     context = _Context(bound=False)
-    session_manager = _SessionManager()
-    orchestrator = SimpleNamespace(
-        session_manager=session_manager,
-        codex_new_session=AsyncMock(return_value={"thread_id": "thread-abcdef", "cwd": "C:/repo"}),
-    )
+    orchestrator = SimpleNamespace()
     session_key = SessionKey.from_telegram_message(route.chat_id, None)
-    bind = AsyncMock()
-    monkeypatch.setattr(codex, "_bind_codex_thread_to_topic", bind)
+    handle_codex_new = AsyncMock()
+    monkeypatch.setattr(codex.session_ui, "handle_codex_new", handle_codex_new)
 
     await codex._handle_codex_new(
         message,
@@ -153,33 +147,15 @@ async def test_handle_codex_new_creates_topic_and_rebinds_session(monkeypatch: p
         user_id=7,
     )
 
-    orchestrator.codex_new_session.assert_awaited_once_with(session_key, context.session, 7)
-    bot.create_forum_topic.assert_awaited_once_with(chat_id=100, name="Codex: thread-a")
-    bot.send_message.assert_awaited_once()
-    _, welcome_kwargs = bot.send_message.await_args
-    assert welcome_kwargs["chat_id"] == 100
-    assert welcome_kwargs["message_thread_id"] == 222
-    assert "thread-abcdef" in welcome_kwargs["text"]
-    assert session_manager.set_topic_id_calls == [("thread-abcdef", 222)]
-    assert session_manager.update_session_key_calls == [
-        (
-            SessionKey.from_telegram_message(100, None),
-            SessionKey.from_telegram_message(100, 222),
-        )
-    ]
-    bind.assert_awaited_once_with(
-        context_manager=context,
-        chat_id=100,
-        topic_id=222,
-        thread_id="thread-abcdef",
-        user_id=7,
-        cwd="C:/repo",
+    handle_codex_new.assert_awaited_once_with(
+        message,
+        route,
+        context,
+        orchestrator,
+        session_key,
+        7,
+        bind_codex_thread_to_topic=codex._bind_codex_thread_to_topic,
     )
-
-    method = bot.await_args.args[0]
-    assert method.__class__.__name__ == "SendMessage"
-    assert "Codex: thread-a" in method.text
-
 
 @pytest.mark.asyncio
 async def test_bind_codex_thread_to_topic_persists_storage_route() -> None:
