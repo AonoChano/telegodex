@@ -16,7 +16,6 @@ from ai.base import AIResponse
 from bot.handlers import codex
 from bot.utils.routing import TelegramRoute
 from core.session import SessionKey
-from extensions.codex.approvals import ApprovalHandler
 from storage.context_manager import ContextManager
 from storage.models import Base, Conversation
 
@@ -46,6 +45,13 @@ def _message(
         payload["is_topic_message"] = True
     message = Message.model_validate(payload)
     return message.as_(bot or AsyncMock())
+
+
+@pytest.fixture(autouse=True)
+def _reset_approval_ui_bridge() -> None:
+    codex.approval_ui_bridge.set_bot(None)
+    codex.approval_ui_bridge.orchestrator = None
+    codex.approval_ui_bridge.db_session_factory = None
 
 
 class _Scalars:
@@ -332,92 +338,6 @@ async def test_codex_command_with_bot_mention_shows_usage() -> None:
     method = bot.await_args.args[0]
     assert "Usage:" in method.text
     orchestrator.ensure_transport_handlers.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_approval_ui_sender_sends_inline_keyboard_to_topic(monkeypatch: pytest.MonkeyPatch) -> None:
-    bot = AsyncMock()
-    session_key = SessionKey.from_telegram_message(100, 222)
-    session_manager = SimpleNamespace(
-        reverse_lookup=MagicMock(return_value=session_key),
-        get_topic_id=MagicMock(return_value=222),
-    )
-    approval_handler = ApprovalHandler()
-    orchestrator = SimpleNamespace(
-        session_manager=session_manager,
-        approval_handler=approval_handler,
-    )
-    object_decision = {
-        "acceptWithExecpolicyAmendment": {
-            "execpolicy_amendment": ["Get-Date"],
-        },
-    }
-
-    monkeypatch.setattr(codex, "_current_bot", bot)
-    monkeypatch.setattr(codex, "_global_orch", orchestrator)
-    monkeypatch.setattr(codex, "_db_session_factory", None)
-
-    await codex._approval_ui_sender(
-        "item/commandExecution/requestApproval",
-        {
-            "threadId": "thread-abcdef",
-            "approvalId": "approval-telegram",
-            "command": "Get-Date -Format o",
-            "availableDecisions": [object_decision, "decline"],
-        },
-    )
-
-    bot.send_message.assert_awaited_once()
-    _, kwargs = bot.send_message.await_args
-    assert kwargs["chat_id"] == 100
-    assert kwargs["message_thread_id"] == 222
-    assert kwargs["reply_markup"].inline_keyboard[0][0].text == "Approve matching commands"
-    assert kwargs["reply_markup"].inline_keyboard[1][0].text == "Deny"
-
-
-@pytest.mark.asyncio
-async def test_approval_ui_sender_sends_permissions_prompt_to_topic(monkeypatch: pytest.MonkeyPatch) -> None:
-    bot = AsyncMock()
-    session_key = SessionKey.from_telegram_message(100, 222)
-    session_manager = SimpleNamespace(
-        reverse_lookup=MagicMock(return_value=session_key),
-        get_topic_id=MagicMock(return_value=222),
-    )
-    approval_handler = ApprovalHandler()
-    orchestrator = SimpleNamespace(
-        session_manager=session_manager,
-        approval_handler=approval_handler,
-    )
-
-    monkeypatch.setattr(codex, "_current_bot", bot)
-    monkeypatch.setattr(codex, "_global_orch", orchestrator)
-    monkeypatch.setattr(codex, "_db_session_factory", None)
-
-    await codex._approval_ui_sender(
-        "item/permissions/requestApproval",
-        {
-            "threadId": "thread-abcdef",
-            "itemId": "perm-telegram",
-            "cwd": "C:/repo",
-            "reason": "Need workspace write",
-            "permissions": {
-                "network": {"enabled": True},
-                "fileSystem": {"write": ["C:/repo/out"]},
-            },
-        },
-    )
-
-    bot.send_message.assert_awaited_once()
-    _, kwargs = bot.send_message.await_args
-    assert kwargs["chat_id"] == 100
-    assert kwargs["message_thread_id"] == 222
-    assert kwargs["parse_mode"] == "Markdown"
-    assert "additional permissions" in kwargs["text"]
-    assert "Need workspace write" in kwargs["text"]
-    assert "C:/repo/out" in kwargs["text"]
-    assert kwargs["reply_markup"].inline_keyboard[0][0].text == "Approve"
-    assert kwargs["reply_markup"].inline_keyboard[1][0].text == "Approve for session"
-    assert kwargs["reply_markup"].inline_keyboard[2][0].text == "Deny"
 
 
 @pytest.mark.asyncio
@@ -767,7 +687,7 @@ async def test_cmd_shell_natural_language_generates_command_proposal(monkeypatch
         providers=SimpleNamespace(get_provider=MagicMock(return_value=provider)),
         pending_shell_commands={},
     )
-    monkeypatch.setattr(codex, "_global_orch", None)
+    monkeypatch.setattr(codex.approval_ui_bridge, "orchestrator", None)
 
     await codex.cmd_shell(message, orchestrator, context)
 
@@ -805,7 +725,7 @@ async def test_cmd_shell_natural_language_no_command_uses_html_without_buttons(
         providers=SimpleNamespace(get_provider=MagicMock(return_value=provider)),
         pending_shell_commands={},
     )
-    monkeypatch.setattr(codex, "_global_orch", None)
+    monkeypatch.setattr(codex.approval_ui_bridge, "orchestrator", None)
 
     await codex.cmd_shell(message, orchestrator)
 
@@ -826,7 +746,7 @@ async def test_cmd_shell_raw_prefix_executes_directly(monkeypatch: pytest.Monkey
         shell_is_dangerous=MagicMock(return_value=False),
         pending_shell_commands={},
     )
-    monkeypatch.setattr(codex, "_global_orch", None)
+    monkeypatch.setattr(codex.approval_ui_bridge, "orchestrator", None)
     monkeypatch.setattr(codex, "_execute_shell_telegram", execute)
 
     await codex.cmd_shell(message, orchestrator)

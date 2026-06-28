@@ -28,6 +28,7 @@ from loguru import logger
 from sqlalchemy import select
 
 from bot.codex import formatting as fmt
+from bot.codex.approval_ui import approval_ui_bridge
 from bot.codex.turn import CodexTurnActor
 from bot.handlers import toolbar as toolbar_handler
 from bot.streaming import ReactionTracker
@@ -62,27 +63,10 @@ _CODEX_TOPIC_BOUND = "bound"
 _CODEX_TOPIC_RECOVERABLE = "recoverable"
 _CODEX_TOPIC_NOT_CODEX = "not_codex"
 
-# Bot instance stored for approval message routing.
-_current_bot: Bot | None = None
-
-# Global Orchestrator reference for transport-level approval callbacks.
-_global_orch: Orchestrator | None = None
-
-# Session factory (async callable returning an AsyncSession context) used to
-# resolve approval requests for threads that aren't loaded in memory yet.
-_db_session_factory: Any = None
-
 
 def set_db_session_factory(factory: Any) -> None:
-    """Wire the DB session factory from ``main.py`` startup.
-
-    ``factory`` should be an async generator (e.g. ``Database.get_session``)
-    that yields an ``AsyncSession``.  It is consumed by
-    :func:`_approval_ui_sender` when a thread-id cannot be resolved in
-    memory (e.g. after a bot restart).
-    """
-    global _db_session_factory
-    _db_session_factory = factory
+    """Wire the DB session factory from ``main.py`` startup."""
+    approval_ui_bridge.set_db_session_factory(factory)
 
 
 @dataclass(frozen=True)
@@ -126,85 +110,13 @@ def _ensure_global_orch(
     orchestrator: Orchestrator,
     db_session_factory: Any = None,
 ) -> None:
-    """Cache the Orchestrator instance and wire approval UI sender.
-
-    ``db_session_factory`` is an async-callable that yields a context manager
-    producing an ``AsyncSession`` (e.g. ``Database().get_session``). It is
-    used to resolve approval requests for threads not loaded in memory.
-    """
-    global _global_orch, _db_session_factory
-    if _global_orch is None:
-        _global_orch = orchestrator
-        orchestrator.set_approval_ui_sender(_approval_ui_sender)
-    if db_session_factory is not None:
-        _db_session_factory = db_session_factory
+    """Cache the Orchestrator instance and wire approval UI sender."""
+    approval_ui_bridge.ensure_orchestrator(orchestrator, db_session_factory)
 
 
 async def _approval_ui_sender(method: str, params: dict[str, Any]) -> None:
-    """Send approval requests to Telegram using the cached bot instance.
-
-    All early-return paths log a warning instead of failing silently: a
-    silent skip causes the turn to auto-deny after the timeout with no
-    visible clue, which is the original "button never appeared" bug.
-    """
-    if _current_bot is None or _global_orch is None:
-        logger.warning(f"approval UI skipped (no bot/orchestrator wired): method={method}")
-        return
-    sm = _global_orch.session_manager
-    if sm is None:
-        logger.warning(f"approval UI skipped (no session manager): method={method}")
-        return
-    thread_id = params.get("threadId", "")
-    session_key = sm.reverse_lookup(thread_id)
-    if session_key is None:
-        # Thread not opened in this process (bot restart, daemon reconnect).
-        # Fall back to the database before giving up.
-        if _db_session_factory is not None:
-            try:
-                async for db in _db_session_factory():
-                    session_key = await sm.reverse_lookup_db_fallback(thread_id, db)
-                    break
-            except Exception:
-                logger.exception(f"approval UI DB fallback failed for thread={thread_id}")
-        if session_key is None:
-            logger.warning(f"approval UI skipped (thread {thread_id} not resolvable in memory or DB): method={method}")
-            return
-    approval_id = params.get("approvalId", params.get("itemId", "unknown"))
-    if method == "item/commandExecution/requestApproval":
-        text = _global_orch.approval_handler.format_command_approval_markdown(approval_id, params)
-    elif method == "item/fileChange/requestApproval":
-        text = _global_orch.approval_handler.format_file_change_approval_markdown(approval_id, params)
-    elif method == "item/permissions/requestApproval":
-        text = _global_orch.approval_handler.format_permissions_approval_markdown(approval_id, params)
-    else:
-        logger.warning(f"approval UI skipped (unsupported method): method={method}")
-        return
-    keyboard = _global_orch.approval_handler.build_approval_keyboard(approval_id, params)
-    topic_id = sm.get_topic_id(thread_id) or session_key.topic_id
-    # Approvals are synchronous gates: if the message never renders, the user
-    # can't see the buttons and the turn auto-denies after the timeout. So we
-    # try Markdown first (nicer rendering), then fall back to plain text if
-    # Telegram rejects the formatting — Codex commands often contain `_`, `*`,
-    # `[` etc. that legacy Markdown treats as markup and 400s on.
-    try:
-        await _current_bot.send_message(
-            chat_id=session_key.chat_id,
-            text=text,
-            reply_markup=keyboard,
-            message_thread_id=topic_id,
-            parse_mode="Markdown",
-        )
-    except Exception as exc:
-        logger.warning(f"Codex: approval Markdown send failed, retrying as plain text: {exc}")
-        try:
-            await _current_bot.send_message(
-                chat_id=session_key.chat_id,
-                text=text,
-                reply_markup=keyboard,
-                message_thread_id=topic_id,
-            )
-        except Exception as exc2:
-            logger.warning(f"Codex: failed to send approval message to {session_key}: {exc2}")
+    """Compatibility wrapper for the transport-level approval callback."""
+    await approval_ui_bridge.send(method, params)
 
 
 def _bot_token() -> str:
@@ -509,12 +421,11 @@ async def _execute_codex_prompt(
 ) -> None:
     """Execute a Codex chat prompt and stream results back via Telegram."""
     logger.info(f"_execute_codex_prompt: starting, prompt='{prompt[:50]}...', thread_id={route.message_thread_id}")
-    global _current_bot
     bot = message.bot
     if bot is None:
         logger.warning("_execute_codex_prompt: bot is None, returning")
         return
-    _current_bot = bot
+    approval_ui_bridge.set_bot(bot)
 
     session_key = SessionKey.from_telegram_message(route.chat_id, route.message_thread_id)
     logger.info(f"_execute_codex_prompt: session_key={session_key}")
@@ -685,11 +596,10 @@ async def cmd_codex_v2(
     orchestrator: Orchestrator,
 ) -> None:
     """Handle /codex <prompt> with the persistent app-server architecture."""
-    global _current_bot
     bot = message.bot
     if bot is None:
         return
-    _current_bot = bot
+    approval_ui_bridge.set_bot(bot)
 
     route = TelegramRoute.from_message(message)
     chat_id = route.chat_id
