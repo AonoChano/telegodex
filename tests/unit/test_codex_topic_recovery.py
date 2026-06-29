@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from datetime import datetime
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from aiogram.types import Message
 
+from bot.codex import topic_recovery
 from bot.codex.topic_recovery import TopicRecoveryPrompt, TopicRecoveryRequest, TopicRecoveryStore
 from bot.utils.routing import TelegramRoute
 
@@ -110,5 +111,91 @@ async def test_send_prompt_skips_when_message_has_no_topic() -> None:
     )
 
     bot.send_message.assert_not_awaited()
+    assert store.requests == {}
+    assert store.prompts == {}
+
+def _callback(data: str, message: Message | None) -> SimpleNamespace:
+    return SimpleNamespace(data=data, message=message, answer=AsyncMock())
+
+
+def _recovery_deps(*, alive: bool = True) -> dict[str, object]:
+    return {
+        "codex_daemon": SimpleNamespace(is_alive=MagicMock(return_value=alive)),
+        "bind_codex_thread_to_topic": AsyncMock(),
+        "execute_codex_prompt": AsyncMock(),
+        "codex_reply": AsyncMock(),
+    }
+
+
+@pytest.mark.asyncio
+async def test_handle_topic_recovery_callback_cancel_removes_prompt_state() -> None:
+    bot = AsyncMock()
+    store = TopicRecoveryStore()
+    request_id = "request-1"
+    store.requests[request_id] = TopicRecoveryRequest(
+        chat_id=100,
+        topic_id=222,
+        prompt="continue",
+        user_id=7,
+    )
+    store.prompts[(100, 222)] = TopicRecoveryPrompt(request_id=request_id, message_id=99)
+    callback_query = _callback(f"codex_topic_recover|{request_id}|cancel", _message(bot=bot))
+    deps = _recovery_deps()
+
+    await topic_recovery.handle_topic_recovery_callback(
+        callback_query,
+        SimpleNamespace(session=AsyncMock()),
+        SimpleNamespace(session_manager=None),
+        store=store,
+        **deps,
+    )
+
+    callback_query.answer.assert_awaited_once_with("Cancelled.", show_alert=False)
+    assert store.requests == {}
+    assert store.prompts == {}
+    deps["execute_codex_prompt"].assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_handle_topic_recovery_callback_create_starts_session() -> None:
+    bot = AsyncMock()
+    store = TopicRecoveryStore()
+    request_id = "request-1"
+    store.requests[request_id] = TopicRecoveryRequest(
+        chat_id=100,
+        topic_id=222,
+        prompt="continue",
+        user_id=7,
+    )
+    store.prompts[(100, 222)] = TopicRecoveryPrompt(request_id=request_id, message_id=99)
+    callback_query = _callback(f"codex_topic_recover|{request_id}|create", _message(bot=bot))
+    context = SimpleNamespace(session=AsyncMock())
+    session_manager = SimpleNamespace(set_topic_id=MagicMock())
+    orchestrator = SimpleNamespace(
+        session_manager=session_manager,
+        codex_new_session=AsyncMock(return_value={"thread_id": "thread-new", "cwd": "C:/repo"}),
+    )
+    deps = _recovery_deps()
+
+    await topic_recovery.handle_topic_recovery_callback(
+        callback_query,
+        context,
+        orchestrator,
+        store=store,
+        **deps,
+    )
+
+    orchestrator.codex_new_session.assert_awaited_once()
+    session_manager.set_topic_id.assert_called_once_with("thread-new", 222)
+    deps["bind_codex_thread_to_topic"].assert_awaited_once_with(
+        context_manager=context,
+        chat_id=100,
+        topic_id=222,
+        thread_id="thread-new",
+        user_id=7,
+        cwd="C:/repo",
+    )
+    deps["execute_codex_prompt"].assert_awaited_once()
+    callback_query.answer.assert_awaited_once_with("Created.", show_alert=False)
     assert store.requests == {}
     assert store.prompts == {}

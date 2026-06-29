@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import contextlib
 import uuid
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from typing import Any
 
 from aiogram import Bot
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from loguru import logger
 
 from bot.utils.routing import TelegramRoute
+from core.session import SessionKey
 
 
 @dataclass(frozen=True)
@@ -98,3 +102,86 @@ class TopicRecoveryStore:
 
 
 topic_recovery_store = TopicRecoveryStore()
+AsyncCallable = Callable[..., Awaitable[Any]]
+
+
+async def handle_topic_recovery_callback(
+    callback_query: CallbackQuery,
+    context_manager: Any,
+    orchestrator: Any,
+    *,
+    codex_daemon: Any,
+    bind_codex_thread_to_topic: AsyncCallable,
+    execute_codex_prompt: AsyncCallable,
+    codex_reply: AsyncCallable,
+    store: TopicRecoveryStore = topic_recovery_store,
+) -> None:
+    """Handle create/cancel for a recoverable Codex forum topic."""
+    data = callback_query.data
+    if data is None:
+        await callback_query.answer("Invalid recovery request.", show_alert=True)
+        return
+    try:
+        _, request_id, decision = data.split("|", 2)
+    except ValueError:
+        await callback_query.answer("Invalid recovery request.", show_alert=True)
+        return
+
+    request = store.requests.pop(request_id, None)
+    message = callback_query.message
+    if not isinstance(message, Message):
+        await callback_query.answer("Message unavailable.", show_alert=True)
+        return
+
+    key = (message.chat.id, message.message_thread_id) if message.message_thread_id is not None else None
+    if key is not None:
+        existing = store.prompts.get(key)
+        if existing is not None and existing.request_id == request_id:
+            store.prompts.pop(key, None)
+
+    with contextlib.suppress(Exception):
+        await message.delete()
+
+    if request is None:
+        await callback_query.answer("Request expired or already handled.", show_alert=True)
+        return
+    if decision != "create":
+        await callback_query.answer("Cancelled.", show_alert=False)
+        return
+
+    if not codex_daemon.is_alive():
+        await callback_query.answer("Codex daemon is not running.", show_alert=True)
+        return
+
+    route = TelegramRoute(
+        chat_id=request.chat_id,
+        message_thread_id=request.topic_id,
+    )
+    session_key = SessionKey.from_telegram_message(request.chat_id, request.topic_id)
+    try:
+        info = await orchestrator.codex_new_session(session_key, context_manager.session, request.user_id)
+        thread_id = info["thread_id"]
+        session_manager = orchestrator.session_manager
+        if session_manager is not None:
+            session_manager.set_topic_id(thread_id, request.topic_id)
+        await bind_codex_thread_to_topic(
+            context_manager=context_manager,
+            chat_id=request.chat_id,
+            topic_id=request.topic_id,
+            thread_id=thread_id,
+            user_id=request.user_id,
+            cwd=info.get("cwd"),
+        )
+        await callback_query.answer("Created.", show_alert=False)
+        await execute_codex_prompt(
+            message,
+            route,
+            context_manager,
+            orchestrator,
+            request.prompt,
+            user_id_override=request.user_id,
+        )
+    except Exception as exc:
+        logger.exception("Failed to recover Codex topic")
+        await callback_query.answer("Failed to create session.", show_alert=True)
+        await codex_reply(message, f"Codex error: {exc}", route, request.topic_id)
