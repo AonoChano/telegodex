@@ -12,7 +12,6 @@ from __future__ import annotations
 from typing import Any
 
 from aiogram import Bot, F, Router
-from aiogram.dispatcher.event.bases import SkipHandler
 from aiogram.filters import Command
 from aiogram.types import (
     CallbackQuery,
@@ -22,7 +21,16 @@ from aiogram.types import (
 )
 from loguru import logger
 
-from bot.codex import command_flow, command_ui, model_ui, reply_ui, screenshot_ui, session_ui, shell_ui, stop_ui
+from bot.codex import (
+    command_flow,
+    model_ui,
+    reply_ui,
+    screenshot_ui,
+    session_ui,
+    shell_ui,
+    stop_ui,
+    topic_messages,
+)
 from bot.codex.approval_ui import approval_ui_bridge
 from bot.codex.topic_filter import IsCodexBoundTopic
 from bot.codex.topic_recovery import (
@@ -391,48 +399,19 @@ async def handle_codex_topic_message(
     context_manager: Any,
     orchestrator: Orchestrator,
 ) -> None:
-    """Handle regular text messages inside a Codex-bound forum topic.
-
-    Routes the message directly to the Codex session bound to this topic
-    without requiring the /codex prefix.
-    """
-    logger.info(f"handle_codex_topic_message: received message in thread {message.message_thread_id}")
-    route = TelegramRoute.from_message(message)
-    prompt = command_ui.topic_prompt_text(message)
-
-    if not prompt:
-        raise SkipHandler
-
-    # Verify this topic is actually bound to a Codex session.
-    topic_id = message.message_thread_id
-    if topic_id is None:
-        raise SkipHandler
-    state = await _codex_topic_state(topic_id, context_manager, chat_id=route.chat_id)
-    if state == _CODEX_TOPIC_RECOVERABLE:
-        await _send_topic_recovery_prompt(message, route, prompt)
-        return
-    if state != _CODEX_TOPIC_BOUND:
-        raise SkipHandler
-
-    # Check daemon readiness.
-    daemon_alive = codex_daemon.is_alive()
-    logger.info(f"handle_codex_topic_message: codex_daemon.is_alive()={daemon_alive}")
-    if not daemon_alive:
-        await _codex_reply(
-            message,
-            "Codex daemon is not running. Please restart the bot.",
-            route,
-            route.message_thread_id,
-        )
-        return
-
-    logger.info("handle_codex_topic_message: calling orchestrator.ensure_transport_handlers()")
-    orchestrator.ensure_transport_handlers()
-    _ensure_global_orch(orchestrator)
-
-    # Route the message as a Codex prompt.
-    logger.info(f"handle_codex_topic_message: routing to _execute_codex_prompt, prompt='{prompt[:50]}...'")
-    await _execute_codex_prompt(message, route, context_manager, orchestrator, prompt)
+    await topic_messages.handle_topic_message(
+        message,
+        context_manager,
+        orchestrator,
+        codex_topic_state=_codex_topic_state,
+        send_topic_recovery_prompt=_send_topic_recovery_prompt,
+        codex_daemon=codex_daemon,
+        codex_reply=_codex_reply,
+        ensure_global_orch=_ensure_global_orch,
+        execute_codex_prompt=_execute_codex_prompt,
+        codex_topic_bound=_CODEX_TOPIC_BOUND,
+        codex_topic_recoverable=_CODEX_TOPIC_RECOVERABLE,
+    )
 
 
 # ---------------------------------------------------------------------------
