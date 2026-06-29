@@ -359,7 +359,6 @@ async def test_execute_codex_prompt_pushes_render_updates_to_draft(monkeypatch: 
     monkeypatch.setattr(codex.toolbar_handler, "send_reply_keyboard", AsyncMock())
     monkeypatch.setattr(codex.toolbar_handler, "remove_reply_keyboard", AsyncMock())
     monkeypatch.setattr(codex.toolbar_handler, "set_last_reply", MagicMock())
-    monkeypatch.setattr(codex, "send_rich_message", AsyncMock(return_value=True))
     monkeypatch.setattr(codex.codex_daemon, "add_stderr_listener", MagicMock(return_value=remove_stderr_listener))
 
     await codex._execute_codex_prompt(message, route, context, orchestrator, "prompt", user_id_override=7)
@@ -393,7 +392,6 @@ async def test_execute_codex_prompt_updates_status_on_streaming_error(monkeypatc
     )
     monkeypatch.setattr(codex.toolbar_handler, "send_reply_keyboard", AsyncMock())
     monkeypatch.setattr(codex.toolbar_handler, "remove_reply_keyboard", AsyncMock())
-    monkeypatch.setattr(codex, "send_rich_message", AsyncMock(return_value=True))
     monkeypatch.setattr(codex.codex_daemon, "add_stderr_listener", MagicMock(return_value=remove_stderr_listener))
 
     await codex._execute_codex_prompt(message, route, context, orchestrator, "prompt", user_id_override=7)
@@ -441,7 +439,6 @@ async def test_execute_codex_prompt_updates_status_when_stderr_arrives_after_unk
     monkeypatch.setattr(codex.toolbar_handler, "remove_reply_keyboard", AsyncMock())
     monkeypatch.setattr(codex.toolbar_handler, "set_last_reply", MagicMock())
     monkeypatch.setattr(codex.turn_setup.DraftStream, "finalize", finalize)
-    monkeypatch.setattr(codex, "send_rich_message", AsyncMock(return_value=True))
     monkeypatch.setattr(codex.codex_daemon, "add_stderr_listener", MagicMock(side_effect=add_stderr_listener))
     monkeypatch.setattr(codex, "STDERR_FLUSH_GRACE_SECONDS", 0)
 
@@ -495,7 +492,6 @@ async def test_execute_codex_prompt_formats_app_server_reconnecting_error(
     monkeypatch.setattr(codex.toolbar_handler, "remove_reply_keyboard", AsyncMock())
     monkeypatch.setattr(codex.toolbar_handler, "set_last_reply", MagicMock())
     monkeypatch.setattr(codex.turn_setup.DraftStream, "finalize", finalize)
-    monkeypatch.setattr(codex, "send_rich_message", AsyncMock(return_value=True))
     monkeypatch.setattr(codex.codex_daemon, "add_stderr_listener", MagicMock(return_value=remove_stderr_listener))
     monkeypatch.setattr(codex, "STDERR_FLUSH_GRACE_SECONDS", 0)
 

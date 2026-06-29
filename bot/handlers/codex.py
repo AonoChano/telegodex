@@ -25,6 +25,7 @@ from bot.codex import (
     shell_ui,
     stop_ui,
     topic_messages,
+    turn_lifecycle,
     turn_setup,
 )
 from bot.codex.approval_ui import approval_ui_bridge
@@ -43,7 +44,6 @@ from bot.codex.topic_state import (
     codex_topic_state,
 )
 from bot.handlers import toolbar as toolbar_handler
-from bot.utils.rich_messages import send_rich_message
 from bot.utils.routing import TelegramRoute
 from config import settings
 from core.orchestrator import Orchestrator
@@ -220,38 +220,17 @@ async def _execute_codex_prompt(
 
         toolbar_handler.set_last_reply(session_key, final_text)
 
-        # Persist final result.
-        if stream is not None:
-            success = await stream.finalize(final_text)
-        else:
-            success = await send_rich_message(
-                bot_token=_bot_token(),
-                chat_id=route.chat_id,
-                markdown_text=final_text,
-                message_thread_id=topic_id,
-                direct_messages_topic_id=route.direct_messages_topic_id,
-                business_connection_id=route.business_connection_id,
-            )
-        if not success:
-            await _codex_reply(
-                message,
-                final_text,
-                route,
-                topic_id,
-            )
-        # The status / stop-button message has served its purpose once the
-        # final answer is on screen. Delete it now instead of leaving
-        # "Codex completed." visible alongside the result until ``finally``
-        # runs — that transient dupe is confusing on success.
-        if success and stop_msg is not None:
-            try:
-                await bot.delete_message(
-                    chat_id=stop_msg.chat.id,
-                    message_id=stop_msg.message_id,
-                )
-                stop_msg = None  # signal ``finally`` it's already gone
-            except Exception as exc:
-                logger.debug(f"Codex: failed to delete status message after finalize: {exc}")
+        stop_msg = await turn_lifecycle.persist_final_output(
+            bot=bot,
+            bot_token=_bot_token(),
+            message=message,
+            route=route,
+            topic_id=topic_id,
+            final_text=final_text,
+            stream=stream,
+            stop_msg=stop_msg,
+            codex_reply=_codex_reply,
+        )
 
     except Exception as exc:
         logger.exception("Codex: turn failed")
@@ -264,20 +243,13 @@ async def _execute_codex_prompt(
         )
     finally:
         remove_stderr_listener()
-        # Remove the stop button message.
-        if stop_msg is not None:
-            try:
-                await bot.delete_message(
-                    chat_id=stop_msg.chat.id,
-                    message_id=stop_msg.message_id,
-                )
-            except Exception as exc:
-                logger.debug(f"Codex: failed to delete stop button: {exc}")
-        # Remove ReplyKeyboard when the turn ends.
-        try:
-            await toolbar_handler.remove_reply_keyboard(bot, session_key, message_thread_id=topic_id)
-        except Exception as exc:
-            logger.debug(f"Codex: failed to remove reply keyboard: {exc}")
+        await turn_lifecycle.cleanup_turn(
+            bot=bot,
+            toolbar_handler=toolbar_handler,
+            session_key=session_key,
+            topic_id=topic_id,
+            stop_msg=stop_msg,
+        )
 
 
 # ---------------------------------------------------------------------------

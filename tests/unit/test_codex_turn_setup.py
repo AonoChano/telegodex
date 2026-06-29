@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 from aiogram.types import Message
+from loguru import logger
 
 from bot.codex import turn_setup
 from bot.utils.routing import TelegramRoute
@@ -165,18 +166,26 @@ async def test_prepare_codex_turn_returns_none_without_bot() -> None:
     message = _message(bot=None)
     message = Message.model_validate(message.model_dump())
     route = TelegramRoute.from_message(message)
+    log_messages: list[str] = []
+    sink_id = logger.add(log_messages.append, format="{message}")
 
-    prepared = await turn_setup.prepare_codex_turn(
-        message=message,
-        route=route,
-        orchestrator=SimpleNamespace(session_manager=None),
-        bot_token="TOKEN",
-        toolbar_handler=SimpleNamespace(send_reply_keyboard=AsyncMock()),
-        status_edit_interval=2.0,
-        draft_flush_chars=200,
-        draft_flush_interval=1.2,
-        stderr_late_grace=2.0,
-        stderr_flush_grace=0.25,
-    )
+    try:
+        prepared = await turn_setup.prepare_codex_turn(
+            message=message,
+            route=route,
+            orchestrator=SimpleNamespace(session_manager=None),
+            bot_token="TOKEN",
+            toolbar_handler=SimpleNamespace(send_reply_keyboard=AsyncMock()),
+            status_edit_interval=2.0,
+            draft_flush_chars=200,
+            draft_flush_interval=1.2,
+            stderr_late_grace=2.0,
+            stderr_flush_grace=0.25,
+        )
+    finally:
+        logger.remove(sink_id)
 
     assert prepared is None
+    log_text = "\n".join(log_messages)
+    assert "prepare_codex_turn: bot is None" in log_text
+    assert "_execute_codex_prompt: bot is None" not in log_text

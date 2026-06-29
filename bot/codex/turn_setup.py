@@ -44,7 +44,7 @@ async def prepare_codex_turn(
     """Create Telegram status UI, draft stream, and per-turn actor."""
     bot = message.bot
     if bot is None:
-        logger.warning("_execute_codex_prompt: bot is None, returning")
+        logger.warning("prepare_codex_turn: bot is None, returning")
         return None
 
     session_key = SessionKey.from_telegram_message(route.chat_id, route.message_thread_id)
