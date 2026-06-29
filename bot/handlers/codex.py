@@ -23,7 +23,7 @@ from aiogram.types import (
 )
 from loguru import logger
 
-from bot.codex import command_flow, command_ui, model_ui, reply_ui, session_ui, shell_ui
+from bot.codex import command_flow, command_ui, model_ui, reply_ui, session_ui, shell_ui, stop_ui
 from bot.codex.approval_ui import approval_ui_bridge
 from bot.codex.topic_filter import IsCodexBoundTopic
 from bot.codex.topic_recovery import TopicRecoveryPrompt, TopicRecoveryRequest, topic_recovery_store
@@ -495,28 +495,7 @@ async def handle_codex_stop_callback(
     callback_query: CallbackQuery,
     orchestrator: Orchestrator,
 ) -> None:
-    """Handle the 'Stop generating' inline button."""
-    data = callback_query.data
-    if data is None:
-        await callback_query.answer("Invalid stop request.", show_alert=True)
-        return
-    try:
-        _, session_key_str = data.split("|", 1)
-        session_key = SessionKey.from_string(session_key_str)
-    except ValueError:
-        await callback_query.answer("Invalid stop request.", show_alert=True)
-        return
-
-    sm = orchestrator.session_manager
-    if sm is not None and sm.is_turn_active(session_key):
-        await sm.cancel_turn(session_key)
-        await callback_query.answer("Turn interrupted.", show_alert=False)
-        msg = callback_query.message
-        if isinstance(msg, Message):
-            with contextlib.suppress(Exception):
-                await msg.edit_text("_Interrupted._")
-    else:
-        await callback_query.answer("No active turn.", show_alert=False)
+    await stop_ui.handle_stop_callback(callback_query, orchestrator)
 
 
 @router.callback_query(F.data.startswith("codex_topic_recover|"))

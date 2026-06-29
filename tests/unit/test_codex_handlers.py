@@ -654,6 +654,17 @@ async def test_cmd_shell_delegates_to_shell_ui(monkeypatch: pytest.MonkeyPatch) 
 
 
 @pytest.mark.asyncio
+async def test_codex_stop_callback_delegates_to_stop_ui(monkeypatch: pytest.MonkeyPatch) -> None:
+    orchestrator = SimpleNamespace()
+    callback_query = SimpleNamespace(data="codex_stop|telegram:100:none")
+    handle_stop_callback = AsyncMock()
+    monkeypatch.setattr(codex.stop_ui, "handle_stop_callback", handle_stop_callback)
+
+    await codex.handle_codex_stop_callback(callback_query, orchestrator)
+
+    handle_stop_callback.assert_awaited_once_with(callback_query, orchestrator)
+
+@pytest.mark.asyncio
 async def test_shell_callbacks_delegate_to_shell_ui(monkeypatch: pytest.MonkeyPatch) -> None:
     orchestrator = SimpleNamespace()
     callback_query = SimpleNamespace(data="shell_ai:proposal-1:run")
