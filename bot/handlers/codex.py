@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from aiogram import Bot, F, Router
+from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.types import (
     CallbackQuery,
@@ -45,7 +45,6 @@ from bot.codex.topic_state import (
     CODEX_TOPIC_RECOVERABLE,
     bind_codex_thread_to_topic,
     codex_topic_state,
-    is_codex_bound_topic,
 )
 from bot.codex.turn import CodexTurnActor
 from bot.handlers import toolbar as toolbar_handler
@@ -125,9 +124,6 @@ async def _handle_codex_new(
         bind_codex_thread_to_topic=_bind_codex_thread_to_topic,
     )
 
-def _codex_send_kwargs(route: TelegramRoute, topic_id: int | None) -> dict[str, Any]:
-    return reply_ui.codex_send_kwargs(route, topic_id)
-
 
 async def _codex_reply(
     message: Message,
@@ -138,12 +134,6 @@ async def _codex_reply(
 ) -> None:
     await reply_ui.codex_reply(message, text, route, topic_id, **kwargs)
 
-def _topic_recovery_key(route: TelegramRoute) -> tuple[int | str, int] | None:
-    return topic_recovery_store.key_for_route(route)
-
-
-async def _delete_previous_topic_recovery_prompt(bot: Bot, route: TelegramRoute) -> None:
-    await topic_recovery_store.delete_previous_prompt(bot, route)
 
 
 async def _send_topic_recovery_prompt(message: Message, route: TelegramRoute, prompt: str) -> None:
@@ -168,13 +158,6 @@ async def _bind_codex_thread_to_topic(
         cwd=cwd,
     )
 
-
-async def _is_codex_bound_topic(
-    thread_id: int,
-    context_manager: Any,
-    chat_id: int | str | None = None,
-) -> bool:
-    return await is_codex_bound_topic(thread_id, context_manager, chat_id=chat_id)
 
 
 async def _codex_topic_state(
@@ -456,16 +439,6 @@ async def cmd_shell(
         execute_shell=_execute_shell_telegram,
     )
 
-
-async def _propose_shell_telegram(
-    message: Message,
-    route: TelegramRoute,
-    orchestrator: Orchestrator,
-    request: str,
-    session_key: SessionKey,
-    context_manager: ContextManager | None,
-) -> None:
-    await shell_ui.propose_shell_telegram(message, route, orchestrator, request, session_key, context_manager)
 
 
 # ---------------------------------------------------------------------------
