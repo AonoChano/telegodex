@@ -14,7 +14,6 @@ from typing import Any
 from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
-from loguru import logger
 
 from bot.codex import (
     command_flow,
@@ -25,8 +24,7 @@ from bot.codex import (
     shell_ui,
     stop_ui,
     topic_messages,
-    turn_lifecycle,
-    turn_setup,
+    turn_executor,
 )
 from bot.codex.approval_ui import approval_ui_bridge
 from bot.codex.topic_filter import IsCodexBoundTopic
@@ -174,82 +172,24 @@ async def _execute_codex_prompt(
     prompt: str,
     user_id_override: int | None = None,
 ) -> None:
-    """Execute a Codex chat prompt and stream results back via Telegram."""
-    logger.info(f"_execute_codex_prompt: starting, prompt='{prompt[:50]}...', thread_id={route.message_thread_id}")
-    bot = message.bot
-    if bot is None:
-        logger.warning("_execute_codex_prompt: bot is None, returning")
-        return
-    approval_ui_bridge.set_bot(bot)
-
-    session_key = SessionKey.from_telegram_message(route.chat_id, route.message_thread_id)
-    logger.info(f"_execute_codex_prompt: session_key={session_key}")
-    user_id = user_id_override if user_id_override is not None else (message.from_user.id if message.from_user else 0)
-
-    prepared_turn = await turn_setup.prepare_codex_turn(
+    await turn_executor.execute_codex_prompt(
         message=message,
         route=route,
+        context_manager=context_manager,
         orchestrator=orchestrator,
+        prompt=prompt,
+        user_id_override=user_id_override,
         bot_token=_bot_token(),
+        approval_ui_bridge=approval_ui_bridge,
         toolbar_handler=toolbar_handler,
+        codex_daemon=codex_daemon,
+        codex_reply=_codex_reply,
         status_edit_interval=STATUS_EDIT_INTERVAL_SECONDS,
         draft_flush_chars=DRAFT_FLUSH_CHARS,
         draft_flush_interval=DRAFT_FLUSH_INTERVAL_SECONDS,
         stderr_late_grace=STDERR_LATE_GRACE_SECONDS,
         stderr_flush_grace=STDERR_FLUSH_GRACE_SECONDS,
     )
-    if prepared_turn is None:
-        return
-
-    session_key = prepared_turn.session_key
-    topic_id = prepared_turn.topic_id
-    stop_msg = prepared_turn.stop_msg
-    stream = prepared_turn.stream
-    actor = prepared_turn.actor
-    remove_stderr_listener = codex_daemon.add_stderr_listener(actor.on_daemon_stderr)
-    try:
-        final_text = await orchestrator.handle_message_streaming(
-            key=session_key,
-            text=prompt,
-            db=context_manager.session,
-            user_id=user_id,
-            callbacks=actor.build_callbacks(),
-        )
-
-        final_text = await actor.prepare_final_text(final_text)
-
-        toolbar_handler.set_last_reply(session_key, final_text)
-
-        stop_msg = await turn_lifecycle.persist_final_output(
-            bot=bot,
-            bot_token=_bot_token(),
-            message=message,
-            route=route,
-            topic_id=topic_id,
-            final_text=final_text,
-            stream=stream,
-            stop_msg=stop_msg,
-            codex_reply=_codex_reply,
-        )
-
-    except Exception as exc:
-        logger.exception("Codex: turn failed")
-        await actor.edit_status(f"Codex error.\n{exc}", force=True)
-        await _codex_reply(
-            message,
-            f"Codex error: {exc}",
-            route,
-            topic_id,
-        )
-    finally:
-        remove_stderr_listener()
-        await turn_lifecycle.cleanup_turn(
-            bot=bot,
-            toolbar_handler=toolbar_handler,
-            session_key=session_key,
-            topic_id=topic_id,
-            stop_msg=stop_msg,
-        )
 
 
 # ---------------------------------------------------------------------------
