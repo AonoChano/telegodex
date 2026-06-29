@@ -13,12 +13,7 @@ from typing import Any
 
 from aiogram import F, Router
 from aiogram.filters import Command
-from aiogram.types import (
-    CallbackQuery,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-    Message,
-)
+from aiogram.types import CallbackQuery, Message
 from loguru import logger
 
 from bot.codex import (
@@ -30,6 +25,7 @@ from bot.codex import (
     shell_ui,
     stop_ui,
     topic_messages,
+    turn_setup,
 )
 from bot.codex.approval_ui import approval_ui_bridge
 from bot.codex.topic_filter import IsCodexBoundTopic
@@ -46,10 +42,7 @@ from bot.codex.topic_state import (
     bind_codex_thread_to_topic,
     codex_topic_state,
 )
-from bot.codex.turn import CodexTurnActor
 from bot.handlers import toolbar as toolbar_handler
-from bot.streaming import ReactionTracker
-from bot.telegram_draft import DraftStream
 from bot.utils.rich_messages import send_rich_message
 from bot.utils.routing import TelegramRoute
 from config import settings
@@ -193,85 +186,26 @@ async def _execute_codex_prompt(
     logger.info(f"_execute_codex_prompt: session_key={session_key}")
     user_id = user_id_override if user_id_override is not None else (message.from_user.id if message.from_user else 0)
 
-    # Send typing indicator.
-    await bot.send_chat_action(
-        chat_id=route.chat_id,
-        action="typing",
-        message_thread_id=route.message_thread_id,
-        business_connection_id=route.business_connection_id,
-    )
-
-    topic_id = route.message_thread_id
-
-    # Send a "Stop" inline button for this turn.
-    stop_msg = None
-    stop_keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="Stop generating",
-                    callback_data=f"codex_stop|{session_key.to_string()}",
-                )
-            ]
-        ]
-    )
-    try:
-        stop_msg = await bot.send_message(
-            chat_id=route.chat_id,
-            text="Codex is working...",
-            reply_markup=stop_keyboard,
-            message_thread_id=topic_id,
-        )
-    except Exception as exc:
-        logger.debug(f"Codex: failed to send stop button: {exc}")
-
-    try:
-        await toolbar_handler.send_reply_keyboard(
-            bot,
-            session_key=session_key,
-            message_thread_id=topic_id,
-        )
-    except Exception as exc:
-        logger.debug(f"Codex: failed to send reply keyboard: {exc}")
-
-    # Enable draft streaming in private chats and forum topics.
-    use_draft = message.chat.type == "private" or route.message_thread_id is not None
-    stream = (
-        DraftStream(
-            bot_token=_bot_token(),
-            chat_id=route.chat_id,
-            message_thread_id=topic_id,
-            direct_messages_topic_id=route.direct_messages_topic_id,
-            business_connection_id=route.business_connection_id,
-            use_rich=True,
-        )
-        if use_draft
-        else None
-    )
-
-    reaction_tracker = None
-    if stop_msg is not None:
-        reaction_tracker = ReactionTracker(bot, stop_msg.chat.id, stop_msg.message_id)
-        try:
-            await reaction_tracker.set_state("thinking")
-        except Exception as exc:
-            logger.debug(f"Codex: failed to set initial reaction: {exc}")
-
-    actor = CodexTurnActor(
-        bot=bot,
+    prepared_turn = await turn_setup.prepare_codex_turn(
+        message=message,
         route=route,
-        session_key=session_key,
         orchestrator=orchestrator,
-        stop_msg=stop_msg,
-        stop_keyboard=stop_keyboard,
-        stream=stream,
-        reaction_tracker=reaction_tracker,
+        bot_token=_bot_token(),
+        toolbar_handler=toolbar_handler,
         status_edit_interval=STATUS_EDIT_INTERVAL_SECONDS,
         draft_flush_chars=DRAFT_FLUSH_CHARS,
         draft_flush_interval=DRAFT_FLUSH_INTERVAL_SECONDS,
         stderr_late_grace=STDERR_LATE_GRACE_SECONDS,
         stderr_flush_grace=STDERR_FLUSH_GRACE_SECONDS,
     )
+    if prepared_turn is None:
+        return
+
+    session_key = prepared_turn.session_key
+    topic_id = prepared_turn.topic_id
+    stop_msg = prepared_turn.stop_msg
+    stream = prepared_turn.stream
+    actor = prepared_turn.actor
     remove_stderr_listener = codex_daemon.add_stderr_listener(actor.on_daemon_stderr)
     try:
         final_text = await orchestrator.handle_message_streaming(
