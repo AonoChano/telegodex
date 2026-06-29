@@ -12,6 +12,35 @@ Check configuration without starting polling:
 python run.py --check-config
 ```
 
+## Required: `provider.toml`
+
+Telegodex reads all AI provider configuration from `provider.toml`. The bot will not start without it. If the file is missing, `--check-config` and the polling startup both abort with an error pointing at `provider.toml.example`:
+
+```text
+provider.toml is required; see provider.toml.example (expected at: .../provider.toml)
+```
+
+To set up:
+
+```bash
+cp provider.toml.example provider.toml
+# then edit provider.toml and .env (add the *_API_KEY env vars referenced by api_key_env)
+```
+
+See `docs/CUSTOM_PROVIDERS.md` for the full configuration guide.
+
+## `--check-config` Behavior
+
+`--check-config` loads `provider.toml` and validates:
+
+- The file exists and parses as valid TOML.
+- `[global].available_providers` is non-empty (an empty list activates nothing — every provider must be explicitly listed).
+- `[global].default_provider` is in `available_providers`.
+
+It does NOT validate API keys — those are resolved lazily at request time, so a missing `*_API_KEY` env var will skip the provider with a warning at startup but will not fail `--check-config`.
+
+On success, the check prints the list of parsed provider blocks (e.g. `openai, anthropic, gemini, ...`).
+
 ## Single Polling Instance
 
 Telegram allows only one active `getUpdates` polling consumer per bot token. If two processes use the same token, Telegram returns:

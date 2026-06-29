@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """
-Telegodex 配置助手
+Telegodex 配置助手 (DEPRECATED)
 
-帮助用户快速生成自定义 Provider 配置
+DEPRECATED — Telegodex now configures providers via provider.toml. This helper
+script is no longer the recommended path and is kept only as a migration
+reference. To add or remove providers, copy provider.toml.example to
+provider.toml and edit it directly. See docs/CUSTOM_PROVIDERS.md.
 """
 
 import json

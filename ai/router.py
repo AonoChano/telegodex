@@ -1,132 +1,186 @@
-from typing import Any
+"""AI provider router.
 
+Routes chat requests to the right provider based on user preference or
+the global default. Provider instantiation is driven by TOML config
+(see :mod:`config.provider_loader`) — this module no longer maintains a
+hardcoded name→class mapping.
+
+Transport registry (3 entries, mirrors the spec):
+
+* ``openai``            → :class:`OpenAIProvider` (native OpenAI SDK)
+* ``anthropic``         → :class:`AnthropicProvider` (native Anthropic SDK)
+* ``openai_compatible`` → :class:`OpenAICompatibleProvider` (generic HTTP)
+
+All other vendor variety (qwen / kimi / zhipu / baidu / gemini / deepseek /
+ollama / lmstudio / etc.) is expressed via ``transport = "openai_compatible"``
+in ``provider.toml``. The legacy dedicated classes
+(``GoogleProvider`` / ``DeepSeekProvider`` / ``QwenProvider`` /
+``MoonshotProvider`` / ``ZhipuProvider`` / ``BaiduProvider``) remain in the
+codebase as deprecated dead code and are NOT instantiated from this router.
+"""
+
+from __future__ import annotations
+
+from config.provider_loader import GlobalConfig, ProviderConfig
 from loguru import logger
 
 from .anthropic_provider import AnthropicProvider
 from .base import BaseAIProvider
-from .china_providers import BaiduProvider, MoonshotProvider, QwenProvider, ZhipuProvider
-from .deepseek_provider import DeepSeekProvider
-from .google_provider import GoogleProvider
 from .openai_compatible_provider import OpenAICompatibleProvider
 from .openai_provider import OpenAIProvider
 
 
 class AIRouter:
-    """AI 服务商路由器 - 统一管理多个 AI Provider，支持自定义配置"""
+    """Route chat requests across multiple AI providers.
 
-    # 内置 Provider 类
-    BUILTIN_PROVIDERS: dict[str, type[BaseAIProvider]] = {
+    Provider instances are built from ``ProviderConfig`` values produced
+    by :func:`config.provider_loader.load_provider_toml`. The router
+    resolves secrets (api_key / base_url) at construction time and skips
+    any provider whose required env var is missing — startup does not
+    crash when one provider is misconfigured.
+    """
+
+    #: Maps a ``transport`` string to the provider class that implements it.
+    TRANSPORT_REGISTRY: dict[str, type[BaseAIProvider]] = {
         "openai": OpenAIProvider,
         "anthropic": AnthropicProvider,
-        "google": GoogleProvider,
-        "deepseek": DeepSeekProvider,
-        "qwen": QwenProvider,
-        "moonshot": MoonshotProvider,
-        "zhipu": ZhipuProvider,
-        "baidu": BaiduProvider,
+        "openai_compatible": OpenAICompatibleProvider,
     }
 
-    def __init__(self, config: dict[str, Any]):
+    def __init__(
+        self,
+        provider_configs: list[ProviderConfig],
+        global_config: GlobalConfig,
+    ):
         """
-        初始化路由器
-
         Args:
-            config: 配置字典，格式：
-                {
-                    "openai": "sk-xxx",  # 简单字符串 = API Key
-                    "deepseek": {"api_key": "sk-xxx"},  # 字典格式
-                    "custom_provider": {  # 自定义 Provider
-                        "type": "openai_compatible",
-                        "api_key": "sk-xxx",
-                        "base_url": "https://api.example.com/v1",
-                        "models": ["model-1", "model-2"],
-                        "default_model": "model-1"
-                    }
-                }
+            provider_configs: Filtered list of provider configs (already
+                reduced to those listed in ``[global].available_providers``).
+            global_config: Parsed ``[global]`` section. Used to look up
+                the default provider and global request behavior.
         """
+        self.global_config = global_config
         self.providers: dict[str, BaseAIProvider] = {}
-        self._initialize_providers(config)
+        self._default_provider_name = global_config.default_provider
 
-    def _initialize_providers(self, config: dict[str, Any]):
-        """初始化所有配置的 Provider"""
-        for provider_name, provider_config in config.items():
-            if not provider_config:
-                logger.warning(f"跳过 {provider_name}，未配置")
-                continue
+        for config in provider_configs:
+            self._instantiate_provider(config)
 
-            try:
-                # 简单字符串 = API Key
-                if isinstance(provider_config, str):
-                    provider_config = {"api_key": provider_config}
+    # ------------------------------------------------------------------
+    # Instantiation
+    # ------------------------------------------------------------------
 
-                # 检查是否是内置 Provider
-                if provider_name in self.BUILTIN_PROVIDERS:
-                    provider_class = self.BUILTIN_PROVIDERS[provider_name]
-                    self.providers[provider_name] = provider_class(**provider_config)
-                    logger.info(f"✓ 初始化内置 Provider: {provider_name}")
+    def _instantiate_provider(self, config: ProviderConfig) -> None:
+        """Resolve secrets and build a provider instance.
 
-                # 自定义 Provider
-                elif isinstance(provider_config, dict) and "type" in provider_config:
-                    self._initialize_custom_provider(provider_name, provider_config)
-
-                else:
-                    logger.warning(f"未知的 Provider 配置: {provider_name}")
-
-            except Exception as e:
-                logger.error(f"✗ 初始化 {provider_name} 失败: {e}")
-
-    def _initialize_custom_provider(self, name: str, config: dict[str, Any]):
-        """初始化自定义 Provider"""
-        provider_type = config.pop("type")
-
-        if provider_type == "openai_compatible":
-            # OpenAI 兼容 API
-            api_key = config.pop("api_key")
-            base_url = config.pop("base_url")
-            models = config.pop("models", [])
-            default_model = config.pop("default_model", models[0] if models else "gpt-3.5-turbo")
-
-            self.providers[name] = OpenAICompatibleProvider(
-                api_key=api_key,
-                base_url=base_url,
-                provider_name=name,
-                default_model=default_model,
-                available_models=models,
-                **config
+        Skips the provider with a warning if the API key cannot be
+        resolved (env var missing). Does NOT raise — startup continues
+        with the remaining providers.
+        """
+        provider_class = self.TRANSPORT_REGISTRY.get(config.transport)
+        if provider_class is None:
+            logger.error(
+                f"✗ Unknown transport '{config.transport}' for provider "
+                f"'{config.name}'; skipping"
             )
-            logger.info(f"✓ 初始化自定义 Provider: {name} (OpenAI 兼容)")
+            return
 
-        else:
-            logger.error(f"不支持的自定义 Provider 类型: {provider_type}")
+        api_key = config.resolve_api_key()
+        if api_key is None:
+            logger.warning(
+                f"⚠ Skipping provider '{config.name}': API key not resolved "
+                f"(api_key_env={config.api_key_env!r} not set in environment, "
+                f"and no api_key_literal provided)"
+            )
+            return
+
+        base_url = config.resolve_base_url()
+
+        try:
+            if provider_class is OpenAICompatibleProvider:
+                # OpenAICompatibleProvider requires base_url and uses
+                # explicit provider_name / default_model / available_models
+                # kwargs (the other transports read these from **kwargs).
+                if not base_url:
+                    logger.warning(
+                        f"⚠ Skipping provider '{config.name}': transport "
+                        f"'openai_compatible' requires base_url or base_url_env"
+                    )
+                    return
+                instance = OpenAICompatibleProvider(
+                    api_key=api_key,
+                    base_url=base_url,
+                    provider_name=config.name,
+                    default_model=config.default_model or "gpt-3.5-turbo",
+                    available_models=config.models,
+                )
+            else:
+                # OpenAIProvider / AnthropicProvider accept the same kwargs
+                # (base_url / default_model / available_models) and use
+                # their own SDK defaults when None.
+                instance = provider_class(
+                    api_key=api_key,
+                    base_url=base_url,
+                    default_model=config.default_model or None,
+                    available_models=config.models or None,
+                )
+
+            self.providers[config.name] = instance
+            logger.info(f"✓ Initialized provider: {config.name} (transport={config.transport})")
+        except Exception as e:
+            logger.error(f"✗ Failed to initialize provider '{config.name}': {e}")
+
+    # ------------------------------------------------------------------
+    # Lookup helpers (unchanged API — handlers stay provider-agnostic)
+    # ------------------------------------------------------------------
 
     def get_provider(self, name: str) -> BaseAIProvider | None:
-        """获取指定的 Provider"""
+        """Return the provider registered under *name* (or ``None``)."""
         return self.providers.get(name)
 
     def get_default_provider(self) -> BaseAIProvider | None:
-        """获取默认 Provider（第一个可用的）"""
+        """Return the provider named by ``[global].default_provider``.
+
+        Falls back to the first available provider if the configured
+        default is not instantiated. Returns ``None`` when no providers
+        are available at all.
+        """
         if not self.providers:
             return None
-        return list(self.providers.values())[0]
+
+        configured = self.providers.get(self._default_provider_name)
+        if configured is not None:
+            return configured
+
+        logger.warning(
+            f"Default provider '{self._default_provider_name}' is not "
+            f"available; falling back to first instantiated provider"
+        )
+        return next(iter(self.providers.values()))
 
     def list_available_providers(self) -> list[str]:
-        """列出所有可用的 Provider"""
+        """List the names of all instantiated providers."""
         return list(self.providers.keys())
 
     def is_provider_available(self, name: str) -> bool:
-        """检查 Provider 是否可用"""
+        """Return ``True`` if *name* refers to an instantiated provider."""
         return name in self.providers
 
     def get_all_models(self) -> dict[str, list[str]]:
-        """获取所有 Provider 的可用模型"""
+        """Return ``{provider_name: [model_ids]}`` for every provider."""
         return {
             name: provider.get_available_models()
             for name, provider in self.providers.items()
         }
 
     def get_provider_display_name(self, name: str) -> str:
-        """获取 Provider 的显示名称"""
+        """Return the human-readable name of provider *name*."""
         provider = self.get_provider(name)
         if provider:
             return provider.provider_name
         return name
+
+    @property
+    def max_output_tokens(self) -> int:
+        """Proxy to ``global_config.max_output_tokens`` for handler use."""
+        return self.global_config.max_output_tokens

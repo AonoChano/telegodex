@@ -1,4 +1,5 @@
 from collections.abc import AsyncIterator
+from typing import Any
 
 from loguru import logger
 from openai import AsyncOpenAI
@@ -7,12 +8,29 @@ from .base import AIResponse, BaseAIProvider, Message
 
 
 class OpenAIProvider(BaseAIProvider):
-    """OpenAI 服务商实现"""
+    """OpenAI 服务商实现
 
-    def __init__(self, api_key: str, **kwargs):
+    Supports overriding ``base_url`` (e.g. for proxy gateways), the default
+    model, and the available model list via constructor kwargs. This keeps
+    it consistent with ``OpenAICompatibleProvider`` so the TOML loader can
+    drive both transports uniformly.
+    """
+
+    def __init__(
+        self,
+        api_key: str,
+        base_url: str | None = None,
+        default_model: str | None = None,
+        available_models: list[str] | None = None,
+        **kwargs,
+    ):
         super().__init__(api_key, **kwargs)
-        self.client = AsyncOpenAI(api_key=api_key)
-        self._default_model = "gpt-4o"  # GPT-5 未公开时使用 GPT-4
+        client_kwargs: dict[str, Any] = {"api_key": api_key}
+        if base_url:
+            client_kwargs["base_url"] = base_url
+        self.client = AsyncOpenAI(**client_kwargs)
+        self._default_model = default_model or "gpt-4o"  # GPT-5 未公开时使用 GPT-4
+        self._available_models_override = available_models
 
     async def chat(
         self,
@@ -93,6 +111,8 @@ class OpenAIProvider(BaseAIProvider):
 
     def get_available_models(self) -> list[str]:
         """获取可用模型列表"""
+        if self._available_models_override is not None:
+            return list(self._available_models_override)
         return [
             "gpt-4o",
             "gpt-4o-mini",

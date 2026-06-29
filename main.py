@@ -192,11 +192,22 @@ async def main():
     from bot.handlers.codex import set_db_session_factory
     set_db_session_factory(db.get_session)
 
-    # 初始化 AI Router（包含内置和自定义 Provider）
-    ai_router = AIRouter(settings.get_ai_providers_config())
+    # 初始化 AI Router（从 provider.toml 加载所有 provider 配置）
+    from config.provider_loader import load_provider_toml
+
+    try:
+        provider_configs, global_config = load_provider_toml("provider.toml")
+    except FileNotFoundError as e:
+        logger.error(f"❌ {e}")
+        return
+    except Exception as e:
+        logger.error(f"❌ 加载 provider.toml 失败: {e}")
+        return
+
+    ai_router = AIRouter(provider_configs, global_config)
 
     if not ai_router.list_available_providers():
-        logger.error("❌ 没有配置任何 AI 服务商，请检查 .env 文件")
+        logger.error("❌ 没有任何 AI 服务商可用 — 请检查 provider.toml 的 available_providers 列表与对应 .env 中的 API key")
         return
 
     logger.info(f"可用的 AI 服务商: {', '.join(ai_router.list_available_providers())}")

@@ -29,6 +29,7 @@ ENV/
 .env.local
 .env.*.local
 custom_providers.json
+provider.toml
 
 # Database
 *.db
@@ -39,6 +40,10 @@ telegodex.db
 # Logs
 logs/
 *.log
+
+# Trunk
+.trunk/
+
 
 # Cache
 .cache/

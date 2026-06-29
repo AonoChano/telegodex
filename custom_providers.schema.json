@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft-07/schema",
-  "title": "Telegodex Custom Providers Configuration",
-  "description": "自定义 AI Provider 配置文件，支持任何 OpenAI 兼容 API",
+  "title": "Telegodex Custom Providers Configuration (DEPRECATED)",
+  "description": "DEPRECATED — Telegodex now configures providers via provider.toml. This schema is no longer used to validate runtime config. It is kept only as a migration reference. See docs/CUSTOM_PROVIDERS.md and provider.toml.example.",
   "type": "object",
   "patternProperties": {
     "^[a-zA-Z0-9_-]+$": {

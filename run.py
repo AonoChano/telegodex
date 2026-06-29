@@ -47,32 +47,38 @@ def check_configuration() -> bool:
     else:
         logger.info("Preflight: Telegram Bot Token is configured")
 
-    ai_providers: list[str] = []
-    provider_checks = {
-        "OpenAI": settings.openai_api_key,
-        "Anthropic": settings.anthropic_api_key,
-        "Google": settings.google_api_key,
-        "DeepSeek": settings.deepseek_api_key,
-        "Qwen": settings.qwen_api_key,
-        "Moonshot": settings.moonshot_api_key,
-        "Zhipu": settings.zhipu_api_key,
-        "Baidu": settings.baidu_api_key,
-    }
+    # Provider configuration is loaded from provider.toml (single source of truth).
+    # The .env file only stores the API key env vars referenced by api_key_env.
+    from config.provider_loader import load_provider_toml
 
-    for name, api_key in provider_checks.items():
-        if api_key:
-            ai_providers.append(name)
+    try:
+        provider_configs, global_config = load_provider_toml("provider.toml")
+    except FileNotFoundError as e:
+        errors.append(str(e))
+        provider_configs = []
+        global_config = None
+    except Exception as e:
+        errors.append(f"Failed to load provider.toml: {e}")
+        provider_configs = []
+        global_config = None
 
-    provider_config = settings.get_ai_providers_config()
-    built_in = {"openai", "anthropic", "google", "deepseek", "qwen", "moonshot", "zhipu", "baidu"}
-    custom_count = len([name for name in provider_config if name not in built_in])
-    if custom_count:
-        ai_providers.append(f"{custom_count} custom")
-
-    if not ai_providers:
-        errors.append("At least one AI provider API key is required")
-    else:
-        logger.info(f"Preflight: configured AI providers: {', '.join(ai_providers)}")
+    if global_config is not None:
+        listed = global_config.available_providers
+        loaded = [c.name for c in provider_configs]
+        if not listed:
+            errors.append("[global].available_providers is empty in provider.toml")
+        else:
+            logger.info(
+                f"Preflight: provider.toml lists {len(listed)} provider(s) in "
+                f"available_providers: {', '.join(listed)}"
+            )
+        if loaded:
+            logger.info(f"Preflight: parsed provider blocks: {', '.join(loaded)}")
+        if global_config.default_provider and global_config.default_provider not in listed:
+            errors.append(
+                f"default_provider '{global_config.default_provider}' is not in "
+                f"available_providers {listed}"
+            )
 
     logger.info(f"Preflight: database URL: {settings.database_url}")
 

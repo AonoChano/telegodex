@@ -343,6 +343,7 @@ async def _handle_chat_tool_request(
     permission_mode: str | None,
     model_name: str | None,
     temperature: float,
+    max_output_tokens: int,
 ) -> tuple[str, str | None, int | None] | None:
     """Handle a normal-chat tool request.
 
@@ -446,7 +447,7 @@ async def _handle_chat_tool_request(
             messages=current_messages,
             model=model_name,
             temperature=temperature,
-            max_tokens=settings.max_tokens,
+            max_tokens=max_output_tokens,
         )
         current_text = normalize_rich_markdown_latex(response.content)
         response_model = response.model
@@ -648,7 +649,7 @@ async def handle_message(
                 messages=messages_with_system,
                 model=model_name,
                 temperature=temperature,
-                max_tokens=settings.max_tokens,
+                max_tokens=ai_router.max_output_tokens,
             ):
                 if not chunk:
                     continue
@@ -701,7 +702,7 @@ async def handle_message(
                     messages=messages_with_system,
                     model=model_name,
                     temperature=temperature,
-                    max_tokens=settings.max_tokens,
+                    max_tokens=ai_router.max_output_tokens,
                 )
             except Exception as chat_err:
                 logger.error(f"非流式 provider.chat 失败: {type(chat_err).__name__}: {chat_err}")
@@ -740,6 +741,7 @@ async def handle_message(
             permission_mode=getattr(user, "tool_permission_mode", None),
             model_name=model_name,
             temperature=temperature,
+            max_output_tokens=ai_router.max_output_tokens,
         )
         if parse_chat_tool_request(response_text) is not None:
             if tool_outcome is None:

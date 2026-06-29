@@ -1,361 +1,163 @@
 ---
-title: Custom Provider Configuration Guide
+title: Provider Configuration Guide
 category: reference
-last_updated: 2026-06-14
+last_updated: 2026-06-29
 relevance: high
-summary: 8000+ word guide for adding unlimited OpenAI-compatible providers via JSON config
-related: [MODELS.md, ANTHROPIC_COMPATIBILITY.md, ARCHITECTURE.md]
+summary: How to add, remove, and configure AI providers via provider.toml (TOML-driven registry)
+related: [MODELS.md, ANTHROPIC_COMPATIBILITY.md, ARCHITECTURE.md, STARTUP.md]
 ---
 
-# 自定义 AI Provider 配置指南
+# Provider Configuration Guide
 
-Telegodex 支持通过配置文件添加任何 **OpenAI 兼容 API** 的 AI 服务商，无需修改代码。
+Telegodex configures every AI provider through a single TOML file: `provider.toml`. Copy the template to start:
 
-## 快速开始
-
-1. **复制示例文件**：
-   ```bash
-   cp custom_providers.example.json custom_providers.json
-   ```
-
-2. **编辑配置**：
-   ```json
-   {
-     "my_provider": {
-       "type": "openai_compatible",
-       "api_key": "sk-your-key",
-       "base_url": "https://api.example.com/v1",
-       "models": ["model-1", "model-2"],
-       "default_model": "model-1"
-     }
-   }
-   ```
-
-3. **重启 Bot** - 配置会自动加载
-
-## 配置格式
-
-### 完整示例
-
-```json
-{
-  "配置名称": {
-    "type": "openai_compatible",
-    "api_key": "你的 API Key",
-    "base_url": "API 基础 URL",
-    "models": ["模型1", "模型2"],
-    "default_model": "默认模型"
-  }
-}
+```bash
+cp provider.toml.example provider.toml
 ```
 
-### 字段说明
+Then edit `provider.toml` and add the corresponding API key env vars to `.env`. No code changes are required to add, remove, or switch providers.
 
-| 字段 | 必需 | 说明 | 示例 |
-|------|------|------|------|
-| `type` | ✅ | Provider 类型，当前仅支持 `openai_compatible` | `"openai_compatible"` |
-| `api_key` | ✅ | API Key | `"sk-xxxxx"` |
-| `base_url` | ✅ | API 基础 URL（需包含版本号，如 `/v1`） | `"https://api.example.com/v1"` |
-| `models` | ❌ | 可用模型列表，留空则仅使用 default_model | `["gpt-4", "gpt-3.5-turbo"]` |
-| `default_model` | ❌ | 默认模型，不指定则使用 models 第一个 | `"gpt-4"` |
+## Core Concepts
 
-## 常见场景
+### Three transports, one registry
 
-### 1. Ollama（本地大模型）
+Every provider entry maps to one of three transports via the `transport` field:
 
-```json
-{
-  "ollama": {
-    "type": "openai_compatible",
-    "api_key": "ollama",
-    "base_url": "http://localhost:11434/v1",
-    "models": ["llama3.2", "qwen2.5", "deepseek-coder", "gemma2"],
-    "default_model": "llama3.2"
-  }
-}
+| Transport | SDK | When to use |
+|---|---|---|
+| `openai` | Native OpenAI SDK | OpenAI itself, or a proxy exposing the OpenAI protocol under the reserved `openai` id |
+| `anthropic` | Native Anthropic SDK | Anthropic itself, or an Anthropic-compatible endpoint (e.g. DeepSeek's `/anthropic` mode) |
+| `openai_compatible` | Generic OpenAI-compatible HTTP client | Anything else — gemini, qwen, kimi, zhipu, baidu, ollama, lmstudio, vLLM, LiteLLM, Azure, custom gateways |
+
+The native SDKs are only used when `transport` declares `openai` or `anthropic`. Every other vendor goes through the generic `OpenAICompatibleProvider`.
+
+### `available_providers` is a mandatory filter
+
+A `[providers.<id>]` block in TOML is **not** instantiated unless its `<id>` is listed under `[global].available_providers`. This is a strict filter:
+
+- An empty `available_providers = []` activates NOTHING — the user must explicitly list every provider they want active.
+- A provider block can stay in TOML but be temporarily disabled by removing it from `available_providers` (no need to delete the block).
+
+### Secrets never live in TOML
+
+API keys and other secrets are resolved at runtime from environment variables referenced by `api_key_env` / `secret_key_env` / `base_url_env`. The literal `api_key_literal` field exists ONLY for local servers (ollama, lmstudio) that accept any non-empty token — never put a real API key there.
+
+Resolution precedence:
+
+```text
+api_key:  api_key_literal > api_key_env > provider is skipped at startup
+base_url: base_url        > base_url_env > provider SDK default
 ```
 
-**说明**：
-- Ollama 不需要真实 API Key，填任意值即可
-- 确保 Ollama 服务已启动（`ollama serve`）
-- 模型需提前下载（`ollama pull llama3.2`）
+### Reserved provider IDs
 
-**参考**: [Ollama](https://ollama.ai)
+`openai` and `anthropic` are reserved for the built-in native SDK transports. You MAY keep `[providers.openai]` / `[providers.anthropic]` blocks in TOML — they configure the native SDK transports (base_url, api_key_env, default_model). You CANNOT use these IDs with a different transport (e.g. `[providers.openai]` with `transport = "openai_compatible"` will be rejected by the loader). To register a custom OpenAI-compatible endpoint, use a different id (e.g. `openai-custom` or `my-gateway`).
 
----
+## Field Reference
 
-### 2. LiteLLM Proxy（多服务商统一代理）
+See `provider.toml.example` for the canonical, fully-commented template. Key fields per `[providers.<id>]` block:
 
-```json
-{
-  "litellm": {
-    "type": "openai_compatible",
-    "api_key": "sk-your-litellm-key",
-    "base_url": "http://localhost:4000",
-    "models": ["gpt-4", "claude-3-opus", "gemini-pro"],
-    "default_model": "gpt-4"
-  }
-}
+| Field | Required | Description |
+|---|---|---|
+| `transport` | Recommended | `openai` / `anthropic` / `openai_compatible` (default if omitted: `openai_compatible`) |
+| `api_key_env` | One of `api_key_*` | Env var name to read the API key from |
+| `api_key_literal` | One of `api_key_*` | Literal non-secret token (local servers only) |
+| `base_url` | One of `base_url_*` | Literal API base URL |
+| `base_url_env` | One of `base_url_*` | Env var name to read the base URL from |
+| `default_model` | Recommended | Default model id; falls back to first entry of `models` |
+| `models` | Recommended | List of available model ids |
+| `headers` | Optional | Extra HTTP headers to send with each request |
+| `query` | Optional | Extra query parameters appended to each request URL |
+| `supports_stream` | Optional | Default `true` |
+| `supports_tools` / `supports_vision` / `supports_json_schema` / `supports_audio` / `supports_files` | Optional | Capability flags; all default to `false` (conservative) |
+| `secret_key_env` | Reserved | Phase 2 — parsed but not consumed in Phase 1 |
+
+## Common Scenarios
+
+### Local Ollama
+
+```toml
+[global]
+default_provider = "ollama"
+available_providers = ["ollama"]
+
+[providers.ollama]
+transport = "openai_compatible"
+api_key_literal = "ollama"
+base_url = "http://localhost:11434/v1"
+default_model = "llama3.2"
+models = ["llama3.2", "qwen2.5", "deepseek-coder"]
 ```
 
-**说明**：
-- LiteLLM 可统一管理多个 AI 服务商
-- 支持负载均衡、fallback、缓存等高级特性
-- 需先启动 LiteLLM Proxy
+### LiteLLM Proxy
 
-**参考**: [LiteLLM](https://docs.litellm.ai/docs/)
+```toml
+[global]
+default_provider = "litellm"
+available_providers = ["litellm"]
 
----
-
-### 3. Azure OpenAI
-
-```json
-{
-  "azure": {
-    "type": "openai_compatible",
-    "api_key": "your_azure_api_key",
-    "base_url": "https://your-resource.openai.azure.com/openai/deployments",
-    "models": ["gpt-4", "gpt-35-turbo"],
-    "default_model": "gpt-4"
-  }
-}
+[providers.litellm]
+transport = "openai_compatible"
+api_key_env = "LITELLM_API_KEY"
+base_url = "http://localhost:4000"
+default_model = "gpt-4o"
+models = ["gpt-4o", "claude-sonnet-4-6", "gemini-3.5-flash"]
 ```
 
-**说明**：
-- Azure OpenAI 使用不同的端点格式
-- `base_url` 需包含你的资源名称
-- 模型名称对应 Azure 部署名称
+### Azure OpenAI
 
-**参考**: [Azure OpenAI](https://learn.microsoft.com/en-us/azure/ai-services/openai/)
+```toml
+[global]
+default_provider = "azure"
+available_providers = ["azure"]
 
----
-
-### 4. vLLM（自托管推理引擎）
-
-```json
-{
-  "vllm": {
-    "type": "openai_compatible",
-    "api_key": "vllm",
-    "base_url": "http://localhost:8000/v1",
-    "models": ["Qwen/Qwen2.5-72B-Instruct", "meta-llama/Llama-3.1-70B"],
-    "default_model": "Qwen/Qwen2.5-72B-Instruct"
-  }
-}
+[providers.azure]
+transport = "openai_compatible"
+api_key_env = "AZURE_API_KEY"
+base_url = "https://your-resource.openai.azure.com/openai/deployments"
+default_model = "gpt-4o"
+models = ["gpt-4o", "gpt-35-turbo"]
 ```
 
-**说明**：
-- vLLM 提供高性能推理加速
-- 支持多种开源模型
-- 需要 GPU 环境
+### Anthropic-compatible variant (DeepSeek `/anthropic` mode)
 
-**参考**: [vLLM](https://docs.vllm.ai/)
+```toml
+[global]
+default_provider = "deepseek_anthropic"
+available_providers = ["deepseek_anthropic"]
 
----
-
-### 5. FastChat（Vicuna/ChatGLM 等开源模型）
-
-```json
-{
-  "fastchat": {
-    "type": "openai_compatible",
-    "api_key": "fastchat",
-    "base_url": "http://localhost:8000/v1",
-    "models": ["vicuna-13b", "chatglm3-6b"],
-    "default_model": "vicuna-13b"
-  }
-}
+[providers.deepseek_anthropic]
+transport = "anthropic"
+api_key_env = "DEEPSEEK_API_KEY"
+base_url = "https://api.deepseek.com/anthropic"
+default_model = "deepseek-v4-pro"
+models = ["deepseek-v4-pro"]
 ```
 
-**参考**: [FastChat](https://github.com/lm-sys/FastChat)
+## Migration From `custom_providers.json`
 
----
+The legacy JSON-based custom provider system (`custom_providers.json` + `CUSTOM_PROVIDERS_CONFIG` env var) is removed. To migrate:
 
-### 6. 自建 API（任何 OpenAI 兼容接口）
+1. Copy `provider.toml.example` to `provider.toml`.
+2. For each entry in your old `custom_providers.json`, create a `[providers.<id>]` block in `provider.toml`:
+   - `type: "openai_compatible"` → `transport = "openai_compatible"`
+   - `api_key: "sk-..."` → move to `.env` as `<ID>_API_KEY=sk-...` and reference via `api_key_env = "<ID>_API_KEY"`
+   - `base_url`, `models`, `default_model` carry over unchanged.
+3. List every active provider id under `[global].available_providers`.
+4. Set `[global].default_provider` to the id you want as the default.
+5. Remove the deprecated env vars from `.env`: `DEFAULT_AI_PROVIDER`, `DEFAULT_MODEL`, `MAX_TOKENS`, `TEMPERATURE`, `CUSTOM_PROVIDERS_CONFIG`.
+6. Run `python run.py --check-config` to verify.
 
-```json
-{
-  "my_api": {
-    "type": "openai_compatible",
-    "api_key": "your_custom_key",
-    "base_url": "https://api.yourcompany.com/v1",
-    "models": ["custom-model-v1", "custom-model-v2"],
-    "default_model": "custom-model-v1"
-  }
-}
-```
+The old `custom_providers.example.json` / `custom_providers.schema.json` / `configure_provider.py` files are kept as migration references and marked as deprecated at the top of each file.
 
-**要求**：
-- 实现 OpenAI `/v1/chat/completions` 接口
-- 支持标准的请求/响应格式
-- 可选支持流式响应（`stream=true`）
-
----
-
-## 配置预设管理
-
-### 保存多个配置预设
-
-你可以创建多个配置文件，按需切换：
-
-```
-custom_providers.json          # 默认配置
-custom_providers.dev.json      # 开发环境
-custom_providers.prod.json     # 生产环境
-custom_providers.ollama.json   # Ollama 专用
-```
-
-在 `.env` 中指定使用哪个：
-
-```env
-CUSTOM_PROVIDERS_CONFIG=custom_providers.ollama.json
-```
-
-### 预设示例：本地开发
-
-```json
-{
-  "ollama_llama": {
-    "type": "openai_compatible",
-    "api_key": "ollama",
-    "base_url": "http://localhost:11434/v1",
-    "models": ["llama3.2"],
-    "default_model": "llama3.2"
-  },
-  "ollama_qwen": {
-    "type": "openai_compatible",
-    "api_key": "ollama",
-    "base_url": "http://localhost:11434/v1",
-    "models": ["qwen2.5:14b"],
-    "default_model": "qwen2.5:14b"
-  }
-}
-```
-
-### 预设示例：生产部署
-
-```json
-{
-  "production_llm": {
-    "type": "openai_compatible",
-    "api_key": "sk-prod-xxxxx",
-    "base_url": "https://api.production.com/v1",
-    "models": ["gpt-4", "claude-3-opus"],
-    "default_model": "gpt-4"
-  }
-}
-```
-
-## 验证配置
-
-启动 Bot 时会自动验证配置：
+## Verifying Configuration
 
 ```bash
 python run.py --check-config
 ```
 
-查看日志确认 Provider 是否成功加载：
+This loads `provider.toml`, validates the structure, and checks that `available_providers` is non-empty and that `default_provider` is in the list. It does NOT validate API keys (those are resolved lazily at request time). On success you will see a list of parsed provider blocks; on failure you get a clear error pointing at `provider.toml.example`.
 
-```
-✓ 初始化自定义 Provider: ollama (OpenAI 兼容)
-✓ 初始化自定义 Provider: my_api (OpenAI 兼容)
-```
+## Reserved Sections (Phase 2)
 
-## 常见问题
-
-### Q: 配置后没有生效？
-A: 
-1. 检查 JSON 格式是否正确（可用 [jsonlint.com](https://jsonlint.com) 验证）
-2. 查看启动日志是否有错误信息
-3. 确认 `base_url` 包含版本号（如 `/v1`）
-4. 重启 Bot
-
-### Q: API 调用失败？
-A:
-1. 检查网络连接（curl 测试 base_url）
-2. 验证 API Key 是否正确
-3. 确认模型名称拼写无误
-4. 查看 `logs/` 目录下的错误日志
-
-### Q: 支持哪些服务商？
-A: 任何实现 **OpenAI Chat Completions API** 的服务，包括：
-- ✅ Ollama
-- ✅ LiteLLM
-- ✅ vLLM
-- ✅ FastChat
-- ✅ LocalAI
-- ✅ Text Generation WebUI
-- ✅ Azure OpenAI
-- ✅ 自建 API
-
-### Q: 如何临时禁用某个 Provider？
-A: 
-1. 方法一：删除配置文件中的对应条目
-2. 方法二：将配置移到另一个文件（如 `custom_providers.backup.json`）
-
-### Q: 可以同时使用内置和自定义 Provider 吗？
-A: ✅ 可以！内置 Provider（通过 `.env` 配置）和自定义 Provider（通过 `custom_providers.json` 配置）会自动合并。
-
-## 技术细节
-
-### OpenAI API 兼容标准
-
-你的 API 需要支持以下接口：
-
-**请求格式**：
-```http
-POST /v1/chat/completions
-Content-Type: application/json
-Authorization: Bearer {api_key}
-
-{
-  "model": "model-name",
-  "messages": [
-    {"role": "system", "content": "You are a helpful assistant."},
-    {"role": "user", "content": "Hello!"}
-  ],
-  "temperature": 0.7,
-  "max_tokens": 4096,
-  "stream": false
-}
-```
-
-**响应格式**：
-```json
-{
-  "id": "chatcmpl-xxx",
-  "object": "chat.completion",
-  "created": 1234567890,
-  "model": "model-name",
-  "choices": [{
-    "index": 0,
-    "message": {
-      "role": "assistant",
-      "content": "Hello! How can I help you?"
-    },
-    "finish_reason": "stop"
-  }],
-  "usage": {
-    "prompt_tokens": 10,
-    "completion_tokens": 8,
-    "total_tokens": 18
-  }
-}
-```
-
-### Schema 验证
-
-配置文件遵循 JSON Schema，详见 `custom_providers.schema.json`。
-
-## 相关资源
-
-- [OpenAI API Reference](https://platform.openai.com/docs/api-reference/chat/create)
-- [OpenAI Compatible APIs Explained](https://www.cometapi.com/openai-compatible-apis-explained/)
-- [Building OpenAI Compatible API](https://dasroot.net/posts/2026/02/building-openai-compatible-api-local-models/)
-
----
-
-**需要帮助？** 
-- 查看 `logs/` 目录下的日志
-- 参考 `custom_providers.example.json` 示例
-- 提交 Issue 获取支持
+`[secrets]`, `[routing]`, and `[policy]` are parsed by the loader but NOT consumed in Phase 1. They are reserved for future features (secret manager integration, capability-based routing, per-provider policy overrides). You can leave them in your TOML without breaking anything.

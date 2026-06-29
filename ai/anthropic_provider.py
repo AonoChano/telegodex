@@ -1,4 +1,5 @@
 from collections.abc import AsyncIterator
+from typing import Any
 
 from anthropic import AsyncAnthropic
 from loguru import logger
@@ -7,12 +8,27 @@ from .base import AIResponse, BaseAIProvider, Message, MessageRole
 
 
 class AnthropicProvider(BaseAIProvider):
-    """Anthropic (Claude) 服务商实现"""
+    """Anthropic (Claude) 服务商实现
 
-    def __init__(self, api_key: str, **kwargs):
+    Supports both the native Anthropic endpoint and Anthropic-compatible
+    variants (e.g. DeepSeek-Anthropic, Zhipu-Anthropic) via ``base_url``.
+    """
+
+    def __init__(
+        self,
+        api_key: str,
+        base_url: str | None = None,
+        default_model: str | None = None,
+        available_models: list[str] | None = None,
+        **kwargs,
+    ):
         super().__init__(api_key, **kwargs)
-        self.client = AsyncAnthropic(api_key=api_key)
-        self._default_model = "claude-opus-4-8"
+        client_kwargs: dict[str, Any] = {"api_key": api_key}
+        if base_url:
+            client_kwargs["base_url"] = base_url
+        self.client = AsyncAnthropic(**client_kwargs)
+        self._default_model = default_model or "claude-opus-4-8"
+        self._available_models_override = available_models
 
     async def chat(
         self,
@@ -105,6 +121,8 @@ class AnthropicProvider(BaseAIProvider):
 
     def get_available_models(self) -> list[str]:
         """获取可用模型列表"""
+        if self._available_models_override is not None:
+            return list(self._available_models_override)
         return [
             "claude-fable-5",         # 最新最强
             "claude-opus-4-8",

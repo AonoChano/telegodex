@@ -1,6 +1,7 @@
 """Shell command proposal and result prompts."""
 
 from pathlib import Path
+
 from prompts._utils import load_prompt
 
 _base_dir = Path(__file__).parent

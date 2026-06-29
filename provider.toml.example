@@ -1,0 +1,435 @@
+# =============================================================================
+# Telegodex AI Provider Registry
+# =============================================================================
+#
+# This file is the SINGLE source of truth for AI provider configuration.
+# Copy it to ``provider.toml`` and edit. ``provider.toml`` is gitignored
+# because it may carry user-specific routing hints.
+#
+# -----------------------------------------------------------------------------
+# Quick start — adding a new provider
+# -----------------------------------------------------------------------------
+#
+#   1. Add a ``[providers.<id>]`` block below (id = lowercase short name).
+#   2. Pick a ``transport``:
+#        "openai"            -> native OpenAI SDK (use the literal id "openai")
+#        "anthropic"         -> native Anthropic SDK (use the literal id
+#                               "anthropic", or any custom id like
+#                               "deepseek_anthropic" for Anthropic-compatible
+#                               variants)
+#        "openai_compatible" -> generic OpenAI-compatible HTTP endpoint
+#                               (DEFAULT — works for almost every vendor)
+#   3. Provide either ``api_key_env`` (recommended) or ``api_key_literal``
+#      (only for local servers that accept any non-empty token).
+#   4. Provide ``base_url`` (literal) OR ``base_url_env`` (env var name).
+#   5. Set ``default_model`` and ``models``.
+#   6. Add the new <id> to ``[global].available_providers``. A provider is
+#      NOT instantiated unless it is listed here, even if its block exists.
+#   7. Add the corresponding API key env var to ``.env`` (referenced by
+#      ``api_key_env``).
+#
+# No code changes are needed to add or remove providers.
+#
+# -----------------------------------------------------------------------------
+# Reserved provider IDs
+# -----------------------------------------------------------------------------
+#
+# ``openai`` and ``anthropic`` are reserved for the built-in native SDK
+# transports. You MAY keep ``[providers.openai]`` / ``[providers.anthropic]``
+# blocks in this file — they configure the native SDK transports
+# (base_url, api_key_env, default_model). You CANNOT use these IDs with a
+# different transport (e.g. ``[providers.openai]`` with
+# ``transport = "openai_compatible"`` would be rejected by the loader).
+#
+# To register a custom OpenAI-compatible endpoint that should NOT collide
+# with the native OpenAI transport, use a different id (e.g.
+# ``openai-custom`` or ``my-gateway``).
+#
+# -----------------------------------------------------------------------------
+# Secret handling
+# -----------------------------------------------------------------------------
+#
+# Secrets NEVER appear in this file. They are resolved at runtime from
+# environment variables referenced by ``api_key_env`` / ``secret_key_env``
+# / ``base_url_env``. The literal ``api_key_literal`` field is intended
+# ONLY for local servers that accept any non-empty token (ollama,
+# lmstudio, etc.) — never put a real API key there.
+#
+# Resolution precedence (highest first):
+#   api_key:        api_key_literal > api_key_env > provider is skipped
+#   base_url:       base_url         > base_url_env  > provider SDK default
+#
+# -----------------------------------------------------------------------------
+# Reserved sections (Phase 2 — parsed but NOT consumed in Phase 1)
+# -----------------------------------------------------------------------------
+#
+# ``[secrets]``, ``[routing]``, ``[policy]`` are reserved for future
+# features (secret manager integration, capability-based routing,
+# per-provider policy overrides). The loader parses them silently so you
+# can keep your future-looking config in place without breaking startup.
+# =============================================================================
+
+schema_version = 1
+
+# -----------------------------------------------------------------------------
+# [global] — runtime behavior shared by every provider
+# -----------------------------------------------------------------------------
+[global]
+
+# ``available_providers`` is the SINGLE filter list that decides which
+# providers are actually instantiated at startup. A provider block below
+# is parsed but NOT instantiated unless its id appears here. Remove an id
+# to disable that provider without deleting its block.
+available_providers = [
+    "openai",
+    "anthropic",
+    "gemini",
+    "deepseek",
+    "qwen",
+    "kimi",
+    "zhipu",
+    "baidu",
+    "ollama",
+    "lmstudio",
+]
+
+# ``default_provider`` is used when the caller does not explicitly choose
+# one (e.g. the first message in a new conversation). Must be an id that
+# appears in ``available_providers`` above.
+default_provider = "openai"
+
+# ``default_model`` is used when the caller does not explicitly choose a
+# model. Each provider also has its own per-provider ``default_model``
+# (set in its block below) which takes precedence over this global value
+# when the caller routes to that provider.
+default_model = "gpt-5.5"
+
+# Global request behavior. Per-provider TOML fields cannot override these
+# in Phase 1; they are applied to every chat call by the orchestrator.
+temperature       = 0.7
+max_output_tokens = 4096
+streaming         = true
+
+# Field names that logger sinks should redact from structured log output.
+# This is a defense-in-depth measure; secrets themselves never appear in
+# TOML, but request/response bodies may reference these keys.
+redact_sensitive_fields = [
+    "api_key",
+    "api_key_env",
+    "secret_key_env",
+    "authorization",
+    "cookie",
+    "set-cookie",
+]
+
+# Phase 2 reserved — stored on GlobalConfig but NOT consumed by the router
+# in Phase 1. Future implementation will be a Bot settings toggle: default
+# off (only try the current model, fail = error), user-enabled (auto
+# failover + Bot notification + log entry).
+fallback_chain = [
+    "openai",
+    "anthropic",
+    "gemini",
+    "deepseek",
+    "qwen",
+    "kimi",
+    "zhipu",
+    "baidu",
+    "ollama",
+    "lmstudio",
+]
+
+# -----------------------------------------------------------------------------
+# [routing] — Phase 2 reserved
+# -----------------------------------------------------------------------------
+# Parsed by the loader but NOT consumed in Phase 1. Reserved for future
+# capability-based routing (manual / auto / fallback strategies).
+[routing]
+mode = "fallback"
+prefer_code_models_for_code_tasks = true
+task_bias = "auto"  # chat | code | reasoning | vision | long_context | local | cheap
+
+# -----------------------------------------------------------------------------
+# [secrets] — Phase 2 reserved
+# -----------------------------------------------------------------------------
+# Parsed by the loader but NOT consumed in Phase 1. Reserved for future
+# secret manager integration (env_only / env_or_file / external).
+[secrets]
+mode = "env_only"
+vault_enabled = false
+kms_enabled = false
+
+# =============================================================================
+# Providers
+# =============================================================================
+# Each ``[providers.<id>]`` block defines one provider. Capability flags
+# default conservatively when omitted:
+#   supports_stream        = true   (most OpenAI-compatible endpoints stream)
+#   supports_tools         = false
+#   supports_vision        = false
+#   supports_json_schema   = false
+#   supports_audio         = false
+#   supports_files         = false
+# Override any flag explicitly when the provider documents support.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# OpenAI — native SDK
+# -----------------------------------------------------------------------------
+# Reserved id ``openai``; must use ``transport = "openai"``.
+[providers.openai]
+transport        = "openai"
+base_url         = "https://api.openai.com/v1"
+api_key_env      = "OPENAI_API_KEY"
+default_model    = "gpt-5.5"
+models           = ["gpt-5.5", "gpt-5.4-mini", "gpt-5.4-nano"]
+supports_stream  = true
+supports_tools   = true
+supports_vision = true
+supports_json_schema = true
+supports_audio  = true
+supports_files  = true
+
+[providers.openai.headers]
+# Optional fixed headers — uncomment to use.
+# organization = "org_xxx"
+# project      = "proj_xxx"
+
+# -----------------------------------------------------------------------------
+# Anthropic — native SDK
+# -----------------------------------------------------------------------------
+# Reserved id ``anthropic``; must use ``transport = "anthropic"``.
+[providers.anthropic]
+transport        = "anthropic"
+base_url         = "https://api.anthropic.com"
+api_key_env      = "ANTHROPIC_API_KEY"
+anthropic_version = "2023-06-01"  # parsed but applied by the SDK client
+default_model    = "claude-sonnet-4-6"
+models           = ["claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5"]
+supports_stream  = true
+supports_tools   = true
+supports_vision = true
+supports_json_schema = false
+supports_audio  = false
+supports_files  = false
+
+# -----------------------------------------------------------------------------
+# Gemini — OpenAI-compatible endpoint
+# -----------------------------------------------------------------------------
+[providers.gemini]
+transport        = "openai_compatible"
+base_url         = "https://generativelanguage.googleapis.com/v1beta/openai/"
+api_key_env      = "GOOGLE_API_KEY"
+default_model    = "gemini-3.5-flash"
+models           = ["gemini-3.5-flash", "gemini-2.5-pro", "gemini-2.5-flash"]
+supports_stream  = true
+supports_tools   = true
+supports_vision = true
+supports_json_schema = true
+supports_audio  = false
+supports_files  = false
+
+# -----------------------------------------------------------------------------
+# DeepSeek — OpenAI-compatible endpoint (default)
+# -----------------------------------------------------------------------------
+[providers.deepseek]
+transport        = "openai_compatible"
+base_url         = "https://api.deepseek.com"
+api_key_env      = "DEEPSEEK_API_KEY"
+default_model    = "deepseek-v4-pro"
+models           = ["deepseek-v4-pro", "deepseek-v4-flash"]
+supports_stream  = true
+supports_tools   = true
+supports_vision = true
+supports_json_schema = true
+supports_audio  = false
+supports_files  = false
+
+# -----------------------------------------------------------------------------
+# DeepSeek — Anthropic-compatible endpoint (variant)
+# -----------------------------------------------------------------------------
+# Same vendor, different wire protocol. Useful if you prefer Claude-style
+# tool calling or want to test the Anthropic SDK against DeepSeek's API.
+# Not in ``available_providers`` by default — add ``deepseek_anthropic``
+# to the list above to activate it instead of (or alongside) the
+# OpenAI-compatible variant.
+[providers.deepseek_anthropic]
+transport        = "anthropic"
+base_url         = "https://api.deepseek.com/anthropic"
+api_key_env      = "DEEPSEEK_API_KEY"
+default_model    = "deepseek-v4-pro"
+models           = ["deepseek-v4-pro", "deepseek-v4-flash", "deepseek-v4-pro[1M]"]
+supports_stream  = true
+supports_tools   = true
+supports_vision = true
+supports_json_schema = true
+supports_audio  = false
+supports_files  = false
+
+# -----------------------------------------------------------------------------
+# Qwen / DashScope / Model Studio — OpenAI-compatible endpoint
+# -----------------------------------------------------------------------------
+[providers.qwen]
+transport        = "openai_compatible"
+# Beijing-compatible default. Other regions can be swapped via QWEN_BASE_URL.
+base_url         = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+api_key_env      = "QWEN_API_KEY"
+default_model    = "qwen3.7-max"
+models           = ["qwen3.7-max", "qwen3.7-plus", "qwen3.6-flash"]
+supports_stream  = true
+supports_tools   = true
+supports_vision = true
+supports_json_schema = true
+supports_audio  = false
+supports_files  = false
+
+# Optional region override:
+# [providers.qwen.headers]
+# x-dashscope-region = "cn-beijing"
+
+# -----------------------------------------------------------------------------
+# Moonshot / Kimi — OpenAI-compatible endpoint
+# -----------------------------------------------------------------------------
+[providers.kimi]
+transport        = "openai_compatible"
+base_url         = "https://api.moonshot.cn/v1"
+api_key_env      = "MOONSHOT_API_KEY"
+default_model    = "kimi-k2.7-code"
+models           = ["kimi-k2.7-code", "kimi-k2.7-code-highspeed", "kimi-k2.6", "kimi-k2.5"]
+supports_stream  = true
+supports_tools   = true
+supports_vision = true
+supports_json_schema = true
+supports_audio  = false
+supports_files  = true
+
+# -----------------------------------------------------------------------------
+# Zhipu / GLM — OpenAI-compatible endpoint (default)
+# -----------------------------------------------------------------------------
+[providers.zhipu]
+transport        = "openai_compatible"
+# Coding-plan / OpenAI-compatible endpoint shown in official docs.
+base_url         = "https://open.bigmodel.cn/api/coding/paas/v4"
+api_key_env      = "ZHIPU_API_KEY"
+default_model    = "glm-5.2"
+models           = ["glm-5.2"]
+supports_stream  = true
+supports_tools   = true
+supports_vision = true
+supports_json_schema = true
+supports_audio  = false
+supports_files  = false
+
+# -----------------------------------------------------------------------------
+# Zhipu / GLM — Anthropic-compatible endpoint (variant)
+# -----------------------------------------------------------------------------
+# Anthropic-compatible GLM endpoint for Claude-style clients. Not in
+# ``available_providers`` by default — add ``zhipu_anthropic`` to the
+# list above to activate.
+[providers.zhipu_anthropic]
+transport        = "anthropic"
+base_url         = "https://open.bigmodel.cn/api/anthropic"
+api_key_env      = "ZHIPU_API_KEY"
+default_model    = "glm-5.2"
+models           = ["glm-5.2"]
+supports_stream  = true
+supports_tools   = true
+supports_vision = true
+supports_json_schema = true
+supports_audio  = false
+supports_files  = false
+
+# -----------------------------------------------------------------------------
+# Baidu Qianfan / ERNIE — OpenAI-compatible endpoint
+# -----------------------------------------------------------------------------
+# Baidu's v2 endpoint accepts an ``api_key`` (and optionally a
+# ``secret_key`` for older signing flows). ``secret_key_env`` is stored
+# on the ProviderConfig but NOT consumed by the OpenAI-compatible
+# transport in Phase 1.
+[providers.baidu]
+transport        = "openai_compatible"
+base_url         = "https://qianfan.baidubce.com/v2"
+api_key_env      = "BAIDU_API_KEY"
+secret_key_env   = "BAIDU_SECRET_KEY"
+credential_mode  = "api_key_and_secret"  # Phase 2 reserved — loader ignores
+default_model    = "ernie-5.0"
+models           = ["ernie-5.0"]
+supports_stream  = true
+supports_tools   = true
+supports_vision = true
+supports_json_schema = true
+supports_audio  = false
+supports_files  = false
+
+# -----------------------------------------------------------------------------
+# Local / self-hosted examples
+# -----------------------------------------------------------------------------
+# Local servers usually accept any non-empty token. Use ``api_key_literal``
+# for these (NOT for real cloud providers — never put a real key in TOML).
+[providers.ollama]
+transport        = "openai_compatible"
+base_url         = "http://localhost:11434/v1"
+api_key_literal  = "ollama"
+default_model    = "llama3.2"
+models           = ["llama3.2", "qwen2.5", "mistral"]
+supports_stream  = true
+supports_tools   = true
+supports_vision = true
+supports_json_schema = true
+supports_audio  = false
+supports_files  = false
+
+[providers.lmstudio]
+transport        = "openai_compatible"
+base_url         = "http://localhost:1234/v1"
+api_key_literal  = "lm-studio"
+default_model    = "local-model"
+models           = ["local-model"]
+supports_stream  = true
+supports_tools   = true
+supports_vision = true
+supports_json_schema = true
+supports_audio  = false
+supports_files  = false
+
+# -----------------------------------------------------------------------------
+# Custom provider template
+# -----------------------------------------------------------------------------
+# Copy this block to create any additional provider. Examples:
+#   - OpenAI-compatible gateway: LiteLLM / vLLM / LocalAI / OpenRouter / Azure proxy
+#   - Internal company endpoint
+#   - Per-user experimental endpoint
+# Remember to add your new id to ``[global].available_providers`` above.
+[providers.custom_template]
+transport        = "openai_compatible"
+base_url_env     = "CUSTOM_PROVIDER_BASE_URL"
+api_key_env      = "CUSTOM_PROVIDER_API_KEY"
+default_model    = "your-model-id"
+models           = ["your-model-id"]
+supports_stream  = true
+supports_tools   = true
+supports_vision = true
+supports_json_schema = true
+supports_audio  = false
+supports_files  = false
+
+[providers.custom_template.headers]
+# Vendor-specific headers — uncomment to use.
+# x-tenant-id = "tenant_123"
+
+[providers.custom_template.query]
+# Vendor-specific query params — uncomment to use.
+# api-version = "2025-01-01"
+
+# =============================================================================
+# [policy] — Phase 2 reserved
+# =============================================================================
+# Parsed by the loader but NOT consumed in Phase 1. Reserved for future
+# per-provider policy overrides (default temperature, max tokens, admin
+# gating for external URLs, etc.).
+[policy]
+default_temperature         = 0.9
+default_max_output_tokens   = 4096
+allow_model_override        = true
+allow_provider_override     = true
+require_admin_for_external_urls = false
