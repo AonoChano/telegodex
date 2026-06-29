@@ -22,7 +22,7 @@ from aiogram.types import (
 )
 from loguru import logger
 
-from bot.codex import command_flow, command_ui, model_ui, reply_ui, session_ui, shell_ui, stop_ui
+from bot.codex import command_flow, command_ui, model_ui, reply_ui, screenshot_ui, session_ui, shell_ui, stop_ui
 from bot.codex.approval_ui import approval_ui_bridge
 from bot.codex.topic_filter import IsCodexBoundTopic
 from bot.codex.topic_recovery import (
@@ -50,7 +50,6 @@ from core.orchestrator import Orchestrator
 from core.session import SessionKey
 from extensions.codex.daemon import codex_daemon
 from storage.context_manager import ContextManager
-from utils.screenshot import send_screenshot_to_chat
 
 router = Router(name="codex")
 
@@ -541,6 +540,4 @@ async def handle_shell_approve_callback(
 
 @router.message(Command("screenshot"))
 async def cmd_screenshot(message: Message) -> None:
-    """Capture the terminal window and send it as a photo."""
-    route = TelegramRoute.from_message(message)
-    await send_screenshot_to_chat(message, route)
+    await screenshot_ui.handle_screenshot_command(message)
