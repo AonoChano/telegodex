@@ -63,6 +63,7 @@ RULES.md
 HARNESS.md
 *.agent.md
 CurrentHandOff.md
+docs/VERSION-CONTROL.md
 
 # Testing
 .coverage
@@ -82,3 +83,4 @@ docs/CodexSourceCode/
 docs/Claudian\[AnObsidianPlugin]/
 docs/DeepSeek-V4-Encoding.md
 docs/SourceCodes/
+docs/USER_SUGGESTIONS/
