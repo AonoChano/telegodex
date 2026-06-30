@@ -104,21 +104,130 @@ class _TerminalStatusLine:
             self._last_line_len = 0
 
 
-class _AiogramPollingRetryCompactor:
-    """Render aiogram polling retries as one live terminal status."""
+# ── Polling retry status rendering ──────────────────────────────────────
 
-    _SPINNER = "|/-\\"
+# ANSI: \033[3;38;2;R;G;Bm = italic + true color
+# All dim (R,G,B ≈ 120–175) with subtle hue differentiation per block.
+# 目标：灰灰的半透明彩色斜体分块 — 块落分明，避免视觉疲劳。
+_DIM_GRAY = "\033[3;38;2;150;150;150m"
+_DIM_BLUE = "\033[3;38;2;130;155;180m"
+_DIM_AMBER = "\033[3;38;2;175;160;130m"
+_DIM_GREEN = "\033[3;38;2;130;175;150m"
+_DIM_RED = "\033[3;38;2;175;135;135m"
+_ANSI_RESET = "\033[0m"
+
+# aiogram exception class → (category, hint)
+_POLLING_ERROR_CLASSES: dict[str, tuple[str, str]] = {
+    "TelegramNetworkError": ("network", "无法连接 Telegram 服务器"),
+    "TelegramUnauthorizedError": ("auth", "Bot token 无效，请检查 TELEGRAM_BOT_TOKEN"),
+    "TelegramForbiddenError": ("auth", "Bot 被禁用或无权访问"),
+    "TelegramConflictError": ("auth", "Bot token 被其他实例占用"),
+    "TelegramServerError": ("server", "Telegram 服务端异常"),
+    "RestartingTelegram": ("server", "Telegram 服务器重启中"),
+    "TelegramRetryAfter": ("rate_limit", "触发洪水控制，等待重试"),
+    "TelegramBadRequest": ("client", "请求格式错误"),
+    "TelegramNotFound": ("client", "目标不存在"),
+    "TelegramEntityTooLarge": ("client", "文件过大"),
+    "ClientDecodeError": ("client", "响应解析失败"),
+}
+
+# category → max retries (None = unlimited)
+_POLLING_RETRY_LIMITS: dict[str, int | None] = {
+    "network": None,
+    "auth": 5,
+    "server": 10,
+    "rate_limit": None,
+    "client": 10,
+    "unknown": 10,
+}
+
+_POLLING_ERROR_PATTERN = re.compile(
+    r"^Failed to fetch updates - (?P<type>\w+): (?P<detail>.*)$"
+)
+
+
+def _classify_polling_error(message: str) -> tuple[str, str, str, str]:
+    """从 aiogram 的 ``Failed to fetch updates`` 日志中提取错误类型并分类。
+
+    Returns:
+        ``(category, error_type, hint, detail)``
+    """
+    match = _POLLING_ERROR_PATTERN.match(message)
+    if match is None:
+        return ("unknown", "Unknown", "未知错误", "")
+
+    error_type = match.group("type")
+    detail = match.group("detail").strip()
+
+    # 砍掉 aiogram / aiohttp 的冗长前缀
+    for prefix in (
+        "HTTP Client says - ",
+        "ClientConnectorError: ",
+        "ClientOSError: ",
+        "ClientPayloadError: ",
+    ):
+        detail = detail.replace(prefix, "", 1)
+    detail = " ".join(detail.split())  # normalize whitespace / newlines
+
+    category, hint = _POLLING_ERROR_CLASSES.get(error_type, ("unknown", "未知错误"))
+    return (category, error_type, hint, detail)
+
+
+def _format_retry_limit(category: str) -> str:
+    limit = _POLLING_RETRY_LIMITS.get(category, 10)
+    return "∞" if limit is None else str(limit)
+
+
+def _format_reconnect_status(
+    category: str,
+    error_type: str,
+    detail: str,
+    attempt: int,
+    remaining: float,
+    elapsed: float,
+) -> str:
+    """单行灰度斜体分块：◦ Reconnecting · 1/5 · retry 3.2s · 12.4s · Error: detail"""
+    limit_str = _format_retry_limit(category)
+    retry_part = f"retry {remaining:.1f}s" if remaining > 0 else "waiting"
+    error_part = f"{error_type}: {detail}" if detail else error_type
+
+    return (
+        f"{_DIM_BLUE}◦ Reconnecting{_DIM_GRAY} · "
+        f"{_DIM_AMBER}{attempt}/{limit_str}{_DIM_GRAY} · "
+        f"{_DIM_GREEN}{retry_part}{_DIM_GRAY} · "
+        f"{_DIM_GRAY}{elapsed:.1f}s{_DIM_GRAY} · "
+        f"{_DIM_RED}{error_part}"
+        f"{_ANSI_RESET}"
+    )
+
+
+class _AiogramPollingRetryCompactor:
+    """把 aiogram 轮询重试渲染为一条原地更新的终端状态行。
+
+    状态机：
+        IDLE ──(Failed to fetch updates)──► RECONNECTING
+        RECONNECTING ──(Connection established)──► IDLE + success log
+        RECONNECTING ──(attempt > limit)──► IDLE + failure log (+ sys.exit for auth)
+        RECONNECTING ──(retry_deadline expired)──► 保持 RECONNECTING（等待响应）
+    """
+
     _REFRESH_SECONDS = 0.2
-    _PENDING_RETRY_SECONDS = 2.0
+    _PENDING_RETRY_SECONDS = 2.0  # 仅看到错误、尚未收到 sleep 时的占位倒计时
 
     def __init__(self, status_line: _TerminalStatusLine) -> None:
         self._status_line = status_line
         self._lock = threading.Lock()
-        self._last_error = ""
+        # 状态
+        self._state = "IDLE"  # "IDLE" | "RECONNECTING"
+        self._category = "unknown"
+        self._error_type = "Unknown"
+        self._detail = ""
+        self._hint = ""
         self._attempt = 0
-        self._retry_deadline = 0.0
-        self._active = False
-        self._spinner_index = 0
+        self._retry_deadline = 0.0  # monotonic
+        self._error_time = 0.0  # monotonic，本次重连周期首次错误时间
+        # worker 生命周期：generation 避免"老 worker 正在退出 / 新 error 跳过启动"的竞态
+        self._worker_generation = 0
         self._worker: threading.Thread | None = None
 
     @property
@@ -129,62 +238,151 @@ class _AiogramPollingRetryCompactor:
         if not self.enabled:
             return False
 
-        now = time.monotonic()
         if "Failed to fetch updates" in message:
-            error = _compact_aiogram_polling_error(message)
-            self._activate(error, self._attempt, now + self._PENDING_RETRY_SECONDS)
+            return self._handle_error(message)
+
+        if "Connection established" in message:
+            self._handle_reconnected()
             return True
 
         sleep = _parse_aiogram_retry_sleep(message)
         if sleep is not None:
-            seconds, tryings, _bot_id = sleep
-            error = self._last_error or "waiting for Telegram API"
-            self._activate(error, tryings + 1, now + seconds)
+            self._handle_sleep(sleep)
             return True
 
         return False
 
+    # ── 状态转换 ──────────────────────────────────────────────
+
+    def _handle_error(self, message: str) -> bool:
+        category, error_type, hint, detail = _classify_polling_error(message)
+        now = time.monotonic()
+
+        with self._lock:
+            is_new_cycle = self._state == "IDLE"
+            if is_new_cycle:
+                self._worker_generation += 1
+                self._attempt = 1
+                self._error_time = now
+            else:
+                self._attempt += 1
+
+            self._category = category
+            self._error_type = error_type
+            self._hint = hint
+            self._detail = detail
+            self._retry_deadline = now + self._PENDING_RETRY_SECONDS
+            self._state = "RECONNECTING"
+
+            limit = _POLLING_RETRY_LIMITS.get(category, 10)
+            should_fail = limit is not None and self._attempt > limit
+            current_gen = self._worker_generation
+            need_worker = is_new_cycle  # 新周期总是启动新 worker
+
+        if should_fail:
+            self._handle_failed()
+            return True
+
+        if need_worker:
+            self._start_worker(current_gen)
+        return True
+
+    def _handle_sleep(self, sleep: tuple[float, int, str]) -> None:
+        seconds, tryings, _bot_id = sleep
+        now = time.monotonic()
+        with self._lock:
+            if self._state != "RECONNECTING":
+                return
+            # aiogram 的 tryings 是"本次 sleep 前"的计数器（0-indexed）
+            self._attempt = max(self._attempt, tryings + 1)
+            self._retry_deadline = now + seconds
+
+    def _handle_reconnected(self) -> None:
+        with self._lock:
+            if self._state != "RECONNECTING":
+                return
+            attempt = self._attempt
+            category = self._category
+            error_type = self._error_type
+            elapsed = time.monotonic() - self._error_time
+            self._state = "IDLE"
+
+        self._status_line.clear()
+        # logger.success 走 _terminal_sink → stop()（幂等），不会死锁
+        logger.success(
+            f"Telegram 重连成功 · {attempt}/{_format_retry_limit(category)} · "
+            f"耗时 {elapsed:.1f}s · 最后错误: {error_type}"
+        )
+
+    def _handle_failed(self) -> None:
+        with self._lock:
+            attempt = self._attempt
+            category = self._category
+            error_type = self._error_type
+            hint = self._hint
+            self._state = "IDLE"
+
+        self._status_line.clear()
+        logger.error(
+            f"Telegram 重连失败 · {attempt}/{_format_retry_limit(category)} · "
+            f"{error_type} · {hint}"
+        )
+        # 认证类错误不可恢复 — 退出进程
+        # SystemExit 是 BaseException，不会被 aiogram 的 except Exception 捕获
+        if category == "auth":
+            sys.exit(1)
+
+    # ── worker ───────────────────────────────────────────────
+
+    def _start_worker(self, generation: int) -> None:
+        """启动状态渲染 worker。仅在 _handle_error 的新周期调用。"""
+        with self._lock:
+            if self._state != "RECONNECTING":
+                return  # 状态已变（例如 stop），无需启动
+            # 同 generation 的 worker 仍在运行则不重复启动
+            if (
+                self._worker is not None
+                and self._worker.is_alive()
+                and self._worker_generation == generation
+            ):
+                return
+            self._worker = threading.Thread(
+                target=self._run_status_loop,
+                args=(generation,),
+                name="telegram-polling-status",
+                daemon=True,
+            )
+            worker = self._worker
+        worker.start()  # 在锁外启动，避免锁内 I/O
+
     def stop(self) -> None:
         with self._lock:
-            self._active = False
+            self._state = "IDLE"
         self._status_line.clear()
 
-    def _activate(self, error: str, attempt: int, retry_deadline: float) -> None:
-        with self._lock:
-            self._last_error = error
-            self._attempt = max(attempt, 1)
-            self._retry_deadline = retry_deadline
-            self._active = True
-            should_start = self._worker is None or not self._worker.is_alive()
-            if should_start:
-                self._worker = threading.Thread(
-                    target=self._run_status_loop,
-                    name="telegram-polling-status",
-                    daemon=True,
-                )
-                self._worker.start()
-
-    def _run_status_loop(self) -> None:
+    def _run_status_loop(self, generation: int) -> None:
         while True:
-            if not self._render_status_once():
+            if not self._render_status_once(generation):
                 return
             time.sleep(self._REFRESH_SECONDS)
 
-    def _render_status_once(self) -> bool:
+    def _render_status_once(self, generation: int) -> bool:
         with self._lock:
-            if not self._active:
-                self._status_line.clear()
+            if self._state != "RECONNECTING":
                 return False
-            remaining = self._retry_deadline - time.monotonic()
-            if remaining <= 0:
-                self._active = False
-                self._status_line.clear()
-                return False
-            spinner = self._SPINNER[self._spinner_index % len(self._SPINNER)]
-            self._spinner_index += 1
+            if self._worker_generation != generation:
+                return False  # 更新的 worker 已接管
+            now = time.monotonic()
+            remaining = max(self._retry_deadline - now, 0.0)
+            elapsed = now - self._error_time
             self._status_line.update(
-                _format_aiogram_polling_status(
-                    self._last_error, self._attempt, remaining, spinner
+                _format_reconnect_status(
+                    self._category,
+                    self._error_type,
+                    self._detail,
+                    self._attempt,
+                    remaining,
+                    elapsed,
                 )
             )
             return True
@@ -196,37 +394,6 @@ def _fit_terminal_status_text(text: str, width: int) -> str:
         return text
     return text[: max(width - 3, 0)] + "..."
 
-
-
-def _compact_aiogram_polling_error(message: str) -> str:
-    text = message.replace("Failed to fetch updates - ", "", 1)
-    text = text.replace("TelegramNetworkError: HTTP Client says - ", "", 1)
-    text = text.replace("ClientConnectorError: ", "", 1)
-    return _classify_aiogram_polling_error(" ".join(text.split()))
-
-
-
-def _classify_aiogram_polling_error(text: str) -> str:
-    lowered = text.lower()
-    if "cannot connect to host" in lowered:
-        return "Telegram API unreachable"
-    if "clientoserror" in lowered or "winerror 1236" in lowered:
-        return "network connection aborted"
-    if "timeout" in lowered or "timed out" in lowered:
-        return "Telegram API timeout"
-    return "Telegram network error"
-
-
-
-def _format_aiogram_polling_status(
-    error: str,
-    attempt: int | None = None,
-    remaining: float | None = None,
-    spinner: str = "/",
-) -> str:
-    if attempt is None or remaining is None:
-        return f"Telegram polling {spinner} {error}"
-    return f"Telegram polling {spinner} {error} ({attempt}/∞), retry in {remaining:.1f}s"
 
 def _parse_aiogram_retry_sleep(message: str) -> tuple[float, int, str] | None:
     match = re.search(
@@ -255,6 +422,11 @@ def _handle_aiogram_polling_retry(record: logging.LogRecord, level, depth: int) 
     if not _polling_retry_compactor.handle(message):
         return False
 
+    # "Connection established" 由 compactor 发出格式化 success 日志，原始消息完全抑制
+    if "Connection established" in message:
+        return True
+
+    # 错误 / sleep 消息：抑制终端（状态行处理），保留文件用于调试
     logger.bind(_terminal_suppress=True).patch(lambda r: r.update(name=record.name)).opt(
         depth=depth, exception=record.exc_info
     ).log(level, message)
@@ -475,15 +647,13 @@ async def main():
 
     # 启动轮询
     #
-    # 显式传 backoff_config 收紧重试节奏。aiogram 默认是 min=0.5, max=5.0,
-    # factor=1.5, jitter=0.1，连续失败 5 次后 delay 累积到 4.6s。
-    # 这里用更紧凑的 max=3.0 + factor=1.3：失败 5 次后 delay ≈ 1.4s，
-    # 配合 30s 单次 getUpdates 上限，5 轮失败 = 5*30 + 7 ≈ 2.5 分钟。
-    # 避免"打了 sleep 1s 结果卡 5 分钟"的感知错位。
+    # 黄金分割退避：min=1s, max=30s, factor=1.618
+    # 序列：1.0, 1.6, 2.6, 4.2, 6.9, 11.1, 17.9, 29.0, 30.0, 30.0...
+    # 网络错误无限重试，最长间隔 30s；认证错误 5 次后退出（≈6.9s 累计）。
     polling_backoff = BackoffConfig(
-        min_delay=0.5,
-        max_delay=3.0,
-        factor=1.3,
+        min_delay=1.0,
+        max_delay=30.0,
+        factor=1.618,
         jitter=0.1,
     )
     # 启动 Codex app-server daemon
