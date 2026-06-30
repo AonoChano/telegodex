@@ -41,6 +41,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from dotenv import load_dotenv
 from loguru import logger
 
 # Python 3.11+ ships ``tomllib`` in the stdlib. Older Python (3.10) uses the
@@ -200,6 +201,8 @@ def load_provider_toml(path: str | Path) -> tuple[list[ProviderConfig], GlobalCo
             f"provider.toml is required; see provider.toml.example "
             f"(expected at: {config_path.resolve()})"
         )
+
+    load_dotenv(config_path.with_name(".env"), override=False)
 
     with config_path.open("rb") as f:
         data: dict[str, Any] = tomllib.load(f)

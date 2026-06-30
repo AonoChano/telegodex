@@ -12,6 +12,7 @@ from aiogram.utils.backoff import BackoffConfig
 from loguru import logger
 
 from ai import AIRouter
+from ai.router import unavailable_default_provider_error
 from bot.handlers import (
     callbacks_router,
     codex_router,
@@ -208,6 +209,10 @@ async def main():
 
     if not ai_router.list_available_providers():
         logger.error("❌ 没有任何 AI 服务商可用 — 请检查 provider.toml 的 available_providers 列表与对应 .env 中的 API key")
+        return
+
+    if error := unavailable_default_provider_error(ai_router):
+        logger.error(f"❌ {error}")
         return
 
     logger.info(f"可用的 AI 服务商: {', '.join(ai_router.list_available_providers())}")

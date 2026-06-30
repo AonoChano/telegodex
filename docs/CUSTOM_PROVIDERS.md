@@ -37,10 +37,11 @@ A `[providers.<id>]` block in TOML is **not** instantiated unless its `<id>` is 
 
 - An empty `available_providers = []` activates NOTHING — the user must explicitly list every provider they want active.
 - A provider block can stay in TOML but be temporarily disabled by removing it from `available_providers` (no need to delete the block).
+- If `[global].default_provider` is listed but cannot be instantiated, Telegodex fails closed instead of silently routing normal chat to another provider.
 
 ### Secrets never live in TOML
 
-API keys and other secrets are resolved at runtime from environment variables referenced by `api_key_env` / `secret_key_env` / `base_url_env`. The literal `api_key_literal` field exists ONLY for local servers (ollama, lmstudio) that accept any non-empty token — never put a real API key there.
+API keys and other secrets are resolved at runtime from environment variables referenced by `api_key_env` / `secret_key_env` / `base_url_env`. Telegodex loads the `.env` file next to `provider.toml` without overriding variables already exported by the shell. The literal `api_key_literal` field exists ONLY for local servers (ollama, lmstudio) that accept any non-empty token — never put a real API key there.
 
 Resolution precedence:
 
@@ -71,6 +72,23 @@ See `provider.toml.example` for the canonical, fully-commented template. Key fie
 | `supports_stream` | Optional | Default `true` |
 | `supports_tools` / `supports_vision` / `supports_json_schema` / `supports_audio` / `supports_files` | Optional | Capability flags; all default to `false` (conservative) |
 | `secret_key_env` | Reserved | Phase 2 — parsed but not consumed in Phase 1 |
+
+## Global Request Defaults
+
+The `[global]` section controls request defaults when the user has not selected a per-chat model or temperature:
+
+```toml
+default_provider = "zhipu"
+default_model = "glm-4"
+temperature = 0.2
+max_output_tokens = 4096
+streaming = true
+```
+
+- `default_provider` must resolve to an instantiated provider; otherwise normal chat reports a configuration error.
+- `default_model` is used when the user has not chosen a model in Settings.
+- `temperature` is used when the user has no explicit temperature override. Legacy stored `0.7` defaults are treated as unset so TOML can take effect after migration.
+- `streaming = false` sends normal chat through non-streaming `chat()` directly.
 
 ## Common Scenarios
 
@@ -156,7 +174,7 @@ The old `custom_providers.example.json` / `custom_providers.schema.json` / `conf
 python run.py --check-config
 ```
 
-This loads `provider.toml`, validates the structure, and checks that `available_providers` is non-empty and that `default_provider` is in the list. It does NOT validate API keys (those are resolved lazily at request time). On success you will see a list of parsed provider blocks; on failure you get a clear error pointing at `provider.toml.example`.
+This loads `provider.toml`, validates the structure, and checks that `available_providers` is non-empty and that `default_provider` is in the list. It checks that the configured default provider is available after provider instantiation. It does NOT validate remote API credentials with provider network calls. On success you will see a list of parsed provider blocks; on failure you get a clear error pointing at `provider.toml.example`.
 
 ## Reserved Sections (Phase 2)
 

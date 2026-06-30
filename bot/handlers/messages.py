@@ -11,6 +11,7 @@ from sqlalchemy import select
 
 from ai import AIRouter, MessageRole
 from ai import Message as AIMessage
+from bot.handlers.chat_runtime import select_chat_runtime
 from bot.keyboards import get_main_menu, get_settings_menu
 from bot.telegram_draft import DraftStream
 from bot.utils.latex import normalize_rich_markdown_latex
@@ -566,17 +567,15 @@ async def handle_message(
     base_conv = await context_manager.get_or_create_conversation(user_id, thread_id=thread_id, chat_id=route.chat_id)
     session_data = await _load_session_data(base_conv, session_key)
 
-    provider_name = user.preferred_provider or "openai"
-    provider = ai_router.get_provider(provider_name)
-    if not provider:
-        provider = ai_router.get_default_provider()
-
-    if not provider:
+    runtime = select_chat_runtime(user, ai_router)
+    if runtime is None:
         await message.answer(
             "❌ 没有可用的 AI 服务商，请检查配置",
             **route.send_kwargs(),
         )
         return
+    provider_name = runtime.provider_name
+    provider = runtime.provider
 
     # Resolve the provider-isolated conversation.
     conversation = await _resolve_provider_conversation(
@@ -604,7 +603,7 @@ async def handle_message(
         # 获取系统提示词（按 provider 分层组合）
         prompt_manager = get_prompt_manager()
         system_prompt = prompt_manager.get_system_prompt(
-            provider=user.preferred_provider
+            provider=provider_name
         ) + build_telegodex_capability_prompt(getattr(user, "tool_permission_mode", None))
 
         # 构建包含系统提示词的消息历史
@@ -629,8 +628,9 @@ async def handle_message(
             if use_draft
             else None
         )
-        model_name = user.preferred_model
-        temperature = float(user.temperature or 0.7)
+        model_name = runtime.model_name
+        temperature = runtime.temperature
+        max_output_tokens = runtime.max_output_tokens
 
         response_text = ""
         response_model = model_name
@@ -638,62 +638,63 @@ async def handle_message(
         stream_used = False
 
         # ---- 1) 优先尝试流式 ----
-        try:
-            buffer = ""
-            last_flush = time.monotonic()
-            if stream is not None:
-                # 推送占位草稿（让用户立即看到"思考中"）
-                await stream.push("💭 …", force_plain=True)
+        if runtime.streaming:
+            try:
+                buffer = ""
+                last_flush = time.monotonic()
+                if stream is not None:
+                    # 推送占位草稿（让用户立即看到"思考中"）
+                    await stream.push("💭 …", force_plain=True)
 
-            async for chunk in provider.chat_stream(
-                messages=messages_with_system,
-                model=model_name,
-                temperature=temperature,
-                max_tokens=ai_router.max_output_tokens,
-            ):
-                if not chunk:
-                    continue
-                stream_used = True
-                response_text += chunk
-                buffer += chunk
-                now = time.monotonic()
-                # 草稿会带动画；按字符数 + 时间双触发，但短回复不推草稿
-                if len(buffer) >= DRAFT_FLUSH_CHARS or (now - last_flush) >= DRAFT_FLUSH_INTERVAL:
-                    if len(response_text) >= DRAFT_MIN_RESPONSE_CHARS and not _looks_like_chat_tool_request_prefix(
-                        response_text
-                    ):
-                        await _push_draft(
-                            stream,
-                            normalize_rich_markdown_latex(response_text[-DRAFT_MAX_CHARS:]),
-                        )
-                    buffer = ""
-                    last_flush = now
+                async for chunk in provider.chat_stream(
+                    messages=messages_with_system,
+                    model=model_name,
+                    temperature=temperature,
+                    max_tokens=max_output_tokens,
+                ):
+                    if not chunk:
+                        continue
+                    stream_used = True
+                    response_text += chunk
+                    buffer += chunk
+                    now = time.monotonic()
+                    # 草稿会带动画；按字符数 + 时间双触发，但短回复不推草稿
+                    if len(buffer) >= DRAFT_FLUSH_CHARS or (now - last_flush) >= DRAFT_FLUSH_INTERVAL:
+                        if len(response_text) >= DRAFT_MIN_RESPONSE_CHARS and not _looks_like_chat_tool_request_prefix(
+                            response_text
+                        ):
+                            await _push_draft(
+                                stream,
+                                normalize_rich_markdown_latex(response_text[-DRAFT_MAX_CHARS:]),
+                            )
+                        buffer = ""
+                        last_flush = now
 
-            # 流结束：若响应已经够长，推送一次最终草稿
-            if (
-                stream_used
-                and stream is not None
-                and response_text
-                and len(response_text) >= DRAFT_MIN_RESPONSE_CHARS
-                and not _looks_like_chat_tool_request_prefix(response_text)
-            ):
-                await _push_draft(
-                    stream,
-                    normalize_rich_markdown_latex(response_text[-DRAFT_MAX_CHARS:]),
-                )
-        except Exception as stream_err:
-            if _is_terminal_provider_error(stream_err):
-                logger.warning(
-                    f"流式 chat_stream 遇到终止性服务商错误，不再回退非流式: {type(stream_err).__name__}: {stream_err}"
-                )
-                await message.answer(
-                    _format_provider_error(stream_err, provider_name),
-                    **route.send_kwargs(),
-                )
-                return
-            logger.warning(f"流式 chat_stream 失败，回退非流式: {type(stream_err).__name__}: {stream_err}")
-            stream_used = False
-            response_text = ""
+                # 流结束：若响应已经够长，推送一次最终草稿
+                if (
+                    stream_used
+                    and stream is not None
+                    and response_text
+                    and len(response_text) >= DRAFT_MIN_RESPONSE_CHARS
+                    and not _looks_like_chat_tool_request_prefix(response_text)
+                ):
+                    await _push_draft(
+                        stream,
+                        normalize_rich_markdown_latex(response_text[-DRAFT_MAX_CHARS:]),
+                    )
+            except Exception as stream_err:
+                if _is_terminal_provider_error(stream_err):
+                    logger.warning(
+                        f"流式 chat_stream 遇到终止性服务商错误，不再回退非流式: {type(stream_err).__name__}: {stream_err}"
+                    )
+                    await message.answer(
+                        _format_provider_error(stream_err, provider_name),
+                        **route.send_kwargs(),
+                    )
+                    return
+                logger.warning(f"流式 chat_stream 失败，回退非流式: {type(stream_err).__name__}: {stream_err}")
+                stream_used = False
+                response_text = ""
 
         # ---- 2) 流式失败 / 没拿到内容则回退非流式 ----
         if not stream_used:
@@ -702,7 +703,7 @@ async def handle_message(
                     messages=messages_with_system,
                     model=model_name,
                     temperature=temperature,
-                    max_tokens=ai_router.max_output_tokens,
+                    max_tokens=max_output_tokens,
                 )
             except Exception as chat_err:
                 logger.error(f"非流式 provider.chat 失败: {type(chat_err).__name__}: {chat_err}")
@@ -741,7 +742,7 @@ async def handle_message(
             permission_mode=getattr(user, "tool_permission_mode", None),
             model_name=model_name,
             temperature=temperature,
-            max_output_tokens=ai_router.max_output_tokens,
+            max_output_tokens=max_output_tokens,
         )
         if parse_chat_tool_request(response_text) is not None:
             if tool_outcome is None:
@@ -760,7 +761,7 @@ async def handle_message(
             conversation_id=conversation.id,
             role=MessageRole.ASSISTANT,
             content=response_text,
-            provider=user.preferred_provider,
+            provider=provider_name,
             model=response_model,
             tokens_used=response_tokens,
         )

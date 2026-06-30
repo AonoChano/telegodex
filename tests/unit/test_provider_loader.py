@@ -18,7 +18,6 @@ from config.provider_loader import (
     load_provider_toml,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -121,6 +120,38 @@ def test_api_key_env_resolved_from_environment(
     configs, _ = load_provider_toml(path)
     assert configs[0].resolve_api_key() == "sk-test-123"
 
+
+def test_api_key_env_resolved_from_adjacent_dotenv_without_overriding_shell(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("ZHIPU_API_KEY", raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-shell-value")
+    (tmp_path / ".env").write_text(
+        "ZHIPU_API_KEY=sk-zhipu-from-dotenv\nOPENAI_API_KEY=sk-dotenv-value\n",
+        encoding="utf-8",
+    )
+    toml = """\
+[global]
+available_providers = ["zhipu", "openai"]
+
+[providers.zhipu]
+transport = "openai_compatible"
+api_key_env = "ZHIPU_API_KEY"
+base_url = "https://open.bigmodel.cn/api/paas/v4"
+default_model = "glm-4"
+
+[providers.openai]
+transport = "openai"
+api_key_env = "OPENAI_API_KEY"
+default_model = "gpt-4o"
+"""
+    path = _write_toml(tmp_path, toml)
+
+    configs, _ = load_provider_toml(path)
+    by_name = {config.name: config for config in configs}
+
+    assert by_name["zhipu"].resolve_api_key() == "sk-zhipu-from-dotenv"
+    assert by_name["openai"].resolve_api_key() == "sk-shell-value"
 
 def test_api_key_literal_takes_precedence_over_env(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch

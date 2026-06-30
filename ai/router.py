@@ -21,13 +21,27 @@ codebase as deprecated dead code and are NOT instantiated from this router.
 
 from __future__ import annotations
 
-from config.provider_loader import GlobalConfig, ProviderConfig
 from loguru import logger
+
+from config.provider_loader import GlobalConfig, ProviderConfig
 
 from .anthropic_provider import AnthropicProvider
 from .base import BaseAIProvider
 from .openai_compatible_provider import OpenAICompatibleProvider
 from .openai_provider import OpenAIProvider
+
+
+def unavailable_default_provider_error(router: AIRouter) -> str | None:
+    """Return a user-facing error when the configured default is unavailable."""
+
+    if router.get_default_provider() is not None:
+        return None
+    if not router.default_provider_name:
+        return "[global].default_provider is empty in provider.toml"
+    return (
+        f"default_provider '{router.default_provider_name}' is configured but not available; "
+        "check provider.toml and the referenced API key environment variable"
+    )
 
 
 class AIRouter:
@@ -113,6 +127,8 @@ class AIRouter:
                     provider_name=config.name,
                     default_model=config.default_model or "gpt-3.5-turbo",
                     available_models=config.models,
+                    headers=config.headers,
+                    query=config.query,
                 )
             else:
                 # OpenAIProvider / AnthropicProvider accept the same kwargs
@@ -123,6 +139,8 @@ class AIRouter:
                     base_url=base_url,
                     default_model=config.default_model or None,
                     available_models=config.models or None,
+                    headers=config.headers,
+                    query=config.query,
                 )
 
             self.providers[config.name] = instance
@@ -141,9 +159,9 @@ class AIRouter:
     def get_default_provider(self) -> BaseAIProvider | None:
         """Return the provider named by ``[global].default_provider``.
 
-        Falls back to the first available provider if the configured
-        default is not instantiated. Returns ``None`` when no providers
-        are available at all.
+        Returns ``None`` when the configured default provider was not
+        instantiated. This fails closed instead of routing user traffic to
+        an unintended provider.
         """
         if not self.providers:
             return None
@@ -152,11 +170,11 @@ class AIRouter:
         if configured is not None:
             return configured
 
-        logger.warning(
-            f"Default provider '{self._default_provider_name}' is not "
-            f"available; falling back to first instantiated provider"
+        logger.error(
+            f"Default provider '{self._default_provider_name}' is configured "
+            f"but not available; refusing implicit fallback"
         )
-        return next(iter(self.providers.values()))
+        return None
 
     def list_available_providers(self) -> list[str]:
         """List the names of all instantiated providers."""
@@ -179,6 +197,26 @@ class AIRouter:
         if provider:
             return provider.provider_name
         return name
+
+    @property
+    def default_provider_name(self) -> str:
+        """Provider id configured as ``[global].default_provider``."""
+        return self._default_provider_name
+
+    @property
+    def default_model(self) -> str:
+        """Proxy to ``global_config.default_model`` for handler use."""
+        return self.global_config.default_model
+
+    @property
+    def temperature(self) -> float:
+        """Proxy to ``global_config.temperature`` for handler use."""
+        return self.global_config.temperature
+
+    @property
+    def streaming(self) -> bool:
+        """Proxy to ``global_config.streaming`` for handler use."""
+        return self.global_config.streaming
 
     @property
     def max_output_tokens(self) -> int:

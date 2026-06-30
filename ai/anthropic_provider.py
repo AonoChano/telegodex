@@ -20,12 +20,18 @@ class AnthropicProvider(BaseAIProvider):
         base_url: str | None = None,
         default_model: str | None = None,
         available_models: list[str] | None = None,
+        headers: dict[str, str] | None = None,
+        query: dict[str, str] | None = None,
         **kwargs,
     ):
         super().__init__(api_key, **kwargs)
         client_kwargs: dict[str, Any] = {"api_key": api_key}
         if base_url:
             client_kwargs["base_url"] = base_url
+        if headers:
+            client_kwargs["default_headers"] = headers
+        if query:
+            client_kwargs["default_query"] = query
         self.client = AsyncAnthropic(**client_kwargs)
         self._default_model = default_model or "claude-opus-4-8"
         self._available_models_override = available_models

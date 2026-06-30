@@ -306,6 +306,61 @@ class TestTextMessageRouting:
         assert kwargs["markdown_text"] == "The current directory is C:/repo."
 
     @pytest.mark.asyncio
+    async def test_global_streaming_false_uses_non_streaming_chat(
+        self,
+        dp: Dispatcher,
+        mock_context_manager: AsyncMock,
+    ) -> None:
+        provider = MagicMock()
+        provider.chat_stream = MagicMock()
+        provider.chat = AsyncMock(return_value=AIResponse(content="Non-streamed reply", model="global-model"))
+
+        user = MagicMock(
+            preferred_provider=None,
+            preferred_model=None,
+            temperature="0.7",
+            tool_permission_mode="chat",
+        )
+        mock_context_manager.get_or_create_user = AsyncMock(return_value=user)
+
+        ai_router = MagicMock()
+        ai_router.get_provider = MagicMock(return_value=None)
+        ai_router.get_default_provider = MagicMock(return_value=provider)
+        ai_router.default_provider_name = "zhipu"
+        ai_router.default_model = "global-model"
+        ai_router.temperature = 0.2
+        ai_router.streaming = False
+        ai_router.max_output_tokens = 1234
+
+        @dp.message.middleware()
+        async def inject_deps(handler, event, data):
+            data["context_manager"] = mock_context_manager
+            data["ai_router"] = ai_router
+            data["orchestrator"] = MagicMock()
+            return await handler(event, data)
+
+        bot = AsyncMock()
+        message = _make_mock_message(text="Hello bot", chat_type="group")
+        update = _make_update(message)
+
+        mock_settings = MagicMock()
+        mock_settings.telegram_bot_token = "123:fake"
+
+        with (
+            patch("bot.handlers.messages.settings", mock_settings),
+            patch("bot.handlers.messages.send_rich_message", AsyncMock(return_value=True)) as mock_send_rich,
+        ):
+            await dp.feed_update(bot, update)
+
+        provider.chat_stream.assert_not_called()
+        provider.chat.assert_awaited_once()
+        _, chat_kwargs = provider.chat.await_args
+        assert chat_kwargs["model"] == "global-model"
+        assert chat_kwargs["temperature"] == 0.2
+        assert chat_kwargs["max_tokens"] == 1234
+        mock_send_rich.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_terminal_provider_error_does_not_retry_non_streaming(
         self,
         dp: Dispatcher,

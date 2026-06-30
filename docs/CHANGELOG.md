@@ -11,6 +11,7 @@ related: [PRODUCT_EXPERIENCE.md, RICH_MESSAGES.md, STARTUP.md]
 
 ## Unreleased
 
+- Fixed provider TOML runtime behavior so `.env` API keys are hydrated without overriding shell variables, missing default providers fail closed, provider `headers`/`query` reach SDK clients, and `[global]` request defaults are honored by normal chat.
 - Migrated provider configuration from JSON-based `custom_providers.json` to TOML-based `provider.toml`. The new system uses a transport registry pattern (`openai`/`anthropic`/`openai_compatible`) and moves all provider selection out of `.env` into the `[global]` section of `provider.toml`. See `docs/CUSTOM_PROVIDERS.md` for migration guide.
 - Fixed Telegram shell execution on Windows to run through PowerShell, so generated commands such as `Start-Process notepad` work as intended, and polished shell results into Rich Message summaries with folded stdout/stderr blocks.
 - Improved the normal-chat Telegodex tool prompt so browser/app launch requests such as opening Bilibili or Notepad are treated as shell tool intents instead of generic AI refusals, and ambiguous “run shell” requests no longer invent demo commands.

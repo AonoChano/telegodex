@@ -22,12 +22,18 @@ class OpenAIProvider(BaseAIProvider):
         base_url: str | None = None,
         default_model: str | None = None,
         available_models: list[str] | None = None,
+        headers: dict[str, str] | None = None,
+        query: dict[str, str] | None = None,
         **kwargs,
     ):
         super().__init__(api_key, **kwargs)
         client_kwargs: dict[str, Any] = {"api_key": api_key}
         if base_url:
             client_kwargs["base_url"] = base_url
+        if headers:
+            client_kwargs["default_headers"] = headers
+        if query:
+            client_kwargs["default_query"] = query
         self.client = AsyncOpenAI(**client_kwargs)
         self._default_model = default_model or "gpt-4o"  # GPT-5 未公开时使用 GPT-4
         self._available_models_override = available_models
@@ -127,7 +133,7 @@ class OpenAIProvider(BaseAIProvider):
             import asyncio
             # 检查是否已在运行的事件循环中
             try:
-                loop = asyncio.get_running_loop()
+                asyncio.get_running_loop()
                 logger.warning(f"{self.provider_name}: 跳过 API Key 验证（事件循环已运行）")
                 return True
             except RuntimeError:

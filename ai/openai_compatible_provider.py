@@ -1,4 +1,5 @@
 from collections.abc import AsyncIterator
+from typing import Any
 
 from loguru import logger
 from openai import AsyncOpenAI
@@ -19,6 +20,8 @@ class OpenAICompatibleProvider(BaseAIProvider):
         provider_name: str = "Custom",
         default_model: str = "gpt-3.5-turbo",
         available_models: list[str] | None = None,
+        headers: dict[str, str] | None = None,
+        query: dict[str, str] | None = None,
         **kwargs
     ):
         """
@@ -32,7 +35,12 @@ class OpenAICompatibleProvider(BaseAIProvider):
             available_models: 可用模型列表
         """
         super().__init__(api_key, **kwargs)
-        self.client = AsyncOpenAI(api_key=api_key, base_url=base_url)
+        client_kwargs: dict[str, Any] = {"api_key": api_key, "base_url": base_url}
+        if headers:
+            client_kwargs["default_headers"] = headers
+        if query:
+            client_kwargs["default_query"] = query
+        self.client = AsyncOpenAI(**client_kwargs)
         self._provider_name = provider_name
         self._default_model = default_model
         self._available_models = available_models or [default_model]
@@ -123,7 +131,7 @@ class OpenAICompatibleProvider(BaseAIProvider):
             import asyncio
             # 检查是否已在运行的事件循环中
             try:
-                loop = asyncio.get_running_loop()
+                asyncio.get_running_loop()
                 logger.warning(f"{self._provider_name}: 跳过 API Key 验证（事件循环已运行）")
                 return True
             except RuntimeError:

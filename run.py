@@ -79,6 +79,13 @@ def check_configuration() -> bool:
                 f"default_provider '{global_config.default_provider}' is not in "
                 f"available_providers {listed}"
             )
+        elif provider_configs:
+            from ai import AIRouter
+            from ai.router import unavailable_default_provider_error
+
+            router = AIRouter(provider_configs, global_config)
+            if error := unavailable_default_provider_error(router):
+                errors.append(error)
 
     logger.info(f"Preflight: database URL: {settings.database_url}")
 
