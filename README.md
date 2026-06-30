@@ -29,7 +29,7 @@ It is designed for three things:
 
 - **Remote control for Codex / CLI agents.** Bring terminal-grade AI workflows into Telegram so you can operate them from your phone.
 - **Multi-provider AI access.** Switch between OpenAI, Anthropic, Google, DeepSeek, Qwen, Kimi, GLM, and ERNIE with one interface.
-- **TOML provider registry.** Add, disable, or switch OpenAI-compatible endpoints through `provider.toml` without touching core code.
+- **TOML provider registry.** Add, disable, or switch OpenAI-compatible endpoints through `provider.toml`.
 
 This is not just a chat bot.  
 It is a control surface for AI work.
@@ -44,7 +44,6 @@ It is a control surface for AI work.
 - **Support local and self-hosted endpoints.** Ollama, vLLM, LiteLLM, Azure, LM Studio, and other OpenAI-compatible services.
 - **Gate local tool use from normal chat.** Chat can stay text-only, ask for inline confirmation, or run allowed shell tools with full access.
 - **Keep session state per user.** History, preferences, model selection, temperature, and rate limits.
-- **Stay operationally safe.** Sanitized input, allow-list admin gate, and no API keys in logs.
 
 ---
 
@@ -176,6 +175,7 @@ Python 3.11+ · aiogram 3.x · SQLAlchemy 2.x async · Pydantic Settings · Alem
 - [x] Rich Telegram rendering
 - [x] Context windowing and user preferences
 - [x] Codex bridge foundation
+- [ ] Hot reload model mechanism
 - [ ] Full Codex workbench UX
 - [ ] Claude Code bridge
 - [ ] Agent/task execution layer
@@ -187,20 +187,7 @@ Python 3.11+ · aiogram 3.x · SQLAlchemy 2.x async · Pydantic Settings · Alem
 
 ## Contributing
 
-PRs welcome. Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) before opening changes.
-
----
-
-## Security
-
-Report vulnerabilities privately to the maintainer.
-
-Enforced by the codebase:
-
-- no API keys in logs
-- sanitized input at every boundary
-- `ADMIN_USER_IDS` allow-list
-- per-user rate limits
+Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) before opening changes.
 
 ---
 

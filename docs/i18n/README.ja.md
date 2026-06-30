@@ -29,7 +29,7 @@ Telegodex は Telegram 上で動く AI ワークベンチです。
 
 - **Codex / CLI Agent のリモート操作。** ターミナルで行う AI 作業を Telegram に持ち込み、スマートフォンから操作できるようにします。
 - **複数 AI Provider への接続。** OpenAI、Anthropic、Google、DeepSeek、Qwen、Kimi、GLM、ERNIE を一つの UI で切り替えます。
-- **TOML Provider registry。** `provider.toml` で OpenAI-compatible endpoint を追加、無効化、切り替えできます。コアコードを変える必要はありません。
+- **TOML Provider registry。** `provider.toml` で OpenAI-compatible endpoint を追加、無効化、切り替えできます。
 
 Telegodex は単なるチャット Bot ではありません。  
 AI 作業のための操作面です。
@@ -44,7 +44,6 @@ AI 作業のための操作面です。
 - **ローカル / セルフホストの endpoint を使う。** Ollama、vLLM、LiteLLM、Azure、LM Studio、その他 OpenAI-compatible サービスに接続できます。
 - **通常チャットのローカルツール利用を制御する。** テキストのみ、インライン確認、または許可済み shell tool の直接実行を選べます。
 - **ユーザー単位の状態を保存する。** 履歴、設定、モデル選択、temperature、レート制限を保持します。
-- **基本的な安全境界を保つ。** 入力のサニタイズ、管理者 allow-list、API key をログに出さない設計を使います。
 
 ---
 
@@ -176,6 +175,7 @@ Python 3.11+ · aiogram 3.x · SQLAlchemy 2.x async · Pydantic Settings · Alem
 - [x] Rich Telegram rendering
 - [x] Context windowing and user preferences
 - [x] Codex bridge foundation
+- [ ] Hot reload model mechanism
 - [ ] 完全な Codex Workbench UX
 - [ ] Claude Code bridge
 - [ ] Agent/task execution layer
@@ -187,20 +187,7 @@ Python 3.11+ · aiogram 3.x · SQLAlchemy 2.x async · Pydantic Settings · Alem
 
 ## コントリビュート
 
-PR を歓迎します。変更前に [docs/ARCHITECTURE.md](../ARCHITECTURE.md) を読んでください。
-
----
-
-## セキュリティ
-
-脆弱性はメンテナーへ非公開で報告してください。
-
-コードベースで守ること：
-
-- API key をログに出さない
-- すべての境界で入力をサニタイズする
-- `ADMIN_USER_IDS` allow-list を使う
-- ユーザー単位でレート制限する
+変更前に [docs/ARCHITECTURE.md](../ARCHITECTURE.md) を読んでください。
 
 ---
 

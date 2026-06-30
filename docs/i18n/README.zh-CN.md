@@ -29,7 +29,7 @@ Telegodex 是一个基于 Telegram 的 AI 工作台。
 
 - **远程控制 Codex / CLI Agent。** 把终端级 AI 工作流带到 Telegram，让你可以在手机上操作。
 - **多服务商 AI 接入。** 用一个界面切换 OpenAI、Anthropic、Google、DeepSeek、Qwen、Kimi、GLM 和 ERNIE。
-- **TOML Provider 注册表。** 通过 `provider.toml` 接入、停用或切换 OpenAI-compatible endpoint，不需要改核心代码。
+- **TOML Provider 注册表。** 通过 `provider.toml` 接入、停用或切换 OpenAI-compatible endpoint。
 
 Telegodex 不是普通聊天 Bot。  
 它是 AI 工作的控制界面。
@@ -44,7 +44,6 @@ Telegodex 不是普通聊天 Bot。
 - **支持本地和自托管端点。** Ollama、vLLM、LiteLLM、Azure、LM Studio，以及其它 OpenAI-compatible 服务。
 - **控制普通聊天里的本地工具使用。** 可以保持仅对话、通过内联按钮确认，或允许已授权的 shell 工具直接运行。
 - **保存用户级会话状态。** 历史记录、偏好、模型选择、temperature 和限流配置。
-- **保持基础安全边界。** 输入清洗、管理员 allow-list，不把 API key 写入日志。
 
 ---
 
@@ -176,6 +175,7 @@ Python 3.11+ · aiogram 3.x · SQLAlchemy 2.x async · Pydantic Settings · Alem
 - [x] Telegram Rich rendering
 - [x] 上下文窗口和用户偏好
 - [x] Codex bridge 基础
+- [ ] 热重载模型机制
 - [ ] 完整 Codex Workbench UX
 - [ ] Claude Code bridge
 - [ ] Agent/task execution layer
@@ -187,20 +187,7 @@ Python 3.11+ · aiogram 3.x · SQLAlchemy 2.x async · Pydantic Settings · Alem
 
 ## 贡献
 
-欢迎 PR。提交前请阅读 [docs/ARCHITECTURE.md](../ARCHITECTURE.md)。
-
----
-
-## 安全
-
-请私下向维护者报告漏洞。
-
-代码库强制执行：
-
-- 不把 API key 写进日志
-- 所有边界做输入清洗
-- `ADMIN_USER_IDS` allow-list
-- 按用户限流
+提交前请阅读 [docs/ARCHITECTURE.md](../ARCHITECTURE.md)。
 
 ---
 
