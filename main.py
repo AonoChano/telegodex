@@ -83,18 +83,17 @@ class _TerminalStatusLine:
     def update(self, text: str) -> None:
         if not self.enabled:
             return
-        width = max(shutil.get_terminal_size((120, 20)).columns - 1, 40)
-        if len(text) > width:
-            text = text[: max(width - 1, 0)] + "…"
-        padding = " " * max(self._last_line_len - len(text), 0)
-        sys.stderr.write(f"\r{text}{padding}")
+        width = max(shutil.get_terminal_size((120, 20)).columns - 2, 40)
+        text = _fit_terminal_status_text(text, width)
+        sys.stderr.write("\r\033[2K")
+        sys.stderr.write(text)
         sys.stderr.flush()
         self._last_line_len = len(text)
 
     def clear(self) -> None:
         if not self.enabled or self._last_line_len <= 0:
             return
-        sys.stderr.write("\r" + " " * self._last_line_len + "\r")
+        sys.stderr.write("\r\033[2K")
         sys.stderr.flush()
         self._last_line_len = 0
 
@@ -116,7 +115,7 @@ class _AiogramPollingRetryCompactor:
 
         if "Failed to fetch updates" in message:
             self._last_error = _compact_aiogram_polling_error(message)
-            self._status_line.update(f"Telegram polling retry: {self._last_error}")
+            self._status_line.update(_format_aiogram_polling_status(self._last_error))
             return True
 
         sleep = _parse_aiogram_retry_sleep(message)
@@ -124,18 +123,47 @@ class _AiogramPollingRetryCompactor:
             seconds, tryings, bot_id = sleep
             error = self._last_error or "waiting for Telegram API"
             self._status_line.update(
-                f"Telegram polling retry: {error} | try={tryings}, next={seconds:.2f}s, bot={bot_id}"
+                _format_aiogram_polling_status(error, tryings, seconds, bot_id)
             )
             return True
 
         return False
 
 
+def _fit_terminal_status_text(text: str, width: int) -> str:
+    if len(text) <= width:
+        return text
+    return text[: max(width - 3, 0)] + "..."
+
+
 def _compact_aiogram_polling_error(message: str) -> str:
     text = message.replace("Failed to fetch updates - ", "", 1)
     text = text.replace("TelegramNetworkError: HTTP Client says - ", "", 1)
     text = text.replace("ClientConnectorError: ", "", 1)
-    return " ".join(text.split())
+    return _classify_aiogram_polling_error(" ".join(text.split()))
+
+
+def _classify_aiogram_polling_error(text: str) -> str:
+    lowered = text.lower()
+    if "cannot connect to host" in lowered:
+        return "Telegram API unreachable"
+    if "clientoserror" in lowered or "winerror 1236" in lowered:
+        return "network connection aborted"
+    if "timeout" in lowered or "timed out" in lowered:
+        return "Telegram API timeout"
+    return "Telegram network error"
+
+
+def _format_aiogram_polling_status(
+    error: str,
+    tryings: int | None = None,
+    seconds: float | None = None,
+    bot_id: str | None = None,
+) -> str:
+    if tryings is None or seconds is None or bot_id is None:
+        return f"Telegram polling: {error}"
+    return f"Telegram polling: {error} | attempt={tryings}, retry in {seconds:.2f}s"
+
 
 
 def _parse_aiogram_retry_sleep(message: str) -> tuple[float, int, str] | None:
