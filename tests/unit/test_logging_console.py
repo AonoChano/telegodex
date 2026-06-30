@@ -4,12 +4,27 @@ import io
 import os
 
 from main import (
+    _AiogramPollingRetryCompactor,
     _TerminalStatusLine,
     _compact_aiogram_polling_error,
     _fit_terminal_status_text,
     _format_aiogram_polling_status,
     _parse_aiogram_retry_sleep,
 )
+
+
+class _FakeStatusLine:
+    enabled = True
+
+    def __init__(self) -> None:
+        self.updates: list[str] = []
+        self.clears = 0
+
+    def update(self, text: str) -> None:
+        self.updates.append(text)
+
+    def clear(self) -> None:
+        self.clears += 1
 
 
 def test_compact_aiogram_polling_error_returns_short_category() -> None:
@@ -30,11 +45,10 @@ def test_compact_aiogram_polling_error_classifies_aborted_windows_connection() -
     assert _compact_aiogram_polling_error(message) == "network connection aborted"
 
 
-def test_format_aiogram_polling_status_stays_short() -> None:
+def test_format_aiogram_polling_status_uses_spinner_and_attempt_count() -> None:
     assert _format_aiogram_polling_status(
-        "Telegram API unreachable", 2, 0.638185, "8944500007"
-    ) == "Telegram polling: Telegram API unreachable | attempt=2, retry in 0.64s"
-
+        "Telegram API unreachable", 3, 0.638185, "/"
+    ) == "Telegram polling / Telegram API unreachable (3/∞), retry in 0.6s"
 
 
 def test_fit_terminal_status_text_uses_ascii_ellipsis() -> None:
@@ -51,17 +65,34 @@ def test_terminal_status_line_clears_before_each_update(monkeypatch) -> None:
     )
 
     status = _TerminalStatusLine()
-    status.update(
-        "Telegram polling: network connection aborted | attempt=0, retry in 1.23s"
-    )
-    status.update(
-        "Telegram polling: Telegram API unreachable | attempt=1, retry in 2.34s"
-    )
+    status.update("Telegram polling | network connection aborted (1/∞), retry in 1.2s")
+    status.update("Telegram polling / Telegram API unreachable (2/∞), retry in 2.3s")
 
     output = stream.getvalue()
     assert output.count("\033[2K") == 2
     assert "WinError" not in output
-    assert "network connection aborted | attempt=..." in output
+    assert "network connection aborted" in output
+
+
+def test_polling_retry_compactor_clears_when_retry_window_expires(monkeypatch) -> None:
+    status = _FakeStatusLine()
+    compactor = _AiogramPollingRetryCompactor(status)  # type: ignore[arg-type]
+    now = 100.0
+    monkeypatch.setattr("main.time.monotonic", lambda: now)
+
+    compactor._last_error = "Telegram API unreachable"
+    compactor._attempt = 3
+    compactor._retry_deadline = 101.0
+    compactor._active = True
+
+    assert compactor._render_status_once() is True
+    assert status.updates == [
+        "Telegram polling | Telegram API unreachable (3/∞), retry in 1.0s"
+    ]
+
+    now = 101.1
+    assert compactor._render_status_once() is False
+    assert status.clears == 1
 
 
 def test_parse_aiogram_retry_sleep_message() -> None:

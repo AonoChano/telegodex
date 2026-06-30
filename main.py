@@ -4,6 +4,8 @@ import os
 import re
 import shutil
 import sys
+import threading
+import time
 from pathlib import Path
 
 from aiogram import Bot, Dispatcher
@@ -56,7 +58,6 @@ class _InterceptHandler(logging.Handler):
             depth=depth, exception=record.exc_info
         ).log(level, record.getMessage())
 
-
 def _strip_exception_block(text: str) -> str:
     """loguru 在 format 之后总会把 traceback 块自动追加到行尾。
 
@@ -75,6 +76,7 @@ class _TerminalStatusLine:
 
     def __init__(self) -> None:
         self._last_line_len = 0
+        self._lock = threading.Lock()
 
     @property
     def enabled(self) -> bool:
@@ -85,25 +87,39 @@ class _TerminalStatusLine:
             return
         width = max(shutil.get_terminal_size((120, 20)).columns - 2, 40)
         text = _fit_terminal_status_text(text, width)
-        sys.stderr.write("\r\033[2K")
-        sys.stderr.write(text)
-        sys.stderr.flush()
-        self._last_line_len = len(text)
+        with self._lock:
+            sys.stderr.write("\r\033[2K")
+            sys.stderr.write(text)
+            sys.stderr.flush()
+            self._last_line_len = len(text)
 
     def clear(self) -> None:
-        if not self.enabled or self._last_line_len <= 0:
+        if not self.enabled:
             return
-        sys.stderr.write("\r\033[2K")
-        sys.stderr.flush()
-        self._last_line_len = 0
+        with self._lock:
+            if self._last_line_len <= 0:
+                return
+            sys.stderr.write("\r\033[2K")
+            sys.stderr.flush()
+            self._last_line_len = 0
 
 
 class _AiogramPollingRetryCompactor:
-    """Render repeated aiogram polling network retries as one terminal line."""
+    """Render aiogram polling retries as one live terminal status."""
+
+    _SPINNER = "|/-\\"
+    _REFRESH_SECONDS = 0.2
+    _PENDING_RETRY_SECONDS = 2.0
 
     def __init__(self, status_line: _TerminalStatusLine) -> None:
         self._status_line = status_line
+        self._lock = threading.Lock()
         self._last_error = ""
+        self._attempt = 0
+        self._retry_deadline = 0.0
+        self._active = False
+        self._spinner_index = 0
+        self._worker: threading.Thread | None = None
 
     @property
     def enabled(self) -> bool:
@@ -113,21 +129,66 @@ class _AiogramPollingRetryCompactor:
         if not self.enabled:
             return False
 
+        now = time.monotonic()
         if "Failed to fetch updates" in message:
-            self._last_error = _compact_aiogram_polling_error(message)
-            self._status_line.update(_format_aiogram_polling_status(self._last_error))
+            error = _compact_aiogram_polling_error(message)
+            self._activate(error, self._attempt, now + self._PENDING_RETRY_SECONDS)
             return True
 
         sleep = _parse_aiogram_retry_sleep(message)
         if sleep is not None:
-            seconds, tryings, bot_id = sleep
+            seconds, tryings, _bot_id = sleep
             error = self._last_error or "waiting for Telegram API"
-            self._status_line.update(
-                _format_aiogram_polling_status(error, tryings, seconds, bot_id)
-            )
+            self._activate(error, tryings + 1, now + seconds)
             return True
 
         return False
+
+    def stop(self) -> None:
+        with self._lock:
+            self._active = False
+        self._status_line.clear()
+
+    def _activate(self, error: str, attempt: int, retry_deadline: float) -> None:
+        with self._lock:
+            self._last_error = error
+            self._attempt = max(attempt, 1)
+            self._retry_deadline = retry_deadline
+            self._active = True
+            should_start = self._worker is None or not self._worker.is_alive()
+            if should_start:
+                self._worker = threading.Thread(
+                    target=self._run_status_loop,
+                    name="telegram-polling-status",
+                    daemon=True,
+                )
+                self._worker.start()
+
+    def _run_status_loop(self) -> None:
+        while True:
+            if not self._render_status_once():
+                return
+            time.sleep(self._REFRESH_SECONDS)
+
+    def _render_status_once(self) -> bool:
+        with self._lock:
+            if not self._active:
+                self._status_line.clear()
+                return False
+            remaining = self._retry_deadline - time.monotonic()
+            if remaining <= 0:
+                self._active = False
+                self._status_line.clear()
+                return False
+            spinner = self._SPINNER[self._spinner_index % len(self._SPINNER)]
+            self._spinner_index += 1
+            self._status_line.update(
+                _format_aiogram_polling_status(
+                    self._last_error, self._attempt, remaining, spinner
+                )
+            )
+            return True
+
 
 
 def _fit_terminal_status_text(text: str, width: int) -> str:
@@ -136,11 +197,13 @@ def _fit_terminal_status_text(text: str, width: int) -> str:
     return text[: max(width - 3, 0)] + "..."
 
 
+
 def _compact_aiogram_polling_error(message: str) -> str:
     text = message.replace("Failed to fetch updates - ", "", 1)
     text = text.replace("TelegramNetworkError: HTTP Client says - ", "", 1)
     text = text.replace("ClientConnectorError: ", "", 1)
     return _classify_aiogram_polling_error(" ".join(text.split()))
+
 
 
 def _classify_aiogram_polling_error(text: str) -> str:
@@ -154,17 +217,16 @@ def _classify_aiogram_polling_error(text: str) -> str:
     return "Telegram network error"
 
 
+
 def _format_aiogram_polling_status(
     error: str,
-    tryings: int | None = None,
-    seconds: float | None = None,
-    bot_id: str | None = None,
+    attempt: int | None = None,
+    remaining: float | None = None,
+    spinner: str = "/",
 ) -> str:
-    if tryings is None or seconds is None or bot_id is None:
-        return f"Telegram polling: {error}"
-    return f"Telegram polling: {error} | attempt={tryings}, retry in {seconds:.2f}s"
-
-
+    if attempt is None or remaining is None:
+        return f"Telegram polling {spinner} {error}"
+    return f"Telegram polling {spinner} {error} ({attempt}/∞), retry in {remaining:.1f}s"
 
 def _parse_aiogram_retry_sleep(message: str) -> tuple[float, int, str] | None:
     match = re.search(
@@ -203,9 +265,8 @@ def _terminal_sink(message) -> None:
     """终端 sink：单行 + 砍掉 traceback 块。"""
     if message.record["extra"].get("_terminal_suppress"):
         return
-    _terminal_status_line.clear()
+    _polling_retry_compactor.stop()
     sys.stderr.write(_strip_exception_block(str(message)))
-
 
 def _setup_logging() -> None:
     """双 sink：终端精简 / 文件详尽。
@@ -269,10 +330,8 @@ if os.name == "nt":
 else:
     import fcntl
 
-
 def _bot_id_from_token(bot_token: str) -> str:
     return bot_token.split(":", 1)[0] if bot_token else "unknown"
-
 
 def _acquire_polling_lock(bot_token: str):
     """Prevent duplicate local polling processes for the same bot token."""
@@ -300,7 +359,6 @@ def _acquire_polling_lock(bot_token: str):
     lock_file.write(f"pid={os.getpid()}\n".encode())
     lock_file.flush()
     return lock_file
-
 
 def _release_polling_lock(lock_file) -> None:
     if lock_file is None:
