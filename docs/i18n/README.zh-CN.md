@@ -5,7 +5,7 @@
 # Telegodex
 
 **一个 Telegram Workbench 项目。通过 Telegram 控制你的 Codex。**  
-支持多 AI 服务商、自定义 Provider 系统，以及 Telegram 原生富文本输出。
+支持多 AI 服务商、TOML Provider 注册表、Codex bridge 基础，以及 Telegram 原生富文本输出。
 
 <p>
   <a href="../../LICENSE"><img src="https://img.shields.io/badge/License-MIT-22c55e.svg" alt="License"></a>
@@ -29,7 +29,7 @@ Telegodex 是一个基于 Telegram 的 AI 工作台。
 
 - **远程控制 Codex / CLI Agent。** 把终端级 AI 工作流带到 Telegram，让你可以在手机上操作。
 - **多服务商 AI 接入。** 用一个界面切换 OpenAI、Anthropic、Google、DeepSeek、Qwen、Kimi、GLM 和 ERNIE。
-- **自定义 Provider 注入。** 通过 JSON 配置接入任何 OpenAI-compatible endpoint，不需要改核心代码。
+- **TOML Provider 注册表。** 通过 `provider.toml` 接入、停用或切换 OpenAI-compatible endpoint，不需要改核心代码。
 
 Telegodex 不是普通聊天 Bot。  
 它是 AI 工作的控制界面。
@@ -42,6 +42,7 @@ Telegodex 不是普通聊天 Bot。
 - **用 Telegram 原生方式渲染 AI 输出。** 代码块、表格、列表、引用、可折叠区域、公式和结构化摘要。
 - **统一多服务商体验。** 同一套 handler，同一套 UX，不同后端。
 - **支持本地和自托管端点。** Ollama、vLLM、LiteLLM、Azure、LM Studio，以及其它 OpenAI-compatible 服务。
+- **控制普通聊天里的本地工具使用。** 可以保持仅对话、通过内联按钮确认，或允许已授权的 shell 工具直接运行。
 - **保存用户级会话状态。** 历史记录、偏好、模型选择、temperature 和限流配置。
 - **保持基础安全边界。** 输入清洗、管理员 allow-list，不把 API key 写入日志。
 
@@ -53,15 +54,15 @@ Telegodex 不是普通聊天 Bot。
 
 ### Stage 1
 - 多服务商聊天基础
-- 自定义 Provider 系统
+- TOML Provider 注册表
 - Telegram 原生渲染
 - 存储、偏好和安全
 
 ### Stage 2
-- Codex CLI bridge
-- 远程执行 / 命令转发
+- Codex CLI bridge 基础
 - 会话同步和输出流式传输
-- 操作确认和工具调用可见性
+- 内联审批提示
+- 工具调用可见性和本地 shell 权限控制
 
 ### Stage 3
 - Claude Code bridge
@@ -78,11 +79,14 @@ git clone https://github.com/CYcha/Telegodex.git
 cd Telegodex
 pip install -r requirements.txt
 cp .env.example .env
+cp provider.toml.example provider.toml
 ```
 
-在 `.env` 中设置 `TELEGRAM_BOT_TOKEN` 和至少一个服务商 key，然后运行：
+在 `.env` 中设置 `TELEGRAM_BOT_TOKEN` 和 `provider.toml` 引用的服务商 key。
+然后在 `[global].available_providers` 中选择启用的 Provider，并运行：
 
 ```bash
+python run.py --check-config
 python run.py
 ```
 
@@ -94,17 +98,20 @@ python run.py
 
 ## 添加自定义 Provider
 
-```json
-{
-  "ollama": {
-    "type": "openai_compatible",
-    "base_url": "http://localhost:11434/v1",
-    "models": ["llama3.2"]
-  }
-}
+```toml
+[global]
+default_provider = "ollama"
+available_providers = ["ollama"]
+
+[providers.ollama]
+transport = "openai_compatible"
+api_key_literal = "ollama"
+base_url = "http://localhost:11434/v1"
+default_model = "llama3.2"
+models = ["llama3.2"]
 ```
 
-把这段加入 `custom_providers.json`，重启后就可以使用该 Provider。
+把这段加入 `provider.toml`，运行 `python run.py --check-config`，重启后就可以使用该 Provider。
 
 参考：[docs/CUSTOM_PROVIDERS.md](../CUSTOM_PROVIDERS.md)
 
@@ -136,10 +143,10 @@ handler 不关心具体后端。
 
 | 区域 | Provider | 默认模型 |
 |---|---|---|
-| International | OpenAI, Anthropic, Google | `gpt-4o`, `claude-sonnet-4.6`, `gemini-2.0-flash` |
-| China | DeepSeek, Qwen, Kimi, GLM, ERNIE | `deepseek-v4-pro`, `qwen-max`, `kimi-k2-7-code`, `glm-4-6`, `ernie-5.0` |
+| International | OpenAI, Anthropic, Google | 在 `provider.toml` 中配置 |
+| China | DeepSeek, Qwen, Kimi, GLM, ERNIE | 在 `provider.toml` 中配置 |
 
-任何 OpenAI-compatible endpoint 都可以通过 `custom_providers.json` 接入。
+任何 OpenAI-compatible endpoint 都可以通过 `provider.toml` 接入。
 
 完整目录见：[docs/MODELS.md](../MODELS.md)
 

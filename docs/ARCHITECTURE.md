@@ -1,7 +1,7 @@
 ---
 title: Architecture
 category: architecture
-last_updated: 2026-06-26
+last_updated: 2026-06-30
 relevance: high
 summary: Runtime layers, provider contract, Telegram rendering, and Codex bridge boundaries
 related: [PRODUCT_EXPERIENCE.md, CUSTOM_PROVIDERS.md, RICH_MESSAGES.md, STARTUP.md]
@@ -37,7 +37,7 @@ get_available_models() -> list[str]
 validate_api_key() -> bool
 ```
 
-Handlers depend on that contract, not on individual SDKs. A new built-in provider belongs in `ai/` and gets registered in `AIRouter.BUILTIN_PROVIDERS`. A user-defined provider should use `custom_providers.json` when the endpoint speaks an OpenAI-compatible chat-completions API.
+Handlers depend on that contract, not on individual SDKs. Provider runtime configuration lives in `provider.toml`: native OpenAI and Anthropic SDK transports use reserved provider IDs, while user-defined OpenAI-compatible endpoints use their own `[providers.<id>]` blocks and are activated through `[global].available_providers`.
 
 ## Telegram Layer
 

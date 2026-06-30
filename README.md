@@ -5,7 +5,7 @@
 # Telegodex
 
 **A Telegram Workbench Project. Control Your Codex on Telegram.**  
-Multi-AI provider support, custom provider system, and rich Telegram-native output.
+Multi-AI provider support, TOML provider registry, Codex bridge foundation, and rich Telegram-native output.
 
 <p>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-22c55e.svg" alt="License"></a>
@@ -29,7 +29,7 @@ It is designed for three things:
 
 - **Remote control for Codex / CLI agents.** Bring terminal-grade AI workflows into Telegram so you can operate them from your phone.
 - **Multi-provider AI access.** Switch between OpenAI, Anthropic, Google, DeepSeek, Qwen, Kimi, GLM, and ERNIE with one interface.
-- **Custom provider injection.** Add any OpenAI-compatible endpoint through JSON config without touching core code.
+- **TOML provider registry.** Add, disable, or switch OpenAI-compatible endpoints through `provider.toml` without touching core code.
 
 This is not just a chat bot.  
 It is a control surface for AI work.
@@ -42,6 +42,7 @@ It is a control surface for AI work.
 - **Render AI output in a Telegram-native way.** Code blocks, tables, lists, quotes, expandable sections, formulas, and structured summaries.
 - **Keep one interface across providers.** Same handler, same UX, different backends.
 - **Support local and self-hosted endpoints.** Ollama, vLLM, LiteLLM, Azure, LM Studio, and other OpenAI-compatible services.
+- **Gate local tool use from normal chat.** Chat can stay text-only, ask for inline confirmation, or run allowed shell tools with full access.
 - **Keep session state per user.** History, preferences, model selection, temperature, and rate limits.
 - **Stay operationally safe.** Sanitized input, allow-list admin gate, and no API keys in logs.
 
@@ -53,15 +54,15 @@ The project is being shaped from a generic AI bot into a real Telegram workbench
 
 ### Stage 1
 - Multi-provider chat foundation
-- Custom provider system
+- TOML provider registry
 - Telegram-native rendering
 - Storage, preferences, and security
 
 ### Stage 2
-- Codex CLI bridge
-- Remote execution / command relay
+- Codex CLI bridge foundation
 - Session sync and output streaming
-- Action confirmation and tool-call visibility
+- Inline approval prompts
+- Tool-call visibility and local shell gating
 
 ### Stage 3
 - Claude Code bridge
@@ -78,11 +79,14 @@ git clone https://github.com/CYcha/Telegodex.git
 cd Telegodex
 pip install -r requirements.txt
 cp .env.example .env
+cp provider.toml.example provider.toml
 ```
 
-Set `TELEGRAM_BOT_TOKEN` and at least one provider key in `.env`, then run:
+Set `TELEGRAM_BOT_TOKEN` and the provider keys referenced by `provider.toml` in `.env`.
+Then choose active providers in `[global].available_providers` and run:
 
 ```bash
+python run.py --check-config
 python run.py
 ```
 
@@ -94,17 +98,20 @@ Full walkthrough: [docs/QUICKSTART.md](docs/QUICKSTART.md)
 
 ## Add a custom provider
 
-```json
-{
-  "ollama": {
-    "type": "openai_compatible",
-    "base_url": "http://localhost:11434/v1",
-    "models": ["llama3.2"]
-  }
-}
+```toml
+[global]
+default_provider = "ollama"
+available_providers = ["ollama"]
+
+[providers.ollama]
+transport = "openai_compatible"
+api_key_literal = "ollama"
+base_url = "http://localhost:11434/v1"
+default_model = "llama3.2"
+models = ["llama3.2"]
 ```
 
-Add the block to `custom_providers.json`, restart, and the provider becomes available.
+Add the block to `provider.toml`, run `python run.py --check-config`, restart, and the provider becomes available.
 
 Reference: [docs/CUSTOM_PROVIDERS.md](docs/CUSTOM_PROVIDERS.md)
 
@@ -136,10 +143,10 @@ The handlers stay unchanged.
 
 | Region | Provider | Default models |
 |---|---|---|
-| International | OpenAI, Anthropic, Google | `gpt-4o`, `claude-sonnet-4.6`, `gemini-2.0-flash` |
-| China | DeepSeek, Qwen, Kimi, GLM, ERNIE | `deepseek-v4-pro`, `qwen-max`, `kimi-k2-7-code`, `glm-4-6`, `ernie-5.0` |
+| International | OpenAI, Anthropic, Google | configured in `provider.toml` |
+| China | DeepSeek, Qwen, Kimi, GLM, ERNIE | configured in `provider.toml` |
 
-Any OpenAI-compatible endpoint can be added through `custom_providers.json`.
+Any OpenAI-compatible endpoint can be added through `provider.toml`.
 
 Full catalog: [docs/MODELS.md](docs/MODELS.md)
 

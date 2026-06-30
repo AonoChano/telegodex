@@ -1,7 +1,7 @@
 ---
 title: Anthropic API Compatibility
 category: reference
-last_updated: 2026-06-16
+last_updated: 2026-06-30
 relevance: medium
 summary: DeepSeek and other providers supporting Anthropic-compatible API format
 related: [CUSTOM_PROVIDERS.md, MODELS.md]
@@ -45,18 +45,19 @@ DEEPSEEK_API_KEY=sk-...
 
 ### 方式 2：自定义 Provider（Anthropic 格式）
 
-如果需要使用 Anthropic 格式（例如在其他工具中已配置为 Anthropic 格式），创建 `custom_providers.json`：
+如果需要使用 Anthropic 格式（例如在其他工具中已配置为 Anthropic 格式），在 `provider.toml` 中添加一个 Anthropic transport Provider：
 
-```json
-{
-  "deepseek_anthropic": {
-    "type": "openai_compatible",
-    "api_key": "sk-...",
-    "base_url": "https://api.deepseek.com/anthropic",
-    "models": ["deepseek-v4-pro", "deepseek-v4-flash"],
-    "default_model": "deepseek-v4-pro"
-  }
-}
+```toml
+[global]
+default_provider = "deepseek_anthropic"
+available_providers = ["deepseek_anthropic"]
+
+[providers.deepseek_anthropic]
+transport = "anthropic"
+api_key_env = "DEEPSEEK_API_KEY"
+base_url = "https://api.deepseek.com/anthropic"
+default_model = "deepseek-v4-pro"
+models = ["deepseek-v4-pro", "deepseek-v4-flash"]
 ```
 
 **说明**：
@@ -80,17 +81,18 @@ DEEPSEEK_API_KEY=sk-...
 
 **Telegodex 中对应配置**：
 
-创建 `custom_providers.json`：
-```json
-{
-  "deepseek_from_claude_code": {
-    "type": "openai_compatible",
-    "api_key": "sk-...",
-    "base_url": "https://api.deepseek.com/anthropic",
-    "models": ["deepseek-v4-pro"],
-    "default_model": "deepseek-v4-pro"
-  }
-}
+在 `provider.toml` 中添加：
+```toml
+[global]
+default_provider = "deepseek_from_claude_code"
+available_providers = ["deepseek_from_claude_code"]
+
+[providers.deepseek_from_claude_code]
+transport = "anthropic"
+api_key_env = "DEEPSEEK_API_KEY"
+base_url = "https://api.deepseek.com/anthropic"
+default_model = "deepseek-v4-pro"
+models = ["deepseek-v4-pro"]
 ```
 
 两者可共享同一个 API Key。
@@ -102,7 +104,7 @@ DEEPSEEK_API_KEY=sk-...
 随着 Claude 生态扩展，更多服务商可能提供 Anthropic 兼容接口：
 
 1. **检查官方文档**：搜索 "Anthropic API" 或 "Claude API compatibility"
-2. **测试兼容性**：使用自定义 Provider 配置测试
+2. **测试兼容性**：使用 `provider.toml` Provider 配置测试
 3. **提交 Issue**：如发现其他服务商支持，欢迎反馈
 
 ---

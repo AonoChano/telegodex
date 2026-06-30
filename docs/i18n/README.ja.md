@@ -5,7 +5,7 @@
 # Telegodex
 
 **Telegram Workbench Project。Telegram から Codex を操作する。**  
-複数 AI Provider、自作 Provider 設定、Telegram ネイティブのリッチ出力を備えています。
+複数 AI Provider、TOML Provider registry、Codex bridge foundation、Telegram ネイティブのリッチ出力を備えています。
 
 <p>
   <a href="../../LICENSE"><img src="https://img.shields.io/badge/License-MIT-22c55e.svg" alt="License"></a>
@@ -29,7 +29,7 @@ Telegodex は Telegram 上で動く AI ワークベンチです。
 
 - **Codex / CLI Agent のリモート操作。** ターミナルで行う AI 作業を Telegram に持ち込み、スマートフォンから操作できるようにします。
 - **複数 AI Provider への接続。** OpenAI、Anthropic、Google、DeepSeek、Qwen、Kimi、GLM、ERNIE を一つの UI で切り替えます。
-- **Custom Provider の注入。** OpenAI-compatible endpoint を JSON 設定だけで追加できます。コアコードを変える必要はありません。
+- **TOML Provider registry。** `provider.toml` で OpenAI-compatible endpoint を追加、無効化、切り替えできます。コアコードを変える必要はありません。
 
 Telegodex は単なるチャット Bot ではありません。  
 AI 作業のための操作面です。
@@ -42,6 +42,7 @@ AI 作業のための操作面です。
 - **AI 出力を Telegram ネイティブに表示する。** コードブロック、テーブル、リスト、引用、折りたたみ領域、数式、構造化サマリーを扱います。
 - **Provider をまたいで同じ体験を保つ。** handler と UX は同じまま、バックエンドだけを差し替えます。
 - **ローカル / セルフホストの endpoint を使う。** Ollama、vLLM、LiteLLM、Azure、LM Studio、その他 OpenAI-compatible サービスに接続できます。
+- **通常チャットのローカルツール利用を制御する。** テキストのみ、インライン確認、または許可済み shell tool の直接実行を選べます。
 - **ユーザー単位の状態を保存する。** 履歴、設定、モデル選択、temperature、レート制限を保持します。
 - **基本的な安全境界を保つ。** 入力のサニタイズ、管理者 allow-list、API key をログに出さない設計を使います。
 
@@ -53,15 +54,15 @@ AI 作業のための操作面です。
 
 ### Stage 1
 - 複数 Provider のチャット基盤
-- Custom Provider システム
+- TOML Provider registry
 - Telegram ネイティブ表示
 - ストレージ、ユーザー設定、セキュリティ
 
 ### Stage 2
-- Codex CLI bridge
-- リモート実行 / コマンド中継
+- Codex CLI bridge foundation
 - セッション同期と出力ストリーミング
-- 操作確認とツール呼び出しの可視化
+- インライン承認プロンプト
+- ツール呼び出しの可視化とローカル shell 権限制御
 
 ### Stage 3
 - Claude Code bridge
@@ -78,11 +79,14 @@ git clone https://github.com/CYcha/Telegodex.git
 cd Telegodex
 pip install -r requirements.txt
 cp .env.example .env
+cp provider.toml.example provider.toml
 ```
 
-`.env` に `TELEGRAM_BOT_TOKEN` と少なくとも一つの Provider key を設定し、起動します。
+`.env` に `TELEGRAM_BOT_TOKEN` と `provider.toml` が参照する Provider key を設定します。
+次に `[global].available_providers` で有効な Provider を選び、起動します。
 
 ```bash
+python run.py --check-config
 python run.py
 ```
 
@@ -94,17 +98,20 @@ Telegram で Bot に `/start` を送ります。
 
 ## Custom Provider を追加する
 
-```json
-{
-  "ollama": {
-    "type": "openai_compatible",
-    "base_url": "http://localhost:11434/v1",
-    "models": ["llama3.2"]
-  }
-}
+```toml
+[global]
+default_provider = "ollama"
+available_providers = ["ollama"]
+
+[providers.ollama]
+transport = "openai_compatible"
+api_key_literal = "ollama"
+base_url = "http://localhost:11434/v1"
+default_model = "llama3.2"
+models = ["llama3.2"]
 ```
 
-このブロックを `custom_providers.json` に追加して再起動すると、Provider が使えるようになります。
+このブロックを `provider.toml` に追加し、`python run.py --check-config` を実行してから再起動すると、Provider が使えるようになります。
 
 参照：[docs/CUSTOM_PROVIDERS.md](../CUSTOM_PROVIDERS.md)
 
@@ -136,10 +143,10 @@ handler は具体的なバックエンドを知りません。
 
 | Region | Provider | Default models |
 |---|---|---|
-| International | OpenAI, Anthropic, Google | `gpt-4o`, `claude-sonnet-4.6`, `gemini-2.0-flash` |
-| China | DeepSeek, Qwen, Kimi, GLM, ERNIE | `deepseek-v4-pro`, `qwen-max`, `kimi-k2-7-code`, `glm-4-6`, `ernie-5.0` |
+| International | OpenAI, Anthropic, Google | `provider.toml` で設定 |
+| China | DeepSeek, Qwen, Kimi, GLM, ERNIE | `provider.toml` で設定 |
 
-OpenAI-compatible endpoint は `custom_providers.json` から追加できます。
+OpenAI-compatible endpoint は `provider.toml` から追加できます。
 
 一覧：[docs/MODELS.md](../MODELS.md)
 

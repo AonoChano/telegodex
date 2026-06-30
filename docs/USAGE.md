@@ -62,9 +62,9 @@ On Windows, Telegodex runs shell commands through PowerShell. Command results ar
 
 ## Provider Selection
 
-Configure built-in provider keys in `.env`. Telegodex loads every configured provider on startup and routes requests through `AIRouter`.
+Telegodex reads provider routing from `provider.toml`. Configure API keys in `.env`, list active provider IDs in `[global].available_providers`, and set `[global].default_provider` to the default provider for normal chat. `python run.py --check-config` validates the TOML structure and fails closed if the configured default provider cannot be instantiated.
 
-Use `custom_providers.json` for OpenAI-compatible endpoints such as Ollama, LiteLLM, vLLM, LM Studio, and Azure OpenAI. See [CUSTOM_PROVIDERS.md](CUSTOM_PROVIDERS.md).
+Use `provider.toml` for OpenAI-compatible endpoints such as Ollama, LiteLLM, vLLM, LM Studio, and Azure OpenAI. See [CUSTOM_PROVIDERS.md](CUSTOM_PROVIDERS.md).
 
 ## Rich Telegram Output
 
@@ -136,7 +136,7 @@ Codex topic ownership is strict. Active Codex-bound topics route directly to Cod
 
 Telegram allows one active polling process per bot token. Run one Telegodex process per token. See [STARTUP.md](STARTUP.md) for the local lock and conflict behavior.
 
-Keep `.env`, `custom_providers.json`, database files, and logs out of commits. `.env.example` and `custom_providers.example.json` are the safe templates.
+Keep `.env`, local `provider.toml`, database files, and logs out of commits. `.env.example` and `provider.toml.example` are the safe templates.
 
 ## Troubleshooting
 
