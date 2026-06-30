@@ -11,6 +11,7 @@ related: [PRODUCT_EXPERIENCE.md, RICH_MESSAGES.md, STARTUP.md]
 
 ## Unreleased
 
+- Compacted repeated aiogram polling network retries into an in-place terminal status line while preserving full file logs.
 - Removed deprecated vendor-specific AI provider modules now superseded by the TOML transport registry, and added a chat/thread conversation index for existing and new databases.
 - Updated public README, Quickstart, Usage, Architecture, and localized README docs to describe the `provider.toml` registry instead of the removed JSON custom-provider flow.
 - Fixed provider TOML runtime behavior so `.env` API keys are hydrated without overriding shell variables, missing default providers fail closed, provider `headers`/`query` reach SDK clients, and `[global]` request defaults are honored by normal chat.

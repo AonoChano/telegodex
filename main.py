@@ -1,6 +1,8 @@
 import asyncio
 import logging
 import os
+import re
+import shutil
 import sys
 from pathlib import Path
 
@@ -45,6 +47,9 @@ class _InterceptHandler(logging.Handler):
             frame = frame.f_back
             depth += 1
 
+        if _handle_aiogram_polling_retry(record, level, depth):
+            return
+
         # 用 patch 把 {name} 字段覆盖为 stdlib logger 名（如 aiogram.dispatcher）
         # 否则 loguru 默认用调用模块名（会显示 __main__ / main.py 等）
         logger.patch(lambda r: r.update(name=record.name)).opt(
@@ -65,8 +70,112 @@ def _strip_exception_block(text: str) -> str:
     return text[:idx].rstrip() + "\n"
 
 
+class _TerminalStatusLine:
+    """Single-line terminal status that can be replaced in place."""
+
+    def __init__(self) -> None:
+        self._last_line_len = 0
+
+    @property
+    def enabled(self) -> bool:
+        return sys.stderr.isatty()
+
+    def update(self, text: str) -> None:
+        if not self.enabled:
+            return
+        width = max(shutil.get_terminal_size((120, 20)).columns - 1, 40)
+        if len(text) > width:
+            text = text[: max(width - 1, 0)] + "…"
+        padding = " " * max(self._last_line_len - len(text), 0)
+        sys.stderr.write(f"\r{text}{padding}")
+        sys.stderr.flush()
+        self._last_line_len = len(text)
+
+    def clear(self) -> None:
+        if not self.enabled or self._last_line_len <= 0:
+            return
+        sys.stderr.write("\r" + " " * self._last_line_len + "\r")
+        sys.stderr.flush()
+        self._last_line_len = 0
+
+
+class _AiogramPollingRetryCompactor:
+    """Render repeated aiogram polling network retries as one terminal line."""
+
+    def __init__(self, status_line: _TerminalStatusLine) -> None:
+        self._status_line = status_line
+        self._last_error = ""
+
+    @property
+    def enabled(self) -> bool:
+        return self._status_line.enabled
+
+    def handle(self, message: str) -> bool:
+        if not self.enabled:
+            return False
+
+        if "Failed to fetch updates" in message:
+            self._last_error = _compact_aiogram_polling_error(message)
+            self._status_line.update(f"Telegram polling retry: {self._last_error}")
+            return True
+
+        sleep = _parse_aiogram_retry_sleep(message)
+        if sleep is not None:
+            seconds, tryings, bot_id = sleep
+            error = self._last_error or "waiting for Telegram API"
+            self._status_line.update(
+                f"Telegram polling retry: {error} | try={tryings}, next={seconds:.2f}s, bot={bot_id}"
+            )
+            return True
+
+        return False
+
+
+def _compact_aiogram_polling_error(message: str) -> str:
+    text = message.replace("Failed to fetch updates - ", "", 1)
+    text = text.replace("TelegramNetworkError: HTTP Client says - ", "", 1)
+    text = text.replace("ClientConnectorError: ", "", 1)
+    return " ".join(text.split())
+
+
+def _parse_aiogram_retry_sleep(message: str) -> tuple[float, int, str] | None:
+    match = re.search(
+        r"Sleep for (?P<seconds>[0-9.]+) seconds and try again\.\.\. "
+        r"\(tryings = (?P<tryings>\d+), bot id = (?P<bot_id>\d+)\)",
+        message,
+    )
+    if match is None:
+        return None
+    return (
+        float(match.group("seconds")),
+        int(match.group("tryings")),
+        match.group("bot_id"),
+    )
+
+
+_terminal_status_line = _TerminalStatusLine()
+_polling_retry_compactor = _AiogramPollingRetryCompactor(_terminal_status_line)
+
+
+def _handle_aiogram_polling_retry(record: logging.LogRecord, level, depth: int) -> bool:
+    if record.name != "aiogram.dispatcher":
+        return False
+
+    message = record.getMessage()
+    if not _polling_retry_compactor.handle(message):
+        return False
+
+    logger.bind(_terminal_suppress=True).patch(lambda r: r.update(name=record.name)).opt(
+        depth=depth, exception=record.exc_info
+    ).log(level, message)
+    return True
+
+
 def _terminal_sink(message) -> None:
     """终端 sink：单行 + 砍掉 traceback 块。"""
+    if message.record["extra"].get("_terminal_suppress"):
+        return
+    _terminal_status_line.clear()
     sys.stderr.write(_strip_exception_block(str(message)))
 
 
