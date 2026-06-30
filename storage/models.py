@@ -81,6 +81,7 @@ class Conversation(Base):
     __table_args__ = (
         # 一个用户在同一 thread 内只保留少量活跃会话，定位最快
         Index("ix_conversations_user_thread_active", "user_id", "thread_id", "is_active"),
+        Index("ix_conversations_user_chat_thread_active", "user_id", "chat_id", "thread_id", "is_active"),
     )
 
 
@@ -125,6 +126,7 @@ class Database:
             await self._ensure_column(conn, "conversations", "cwd", "VARCHAR")
             await self._ensure_column(conn, "conversations", "provider_sessions", "JSON")
             await self._ensure_column(conn, "users", "tool_permission_mode", "VARCHAR(20)")
+            await self._ensure_index(conn, "conversations", "ix_conversations_user_chat_thread_active")
         logger.info("✓ 数据库初始化完成")
 
     async def _ensure_column(self, conn, table_name: str, column_name: str, column_type: str) -> None:
@@ -145,6 +147,14 @@ class Database:
             # PostgreSQL 9.6+ / MySQL 8.0+ 都支持 IF NOT EXISTS
             await conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN IF NOT EXISTS {column_name} {column_type}"))
         logger.info(f"Schema migration: added {table_name}.{column_name}")
+
+    async def _ensure_index(self, conn, table_name: str, index_name: str) -> None:
+        """Create a metadata-defined index for existing databases if missing."""
+        table = Base.metadata.tables[table_name]
+        index = next((idx for idx in table.indexes if idx.name == index_name), None)
+        if index is None:
+            raise RuntimeError(f"Index {index_name} is not defined on table {table_name}")
+        await conn.run_sync(lambda sync_conn: index.create(sync_conn, checkfirst=True))
 
     async def get_session(self) -> AsyncSession:
         """获取数据库会话"""

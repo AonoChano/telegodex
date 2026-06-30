@@ -13,10 +13,8 @@ Transport registry (3 entries, mirrors the spec):
 
 All other vendor variety (qwen / kimi / zhipu / baidu / gemini / deepseek /
 ollama / lmstudio / etc.) is expressed via ``transport = "openai_compatible"``
-in ``provider.toml``. The legacy dedicated classes
-(``GoogleProvider`` / ``DeepSeekProvider`` / ``QwenProvider`` /
-``MoonshotProvider`` / ``ZhipuProvider`` / ``BaiduProvider``) remain in the
-codebase as deprecated dead code and are NOT instantiated from this router.
+in ``provider.toml``. Legacy vendor-specific provider classes were removed
+after the TOML provider system became the production path.
 """
 
 from __future__ import annotations

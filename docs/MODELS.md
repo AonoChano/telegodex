@@ -18,14 +18,11 @@ provider.toml.example   # canonical, fully-commented template
 config/provider_loader.py  # parses [providers.<id>] blocks into ProviderConfig
 ```
 
-The legacy `ai/*_provider.py` files still contain hardcoded fallback model lists (used when a provider is instantiated outside the TOML path, e.g. in tests), but production configuration is TOML-driven:
+The `ai/` package now keeps only the transport adapters used by the TOML path:
 
 ```text
 ai/openai_provider.py
 ai/anthropic_provider.py
-ai/google_provider.py
-ai/deepseek_provider.py
-ai/china_providers.py
 ai/openai_compatible_provider.py
 ```
 

@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from storage.context_manager import ContextManager
-from storage.models import Base, Conversation
+from storage.models import Base, Conversation, Database
 
 
 @pytest.mark.asyncio
@@ -73,3 +73,17 @@ async def test_get_or_create_conversation_prefers_chat_scoped_rows() -> None:
         assert conversation.chat_id == 200
 
     await engine.dispose()
+@pytest.mark.asyncio
+async def test_init_db_creates_chat_thread_active_index(tmp_path) -> None:
+    db_path = tmp_path / "telegodex-test.db"
+    database = Database(f"sqlite+aiosqlite:///{db_path.as_posix()}")
+
+    try:
+        await database.init_db()
+        async with database.engine.connect() as conn:
+            result = await conn.execute(text("PRAGMA index_list(conversations)"))
+            index_names = {row[1] for row in result.fetchall()}
+
+        assert "ix_conversations_user_chat_thread_active" in index_names
+    finally:
+        await database.close()

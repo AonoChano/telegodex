@@ -11,6 +11,7 @@ related: [PRODUCT_EXPERIENCE.md, RICH_MESSAGES.md, STARTUP.md]
 
 ## Unreleased
 
+- Removed deprecated vendor-specific AI provider modules now superseded by the TOML transport registry, and added a chat/thread conversation index for existing and new databases.
 - Updated public README, Quickstart, Usage, Architecture, and localized README docs to describe the `provider.toml` registry instead of the removed JSON custom-provider flow.
 - Fixed provider TOML runtime behavior so `.env` API keys are hydrated without overriding shell variables, missing default providers fail closed, provider `headers`/`query` reach SDK clients, and `[global]` request defaults are honored by normal chat.
 - Migrated provider configuration from JSON-based `custom_providers.json` to TOML-based `provider.toml`. The new system uses a transport registry pattern (`openai`/`anthropic`/`openai_compatible`) and moves all provider selection out of `.env` into the `[global]` section of `provider.toml`. See `docs/CUSTOM_PROVIDERS.md` for migration guide.
