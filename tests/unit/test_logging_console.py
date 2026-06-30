@@ -11,7 +11,7 @@ from main import (
     _format_reconnect_status,
     _format_retry_limit,
     _parse_aiogram_retry_sleep,
-    _visible_len,
+    _visible_width,
 )
 
 
@@ -126,14 +126,32 @@ def test_fit_terminal_status_text_ansi_aware() -> None:
     text = _format_reconnect_status(
         "network", "TelegramNetworkError", "timeout", 1, 3.2, 12.4
     )
-    # 完整可见长度 > 20，强制截断到 width=20
+    # 完整可见宽度 > 20，强制截断到 width=20
     truncated = _fit_terminal_status_text(text, 20)
-    # 预算 = 20 - 3 = 17 可见字符 + "..." = 20 可见字符
-    assert _visible_len(truncated) == 20
+    # 预算 = 20 - 3 = 17 显示列 + "..." = 20 显示列
+    assert _visible_width(truncated) == 20
     # 截断尾部必须是 reset + 省略号，防止颜色泄漏
     assert truncated.endswith("\033[0m...")
     # 前缀可见内容保留
     assert "Reconnecting" in truncated
+
+
+def test_fit_terminal_status_text_cjk_double_width() -> None:
+    """CJK 全角字符按 2 列计算，避免中文错误消息撑爆终端宽度导致换行堆叠。"""
+    text = _format_reconnect_status(
+        "network",
+        "TelegramNetworkError",
+        "[WinError 1236] 由本地系统终止网络连接",
+        1,
+        3.2,
+        12.4,
+    )
+    # 强制截断到 40 列：必须按显示宽度算，否则中文按 1 列算会漏截
+    truncated = _fit_terminal_status_text(text, 40)
+    assert _visible_width(truncated) == 40  # 37 + "..."
+    assert truncated.endswith("\033[0m...")
+    # 中文尾部应被截断（不应完整保留）
+    assert "网络连接" not in truncated
 
 
 # ── _TerminalStatusLine ────────────────────────────────────────────────

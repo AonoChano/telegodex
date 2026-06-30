@@ -6,6 +6,7 @@ import shutil
 import sys
 import threading
 import time
+import unicodedata
 from pathlib import Path
 
 from aiogram import Bot, Dispatcher
@@ -392,32 +393,44 @@ class _AiogramPollingRetryCompactor:
 _ANSI_ESCAPE_RE = re.compile(r"\033\[[0-9;]*m")
 
 
-def _visible_len(text: str) -> int:
-    """ANSI 转义序列不占可见宽度，测量时需剔除。"""
-    return len(_ANSI_ESCAPE_RE.sub("", text))
+def _char_display_width(ch: str) -> int:
+    """单字符终端显示列宽：CJK 全角/宽字符占 2 列，其余 1 列。"""
+    return 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+
+
+def _visible_width(text: str) -> int:
+    """终端显示宽度：剔除 ANSI 转义码，CJK 全角字符按 2 列计算。"""
+    stripped = _ANSI_ESCAPE_RE.sub("", text)
+    return sum(_char_display_width(ch) for ch in stripped)
 
 
 def _fit_terminal_status_text(text: str, width: int) -> str:
-    """按可见宽度截断；若原文含 ANSI 颜色码，截断处补 reset 防泄漏。"""
-    if _visible_len(text) <= width:
+    """按显示宽度截断；CJK 全角占 2 列；含 ANSI 时截断处补 reset 防泄漏。
+
+    必须按显示列宽而非字符数计算，否则中文错误消息会超出终端宽度，
+    触发自动换行，破坏 ``\\r\\033[2K`` 的原地替换语义。
+    """
+    if _visible_width(text) <= width:
         return text
     budget = max(width - 3, 0)
     result: list[str] = []
-    visible = 0
+    used = 0
     pos = 0
     has_ansi = False
     while pos < len(text):
         match = _ANSI_ESCAPE_RE.match(text, pos)
         if match:
-            # ANSI 转义码原样保留，不计入可见预算
+            # ANSI 转义码原样保留，不计入显示预算
             result.append(match.group())
             pos = match.end()
             has_ansi = True
             continue
-        if visible >= budget:
+        ch = text[pos]
+        ch_w = _char_display_width(ch)
+        if used + ch_w > budget:
             break
-        result.append(text[pos])
-        visible += 1
+        result.append(ch)
+        used += ch_w
         pos += 1
     result.append(f"{_ANSI_RESET}..." if has_ansi else "...")
     return "".join(result)
