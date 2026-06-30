@@ -149,7 +149,7 @@ def print_banner() -> None:
     print(box_line())
     print(box_line(f"{white}{tagline}{reset}"))
     print(box_line())
-    print(box_line(f"{blue}  {repo_link}{reset}{white}                  v{version}{reset}"))
+    print(box_line(f"{blue}             {repo_link}{reset}{white}                  v{version}{reset}"))
     print(box_line())
     print(f"{white}╚{'═' * width}╝{reset}")
     print()
