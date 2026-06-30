@@ -11,6 +11,7 @@ from main import (
     _format_reconnect_status,
     _format_retry_limit,
     _parse_aiogram_retry_sleep,
+    _visible_len,
 )
 
 
@@ -118,6 +119,21 @@ def test_format_reconnect_status_unlimited_limit() -> None:
 
 def test_fit_terminal_status_text_uses_ascii_ellipsis() -> None:
     assert _fit_terminal_status_text("abcdefghij", 8) == "abcde..."
+
+
+def test_fit_terminal_status_text_ansi_aware() -> None:
+    """ANSI 转义码不计入可见宽度，截断按可见字符计算并补 reset 防泄漏。"""
+    text = _format_reconnect_status(
+        "network", "TelegramNetworkError", "timeout", 1, 3.2, 12.4
+    )
+    # 完整可见长度 > 20，强制截断到 width=20
+    truncated = _fit_terminal_status_text(text, 20)
+    # 预算 = 20 - 3 = 17 可见字符 + "..." = 20 可见字符
+    assert _visible_len(truncated) == 20
+    # 截断尾部必须是 reset + 省略号，防止颜色泄漏
+    assert truncated.endswith("\033[0m...")
+    # 前缀可见内容保留
+    assert "Reconnecting" in truncated
 
 
 # ── _TerminalStatusLine ────────────────────────────────────────────────

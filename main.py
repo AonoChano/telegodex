@@ -389,10 +389,38 @@ class _AiogramPollingRetryCompactor:
 
 
 
+_ANSI_ESCAPE_RE = re.compile(r"\033\[[0-9;]*m")
+
+
+def _visible_len(text: str) -> int:
+    """ANSI 转义序列不占可见宽度，测量时需剔除。"""
+    return len(_ANSI_ESCAPE_RE.sub("", text))
+
+
 def _fit_terminal_status_text(text: str, width: int) -> str:
-    if len(text) <= width:
+    """按可见宽度截断；若原文含 ANSI 颜色码，截断处补 reset 防泄漏。"""
+    if _visible_len(text) <= width:
         return text
-    return text[: max(width - 3, 0)] + "..."
+    budget = max(width - 3, 0)
+    result: list[str] = []
+    visible = 0
+    pos = 0
+    has_ansi = False
+    while pos < len(text):
+        match = _ANSI_ESCAPE_RE.match(text, pos)
+        if match:
+            # ANSI 转义码原样保留，不计入可见预算
+            result.append(match.group())
+            pos = match.end()
+            has_ansi = True
+            continue
+        if visible >= budget:
+            break
+        result.append(text[pos])
+        visible += 1
+        pos += 1
+    result.append(f"{_ANSI_RESET}..." if has_ansi else "...")
+    return "".join(result)
 
 
 def _parse_aiogram_retry_sleep(message: str) -> tuple[float, int, str] | None:
