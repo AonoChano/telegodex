@@ -72,7 +72,7 @@ When Telegram polling loses connectivity, Telegodex renders one in-place termina
 - `retry in X.Xs` means aiogram is in backoff before the next `getUpdates` request.
 - `retrying` means the next `getUpdates` request has started and has not returned yet; the following elapsed field is the only running timer.
 
-The polling loop uses `polling_timeout=10`, an aiogram HTTP session timeout of 8 seconds, and an outer 20-second hard timeout around each `getUpdates` request. After any polling exception, including ordinary `Request timeout error`, Telegodex closes the aiogram HTTP session so the next retry rebuilds the connection instead of reusing a stale Windows/proxy socket. The live retry status is kept to one physical terminal row so it cannot erase ordinary startup/runtime logs; complete polling errors remain in the debug log.
+The polling loop uses `polling_timeout=10`, an aiogram HTTP session timeout of 8 seconds, and an outer 20-second hard timeout around each `getUpdates` request. The hard timeout does not wait for a stuck request cancellation path; it cancels the old request in the background, closes the aiogram HTTP session, and starts the next backoff cycle. After any polling exception, including ordinary `Request timeout error`, Telegodex closes the aiogram HTTP session so the next retry rebuilds the connection instead of reusing a stale Windows/proxy socket. The live retry status is kept to one physical terminal row so it cannot erase ordinary startup/runtime logs; complete polling errors remain in the debug log.
 
 ## Telegram Startup Checks
 

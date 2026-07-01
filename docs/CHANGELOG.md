@@ -11,6 +11,7 @@ related: [PRODUCT_EXPERIENCE.md, RICH_MESSAGES.md, STARTUP.md]
 
 ## Unreleased
 
+- Fixed Telegram polling hard timeout handling so a stuck `getUpdates` cancellation cannot keep one reconnect attempt running for minutes after the 20-second deadline.
 - Fixed Telegram polling reconnect robustness so every polling exception closes the aiogram HTTP session before backoff, and live retry status is constrained to one terminal row to avoid erasing ordinary logs.
 - Added a hard timeout around Telegram `getUpdates` polling retries; timed-out polling requests now close the aiogram HTTP session before backoff so stale Windows/proxy sockets do not block reconnects for minutes, and reconnect details can wrap without truncation.
 - Fixed aiogram polling reconnect status so backoff shows `retry in X.Xs`, active HTTP attempts show `retrying` with a single elapsed timer, and the polling request timeout is explicitly bounded by `polling_timeout=10` plus an 8-second HTTP session timeout.

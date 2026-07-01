@@ -470,6 +470,31 @@ _POLLING_HARD_TIMEOUT_SECONDS = 20.0
 _POLLING_SESSION_CLOSE_TIMEOUT_SECONDS = 3.0
 
 
+async def _await_polling_response(bot: Bot, get_updates: GetUpdates, request_timeout: int):
+    """Await getUpdates without letting stuck cancellation block the retry loop."""
+    task = asyncio.create_task(
+        bot(get_updates, request_timeout=request_timeout),
+        name="telegram-getupdates",
+    )
+    done, _pending = await asyncio.wait({task}, timeout=_POLLING_HARD_TIMEOUT_SECONDS)
+    if task in done:
+        return await task
+
+    task.cancel()
+    task.add_done_callback(_consume_polling_task_result)
+    raise asyncio.TimeoutError
+
+
+def _consume_polling_task_result(task: asyncio.Task) -> None:
+    """Observe late completion of a cancelled getUpdates task."""
+    if task.cancelled():
+        return
+    try:
+        task.exception()
+    except asyncio.CancelledError:
+        return
+
+
 async def _close_polling_session(bot: Bot) -> None:
     """Close aiogram HTTP session after polling failures so the next try rebuilds it."""
     from aiogram.dispatcher.dispatcher import loggers
@@ -510,9 +535,10 @@ class _TelegodexDispatcher(Dispatcher):
         failed = False
         while True:
             try:
-                updates = await asyncio.wait_for(
-                    bot(get_updates, request_timeout=int(polling_timeout + bot.session.timeout)),
-                    timeout=_POLLING_HARD_TIMEOUT_SECONDS,
+                updates = await _await_polling_response(
+                    bot,
+                    get_updates,
+                    request_timeout=int(polling_timeout + bot.session.timeout),
                 )
             except Exception as exc:
                 failed = True

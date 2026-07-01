@@ -8,6 +8,7 @@ from main import (
     _AiogramPollingRetryCompactor,
     _TerminalStatusLine,
     _TelegodexDispatcher,
+    _await_polling_response,
     _classify_polling_error,
     _fit_terminal_status_text,
     _format_reconnect_status,
@@ -307,6 +308,28 @@ def test_parse_aiogram_retry_sleep_message() -> None:
 def test_parse_aiogram_retry_sleep_ignores_other_messages() -> None:
     assert _parse_aiogram_retry_sleep("Bot started") is None
 
+
+async def test_await_polling_response_timeout_does_not_wait_for_stuck_cancel(monkeypatch) -> None:
+    class FakeBot:
+        async def __call__(self, *args, **kwargs):
+            try:
+                await asyncio.sleep(999)
+            except asyncio.CancelledError:
+                await asyncio.sleep(999)
+
+    class FakeGetUpdates:
+        pass
+
+    monkeypatch.setattr("main._POLLING_HARD_TIMEOUT_SECONDS", 0.01)
+    started = asyncio.get_running_loop().time()
+    try:
+        await _await_polling_response(FakeBot(), FakeGetUpdates(), request_timeout=18)
+    except asyncio.TimeoutError:
+        elapsed = asyncio.get_running_loop().time() - started
+    else:
+        raise AssertionError("expected polling timeout")
+
+    assert elapsed < 0.2
 # ── _TelegodexDispatcher polling hard timeout ──────────────────────────
 
 
