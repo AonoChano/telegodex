@@ -65,6 +65,15 @@ Terminals that support OSC 8 make the label clickable. Terminals that do not sup
 
 The banner version is read from `pyproject.toml`. If the project version changes, the startup banner should change with it.
 
+## Polling Reconnect Status
+
+When Telegram polling loses connectivity, Telegodex renders one in-place terminal status line instead of repeating full tracebacks.
+
+- `retry in X.Xs` means aiogram is in backoff before the next `getUpdates` request.
+- `retrying` or `retrying X.Xs` means the next `getUpdates` request has started and has not returned yet.
+
+The polling loop uses `polling_timeout=10` and an aiogram HTTP session timeout of 8 seconds. Aiogram combines these into the request timeout for `getUpdates`, so a broken network should fail in roughly 18 seconds plus the configured backoff instead of appearing stuck for a long system-level timeout.
+
 ## Telegram Startup Checks
 
 When the bot starts the real polling process, Telegodex performs Telegram-side startup checks before accepting updates:

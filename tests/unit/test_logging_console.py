@@ -93,19 +93,27 @@ def test_format_reconnect_status_with_countdown() -> None:
     )
     assert "Reconnecting" in text
     assert "2/5" in text
-    assert "retry 3.2s" in text
+    assert "retry in 3.2s" in text
     assert "12.4s" in text
     assert "TelegramForbiddenError" in text
     assert "\033[0m" in text  # ANSI reset
 
 
-def test_format_reconnect_status_waiting() -> None:
+def test_format_reconnect_status_retrying() -> None:
     text = _format_reconnect_status(
         "network", "TelegramNetworkError", "", 1, 0.0, 5.0
     )
     assert "1/∞" in text
-    assert "waiting" in text
+    assert "retrying" in text
 
+
+def test_format_reconnect_status_retrying_duration() -> None:
+    text = _format_reconnect_status(
+        "network", "TelegramNetworkError", "timeout", 2, 0.0, 42.0, 24.0
+    )
+    assert "2/∞" in text
+    assert "retrying 24.0s" in text
+    assert "42.0s" in text
 
 def test_format_reconnect_status_unlimited_limit() -> None:
     text = _format_reconnect_status(

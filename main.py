@@ -186,10 +186,16 @@ def _format_reconnect_status(
     attempt: int,
     remaining: float,
     elapsed: float,
+    retrying_for: float = 0.0,
 ) -> str:
-    """单行灰度斜体分块：◦ Reconnecting · 1/5 · retry 3.2s · 12.4s · Error: detail"""
+    """单行灰度斜体分块：◦ Reconnecting · 1/5 · retry in 3.2s · 12.4s · Error: detail"""
     limit_str = _format_retry_limit(category)
-    retry_part = f"retry {remaining:.1f}s" if remaining > 0 else "waiting"
+    if remaining > 0:
+        retry_part = f"retry in {remaining:.1f}s"
+    elif retrying_for > 0:
+        retry_part = f"retrying {retrying_for:.1f}s"
+    else:
+        retry_part = "retrying"
     error_part = f"{error_type}: {detail}" if detail else error_type
 
     return (
@@ -375,6 +381,7 @@ class _AiogramPollingRetryCompactor:
                 return False  # 更新的 worker 已接管
             now = time.monotonic()
             remaining = max(self._retry_deadline - now, 0.0)
+            retrying_for = max(now - self._retry_deadline, 0.0)
             elapsed = now - self._error_time
             self._status_line.update(
                 _format_reconnect_status(
@@ -384,6 +391,7 @@ class _AiogramPollingRetryCompactor:
                     self._attempt,
                     remaining,
                     elapsed,
+                    retrying_for,
                 )
             )
             return True
@@ -647,19 +655,14 @@ async def main():
     # _listen_updates 里的 polling_timeout 相加变成 aiohttp 的 request_timeout：
     #
     #   request_timeout = bot.session.timeout + polling_timeout
-    #                   = 60 + 10  (默认) = 70s
     #
-    # 网络断后一次 getUpdates 会卡满 70s 才抛异常，期间 _listen_updates 看起
-    # 来在"卡死"。日志打 "Sleep for 1.0 seconds"（这是 backoff delay，跟
-    # getUpdates 卡多久无关），但用户感知是 sleep 几分钟后才"看到"重试。
-    #
-    # 改成 20s：request_timeout = 20 + 10 = 30s，单次失败 30s + backoff 0.5-3s
-    # ≈ 30-35s/轮。日常长轮询时 20s 不会触发（polling_timeout=10s，server
-    # 端无新消息时会先在 10s 短轮询一次返回），仅在网络故障下兜底。
+    # 网络断后一次 getUpdates 会一直等到 request_timeout 才抛异常；这段时间
+    # 不是 backoff sleep，而是正在尝试连接 Telegram。保持 polling_timeout=10，
+    # session timeout=8 后，故障兜底约 18s + backoff，状态行会显示 retrying。
     bot = Bot(
         token=bot_token,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-        session=AiohttpSession(timeout=20),
+        session=AiohttpSession(timeout=8),
     )
     await run_telegram_startup_checks(bot, settings.admin_ids)
     dp = Dispatcher()
@@ -709,7 +712,7 @@ async def main():
 
     logger.info("✓ Telegodex 启动成功！")
     try:
-        await dp.start_polling(bot, backoff_config=polling_backoff)
+        await dp.start_polling(bot, polling_timeout=10, backoff_config=polling_backoff)
     finally:
         # 关闭顺序：Codex daemon 先停掉（app-server 子进程），
         # 然后 HTTP 共享 session，再 aiogram session，最后 db。
