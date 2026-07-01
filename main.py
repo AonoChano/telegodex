@@ -75,10 +75,10 @@ def _strip_exception_block(text: str) -> str:
 
 
 class _TerminalStatusLine:
-    """Single physical terminal row that can be replaced in place."""
+    """Known-width terminal status block that can be replaced in place."""
 
     def __init__(self) -> None:
-        self._has_line = False
+        self._last_rendered_lines = 0
         self._lock = threading.Lock()
 
     @property
@@ -89,12 +89,12 @@ class _TerminalStatusLine:
         if not self.enabled:
             return
         width = _terminal_status_width()
-        text = _fit_terminal_status_text(text, width)
+        lines = _wrap_terminal_status_text(text, width)
         with self._lock:
             self._clear_locked()
-            sys.stderr.write(text)
+            sys.stderr.write("\n".join(lines))
             sys.stderr.flush()
-            self._has_line = True
+            self._last_rendered_lines = len(lines)
 
     def clear(self) -> None:
         if not self.enabled:
@@ -103,10 +103,13 @@ class _TerminalStatusLine:
             self._clear_locked()
 
     def _clear_locked(self) -> None:
-        if not self._has_line:
+        if self._last_rendered_lines <= 0:
             return
-        sys.stderr.write("\r\033[2K")
-        self._has_line = False
+        for line_index in range(self._last_rendered_lines):
+            if line_index:
+                sys.stderr.write("\033[1A")
+            sys.stderr.write("\r\033[2K")
+        self._last_rendered_lines = 0
         sys.stderr.flush()
 
 # ── Polling retry status rendering ──────────────────────────────────────
@@ -183,6 +186,31 @@ def _format_retry_limit(category: str) -> str:
     return "∞" if limit is None else str(limit)
 
 
+def _format_duration(seconds: float) -> str:
+    total = max(0, int(round(seconds)))
+    units = (
+        ("y", 365 * 24 * 60 * 60),
+        ("w", 7 * 24 * 60 * 60),
+        ("d", 24 * 60 * 60),
+        ("h", 60 * 60),
+        ("m", 60),
+        ("s", 1),
+    )
+    parts: list[tuple[str, int]] = []
+    for suffix, size in units:
+        value, total = divmod(total, size)
+        if value or parts or suffix == "s":
+            parts.append((suffix, value))
+
+    rendered: list[str] = []
+    for index, (suffix, value) in enumerate(parts):
+        if suffix in {"m", "s"} and index > 0:
+            rendered.append(f"{value:02d}{suffix}")
+        else:
+            rendered.append(f"{value}{suffix}")
+    return "".join(rendered)
+
+
 def _format_reconnect_status(
     category: str,
     error_type: str,
@@ -191,35 +219,35 @@ def _format_reconnect_status(
     remaining: float,
     elapsed: float,
 ) -> str:
-    """灰度斜体分块：◦ Reconnecting · 1/5 · retry in 3.2s · 12.4s · Error: detail"""
+    """Compact reconnect status: retry sleep/probe, total elapsed, last error."""
     limit_str = _format_retry_limit(category)
     if remaining > 0:
-        retry_part = f"retry in {remaining:.1f}s"
+        retry_part = f"retry in {_format_duration(remaining)}"
     else:
-        retry_part = "retrying"
+        retry_part = "probing"
     error_part = f"{error_type}: {detail}" if detail else error_type
 
     return (
         f"{_DIM_BLUE}◦ Reconnecting{_DIM_GRAY} · "
         f"{_DIM_AMBER}{attempt}/{limit_str}{_DIM_GRAY} · "
         f"{_DIM_GREEN}{retry_part}{_DIM_GRAY} · "
-        f"{_DIM_GRAY}{elapsed:.1f}s{_DIM_GRAY} · "
+        f"{_DIM_GRAY}{_format_duration(elapsed)}{_DIM_GRAY} · "
         f"{_DIM_RED}{error_part}"
         f"{_ANSI_RESET}"
     )
 
 
 class _AiogramPollingRetryCompactor:
-    """把 aiogram 轮询重试渲染为一条原地更新的终端状态行。
+    """把 aiogram 轮询重试渲染为原地更新的终端状态块。
 
     状态机：
         IDLE ──(Failed to fetch updates)──► RECONNECTING
         RECONNECTING ──(Connection established)──► IDLE + success log
         RECONNECTING ──(attempt > limit)──► IDLE + failure log (+ sys.exit for auth)
-        RECONNECTING ──(retry_deadline expired)──► 保持 RECONNECTING（等待响应）
+        RECONNECTING ──(retry_deadline expired)──► 保持 RECONNECTING（发送健康探测）
     """
 
-    _REFRESH_SECONDS = 0.2
+    _REFRESH_SECONDS = 1.0
     _PENDING_RETRY_SECONDS = 2.0  # 仅看到错误、尚未收到 sleep 时的占位倒计时
 
     def __init__(self, status_line: _TerminalStatusLine) -> None:
@@ -319,7 +347,7 @@ class _AiogramPollingRetryCompactor:
         # logger.success 走 _terminal_sink → stop()（幂等），不会死锁
         logger.success(
             f"Telegram 重连成功 · {attempt}/{_format_retry_limit(category)} · "
-            f"耗时 {elapsed:.1f}s · 最后错误: {error_type}"
+            f"耗时 {_format_duration(elapsed)} · 最后错误: {error_type}"
         )
 
     def _handle_failed(self) -> None:
@@ -415,6 +443,40 @@ def _visible_width(text: str) -> int:
     return sum(_char_display_width(ch) for ch in stripped)
 
 
+def _wrap_terminal_status_text(text: str, width: int) -> list[str]:
+    """Wrap status text into known-width physical rows without truncating details."""
+    lines: list[str] = []
+    current: list[str] = []
+    visible = 0
+    pos = 0
+    while pos < len(text):
+        match = _ANSI_ESCAPE_RE.match(text, pos)
+        if match:
+            current.append(match.group(0))
+            pos = match.end()
+            continue
+
+        ch = text[pos]
+        if ch == "\n":
+            lines.append("".join(current))
+            current = []
+            visible = 0
+            pos += 1
+            continue
+
+        ch_w = _char_display_width(ch)
+        if visible > 0 and visible + ch_w > width:
+            lines.append("".join(current).rstrip())
+            current = []
+            visible = 0
+        current.append(ch)
+        visible += ch_w
+        pos += 1
+
+    lines.append("".join(current).rstrip())
+    return lines or [""]
+
+
 def _fit_terminal_status_text(text: str, width: int) -> str:
     """Fit status text into one terminal row without leaking ANSI styles."""
     if _visible_width(text) <= width:
@@ -468,25 +530,42 @@ _polling_retry_compactor = _AiogramPollingRetryCompactor(_terminal_status_line)
 
 _POLLING_HARD_TIMEOUT_SECONDS = 20.0
 _POLLING_SESSION_CLOSE_TIMEOUT_SECONDS = 3.0
+_POLLING_PROBE_TIMEOUT_SECONDS = 3.0
+_POLLING_PROBE_HARD_TIMEOUT_SECONDS = 4.0
 
 
-async def _await_polling_response(bot: Bot, get_updates: GetUpdates, request_timeout: int):
-    """Await getUpdates without letting stuck cancellation block the retry loop."""
-    task = asyncio.create_task(
-        bot(get_updates, request_timeout=request_timeout),
-        name="telegram-getupdates",
-    )
-    done, _pending = await asyncio.wait({task}, timeout=_POLLING_HARD_TIMEOUT_SECONDS)
+async def _await_with_hard_timeout(awaitable, timeout_seconds: float, task_name: str):
+    """Return on timeout without waiting for a stuck cancellation path."""
+    task = asyncio.create_task(awaitable, name=task_name)
+    done, _pending = await asyncio.wait({task}, timeout=timeout_seconds)
     if task in done:
         return await task
 
     task.cancel()
-    task.add_done_callback(_consume_polling_task_result)
+    task.add_done_callback(_consume_late_task_result)
     raise asyncio.TimeoutError
 
 
-def _consume_polling_task_result(task: asyncio.Task) -> None:
-    """Observe late completion of a cancelled getUpdates task."""
+async def _await_polling_response(bot: Bot, get_updates: GetUpdates, request_timeout: int):
+    """Await getUpdates without letting stuck cancellation block the retry loop."""
+    return await _await_with_hard_timeout(
+        bot(get_updates, request_timeout=request_timeout),
+        timeout_seconds=_POLLING_HARD_TIMEOUT_SECONDS,
+        task_name="telegram-getupdates",
+    )
+
+
+async def _probe_telegram_api(bot: Bot) -> None:
+    """Fast Bot API probe used to decide whether reconnect has recovered."""
+    await _await_with_hard_timeout(
+        bot.get_me(request_timeout=int(_POLLING_PROBE_TIMEOUT_SECONDS)),
+        timeout_seconds=_POLLING_PROBE_HARD_TIMEOUT_SECONDS,
+        task_name="telegram-getme-probe",
+    )
+
+
+def _consume_late_task_result(task: asyncio.Task) -> None:
+    """Observe late completion of a cancelled Telegram request task."""
     if task.cancelled():
         return
     try:
@@ -534,6 +613,38 @@ class _TelegodexDispatcher(Dispatcher):
         get_updates = GetUpdates(timeout=polling_timeout, allowed_updates=allowed_updates)
         failed = False
         while True:
+            if failed:
+                try:
+                    await _probe_telegram_api(bot)
+                except Exception as exc:
+                    if isinstance(exc, asyncio.TimeoutError):
+                        loggers.dispatcher.error(
+                            "Failed to fetch updates - TelegramNetworkError: "
+                            "Telegram API probe hard timeout after %.1fs; rebuilding HTTP session",
+                            _POLLING_PROBE_HARD_TIMEOUT_SECONDS,
+                        )
+                    else:
+                        loggers.dispatcher.error(
+                            "Failed to fetch updates - %s: %s", type(exc).__name__, exc
+                        )
+                    await _close_polling_session(bot)
+                    loggers.dispatcher.warning(
+                        "Sleep for %f seconds and try again... (tryings = %d, bot id = %d)",
+                        backoff.next_delay,
+                        backoff.counter,
+                        bot.id,
+                    )
+                    await backoff.asleep()
+                    continue
+
+                loggers.dispatcher.info(
+                    "Connection established (tryings = %d, bot id = %d)",
+                    backoff.counter,
+                    bot.id,
+                )
+                backoff.reset()
+                failed = False
+
             try:
                 updates = await _await_polling_response(
                     bot,
@@ -553,23 +664,7 @@ class _TelegodexDispatcher(Dispatcher):
                         "Failed to fetch updates - %s: %s", type(exc).__name__, exc
                     )
                 await _close_polling_session(bot)
-                loggers.dispatcher.warning(
-                    "Sleep for %f seconds and try again... (tryings = %d, bot id = %d)",
-                    backoff.next_delay,
-                    backoff.counter,
-                    bot.id,
-                )
-                await backoff.asleep()
                 continue
-
-            if failed:
-                loggers.dispatcher.info(
-                    "Connection established (tryings = %d, bot id = %d)",
-                    backoff.counter,
-                    bot.id,
-                )
-                backoff.reset()
-                failed = False
 
             for update in updates:
                 yield update
@@ -770,7 +865,7 @@ async def main():
     #
     # 网络断后一次 getUpdates 会一直等到 request_timeout 才抛异常；这段时间
     # 不是 backoff sleep，而是正在尝试连接 Telegram。保持 polling_timeout=10，
-    # session timeout=8 外再加 20s hard timeout；超时后重建 HTTP session，状态行会显示 retrying。
+    # session timeout=8 外再加 20s hard timeout；超时后用短 getMe 探测恢复状态。
     bot = Bot(
         token=bot_token,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),

@@ -67,12 +67,12 @@ The banner version is read from `pyproject.toml`. If the project version changes
 
 ## Polling Reconnect Status
 
-When Telegram polling loses connectivity, Telegodex renders one in-place terminal status line instead of repeating full tracebacks.
+When Telegram polling loses connectivity, Telegodex renders one in-place terminal status block instead of repeating full tracebacks.
 
-- `retry in X.Xs` means aiogram is in backoff before the next `getUpdates` request.
-- `retrying` means the next `getUpdates` request has started and has not returned yet; the following elapsed field is the only running timer.
+- `retry in <duration>` means aiogram is in backoff before the next Bot API health probe.
+- `probing` means Telegodex is sending a short Bot API health probe to check whether Telegram is reachable again; the following elapsed field is the total reconnect duration.
 
-The polling loop uses `polling_timeout=10`, an aiogram HTTP session timeout of 8 seconds, and an outer 20-second hard timeout around each `getUpdates` request. The hard timeout does not wait for a stuck request cancellation path; it cancels the old request in the background, closes the aiogram HTTP session, and starts the next backoff cycle. After any polling exception, including ordinary `Request timeout error`, Telegodex closes the aiogram HTTP session so the next retry rebuilds the connection instead of reusing a stale Windows/proxy socket. The live retry status is kept to one physical terminal row so it cannot erase ordinary startup/runtime logs; complete polling errors remain in the debug log.
+The polling loop uses `polling_timeout=10`, an aiogram HTTP session timeout of 8 seconds, and an outer 20-second hard timeout around each `getUpdates` request. The hard timeout does not wait for a stuck request cancellation path; it cancels the old request in the background, closes the aiogram HTTP session, and starts reconnect handling. While reconnecting, Telegodex uses short `getMe` Bot API probes (`request_timeout=3`) to detect recovery, then resumes normal long polling. This keeps long-poll waiting separate from network health checks, so recovery can be detected even when no Telegram messages arrive. After any polling or probe exception, including ordinary `Request timeout error`, Telegodex closes the aiogram HTTP session so the next retry rebuilds the connection instead of reusing a stale Windows/proxy socket. The live retry status wraps into a controlled terminal block with a known row count, so full error details can remain visible without terminal auto-wrap erasing ordinary startup/runtime logs; complete polling errors also remain in the debug log.
 
 ## Telegram Startup Checks
 

@@ -11,10 +11,12 @@ from main import (
     _await_polling_response,
     _classify_polling_error,
     _fit_terminal_status_text,
+    _format_duration,
     _format_reconnect_status,
     _format_retry_limit,
     _parse_aiogram_retry_sleep,
     _visible_width,
+    _wrap_terminal_status_text,
 )
 
 
@@ -96,27 +98,28 @@ def test_format_reconnect_status_with_countdown() -> None:
     )
     assert "Reconnecting" in text
     assert "2/5" in text
-    assert "retry in 3.2s" in text
-    assert "12.4s" in text
+    assert "retry in 3s" in text
+    assert "12s" in text
     assert "TelegramForbiddenError" in text
     assert "\033[0m" in text  # ANSI reset
 
 
-def test_format_reconnect_status_retrying() -> None:
+def test_format_reconnect_status_probing() -> None:
     text = _format_reconnect_status(
         "network", "TelegramNetworkError", "", 1, 0.0, 5.0
     )
     assert "1/∞" in text
-    assert "retrying" in text
+    assert "probing" in text
 
 
-def test_format_reconnect_status_retrying_duration() -> None:
+def test_format_reconnect_status_duration_rolls_up() -> None:
     text = _format_reconnect_status(
-        "network", "TelegramNetworkError", "timeout", 2, 0.0, 42.0
+        "network", "TelegramNetworkError", "timeout", 2, 0.0, 65.0
     )
     assert "2/∞" in text
-    assert "retrying" in text
-    assert "42.0s" in text
+    assert "probing" in text
+    assert "1m05s" in text
+
 
 def test_format_reconnect_status_unlimited_limit() -> None:
     text = _format_reconnect_status(
@@ -125,7 +128,13 @@ def test_format_reconnect_status_unlimited_limit() -> None:
     assert "7/∞" in text
 
 
-# ── _fit_terminal_status_text / _TerminalStatusLine ─────────────────────
+
+def test_format_duration_rolls_up_units() -> None:
+    assert _format_duration(0.2) == "0s"
+    assert _format_duration(72.4) == "1m12s"
+    assert _format_duration(3723) == "1h02m03s"
+
+# ── status text wrapping / _TerminalStatusLine ────────────────────────
 
 
 def test_fit_terminal_status_text_uses_ascii_ellipsis() -> None:
@@ -156,7 +165,23 @@ def test_fit_terminal_status_text_cjk_double_width() -> None:
     assert truncated.endswith("\033[0m...")
 
 
-def test_terminal_status_line_replaces_one_physical_row(monkeypatch) -> None:
+
+def test_wrap_terminal_status_text_keeps_full_detail() -> None:
+    text = _format_reconnect_status(
+        "network",
+        "TelegramNetworkError",
+        "Request timeout error with enough extra detail to wrap",
+        2,
+        0.0,
+        65.0,
+    )
+    lines = _wrap_terminal_status_text(text, 38)
+    assert len(lines) > 1
+    assert "Request timeout error" in "".join(lines)
+    assert all(_visible_width(line) <= 38 for line in lines)
+
+
+def test_terminal_status_line_replaces_known_physical_rows(monkeypatch) -> None:
     stream = io.StringIO()
     stream.isatty = lambda: True
     monkeypatch.setattr("main.sys.stderr", stream)
@@ -171,9 +196,9 @@ def test_terminal_status_line_replaces_one_physical_row(monkeypatch) -> None:
     status.update("Telegram polling / Telegram API unreachable (2/∞), retry in 2.3s")
 
     output = stream.getvalue()
-    assert output.count("\033[2K") == 1
-    assert "\033[1A" not in output
-    assert "..." in output
+    assert output.count("\033[2K") == 3
+    assert output.count("\033[1A") == 2
+    assert "Request timeout Request timeout" in output
     assert "Telegram API unreachable" in output
 
 # ── _AiogramPollingRetryCompactor state machine ────────────────────────
@@ -330,6 +355,7 @@ async def test_await_polling_response_timeout_does_not_wait_for_stuck_cancel(mon
         raise AssertionError("expected polling timeout")
 
     assert elapsed < 0.2
+
 # ── _TelegodexDispatcher polling hard timeout ──────────────────────────
 
 
@@ -352,12 +378,17 @@ async def test_telegodex_dispatcher_hard_timeout_rebuilds_session(monkeypatch) -
         def __init__(self) -> None:
             self.session = FakeSession()
             self.calls = 0
+            self.probes = 0
 
         async def __call__(self, *args, **kwargs):
             self.calls += 1
             if self.calls == 1:
                 await asyncio.sleep(999)
             return [FakeUpdate()]
+
+        async def get_me(self, *args, **kwargs):
+            self.probes += 1
+            return object()
 
     async def tiny_sleep(self):
         return None
@@ -371,7 +402,9 @@ async def test_telegodex_dispatcher_hard_timeout_rebuilds_session(monkeypatch) -
 
     assert update.update_id == 1
     assert bot.calls == 2
+    assert bot.probes == 1
     assert bot.session.closed == 1
+
 async def test_telegodex_dispatcher_network_error_rebuilds_session(monkeypatch) -> None:
     class FakeSession:
         timeout = 8
@@ -391,12 +424,17 @@ async def test_telegodex_dispatcher_network_error_rebuilds_session(monkeypatch) 
         def __init__(self) -> None:
             self.session = FakeSession()
             self.calls = 0
+            self.probes = 0
 
         async def __call__(self, *args, **kwargs):
             self.calls += 1
             if self.calls == 1:
                 raise RuntimeError("Request timeout error")
             return [FakeUpdate()]
+
+        async def get_me(self, *args, **kwargs):
+            self.probes += 1
+            return object()
 
     async def tiny_sleep(self):
         return None
@@ -409,4 +447,5 @@ async def test_telegodex_dispatcher_network_error_rebuilds_session(monkeypatch) 
 
     assert update.update_id == 2
     assert bot.calls == 2
+    assert bot.probes == 1
     assert bot.session.closed == 1
