@@ -7,14 +7,14 @@ import sys
 import threading
 import time
 import unicodedata
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 from pathlib import Path
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
-from aiogram.methods import GetUpdates
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ParseMode
+from aiogram.methods import GetUpdates
 from aiogram.utils.backoff import Backoff, BackoffConfig
 from loguru import logger
 
@@ -221,10 +221,9 @@ def _format_reconnect_status(
 ) -> str:
     """Compact reconnect status: retry sleep/probe, total elapsed, last error."""
     limit_str = _format_retry_limit(category)
-    if remaining > 0:
-        retry_part = f"retry in {_format_duration(remaining)}"
-    else:
-        retry_part = "probing"
+    retry_part = (
+        f"retry in {_format_duration(remaining)}" if remaining > 0 else "probing"
+    )
     error_part = f"{error_type}: {detail}" if detail else error_type
 
     return (
@@ -534,6 +533,58 @@ _POLLING_PROBE_TIMEOUT_SECONDS = 3.0
 _POLLING_PROBE_HARD_TIMEOUT_SECONDS = 4.0
 
 
+def _start_polling_phase_watchdog(
+    phase: str,
+    sequence: int,
+    timeout_seconds: float,
+    bot_id: int,
+    detail: str,
+) -> Callable[[str], None]:
+    """Warn from a thread if an async polling phase stops making progress."""
+    from aiogram.dispatcher.dispatcher import loggers
+
+    started = time.monotonic()
+    finished = threading.Event()
+    warned = threading.Event()
+
+    def warn_if_pending() -> None:
+        if finished.is_set():
+            return
+        warned.set()
+        elapsed = time.monotonic() - started
+        loggers.dispatcher.warning(
+            "Telegram polling diagnostic: %s #%d still running after %.1fs "
+            "(bot id = %d, %s)",
+            phase,
+            sequence,
+            elapsed,
+            bot_id,
+            detail,
+        )
+
+    timer = threading.Timer(timeout_seconds, warn_if_pending)
+    timer.daemon = True
+    timer.start()
+
+    def finish(outcome: str) -> None:
+        finished.set()
+        timer.cancel()
+        if warned.is_set():
+            elapsed = time.monotonic() - started
+            loggers.dispatcher.warning(
+                "Telegram polling diagnostic: %s #%d finished after %.1fs "
+                "with %s (bot id = %d, %s)",
+                phase,
+                sequence,
+                elapsed,
+                outcome,
+                bot_id,
+                detail,
+            )
+
+    return finish
+
+
 async def _await_with_hard_timeout(awaitable, timeout_seconds: float, task_name: str):
     """Return on timeout without waiting for a stuck cancellation path."""
     task = asyncio.create_task(awaitable, name=task_name)
@@ -543,7 +594,7 @@ async def _await_with_hard_timeout(awaitable, timeout_seconds: float, task_name:
 
     task.cancel()
     task.add_done_callback(_consume_late_task_result)
-    raise asyncio.TimeoutError
+    raise TimeoutError
 
 
 async def _await_polling_response(bot: Bot, get_updates: GetUpdates, request_timeout: int):
@@ -574,21 +625,35 @@ def _consume_late_task_result(task: asyncio.Task) -> None:
         return
 
 
-async def _close_polling_session(bot: Bot) -> None:
+async def _close_polling_session(bot: Bot, reason: str) -> None:
     """Close aiogram HTTP session after polling failures so the next try rebuilds it."""
     from aiogram.dispatcher.dispatcher import loggers
 
+    finish_close = _start_polling_phase_watchdog(
+        "session.close",
+        0,
+        _POLLING_SESSION_CLOSE_TIMEOUT_SECONDS + 1.0,
+        bot.id,
+        reason,
+    )
+    started = time.monotonic()
     try:
         await asyncio.wait_for(
             bot.session.close(),
             timeout=_POLLING_SESSION_CLOSE_TIMEOUT_SECONDS,
         )
     except Exception as exc:
+        elapsed = time.monotonic() - started
+        finish_close("failed")
         loggers.dispatcher.warning(
-            "Failed to close Telegram polling HTTP session - %s: %s",
+            "Failed to close Telegram polling HTTP session after %.3fs (%s) - %s: %s",
+            elapsed,
+            reason,
             type(exc).__name__,
             exc,
         )
+    else:
+        finish_close("success")
 
 
 class _TelegodexDispatcher(Dispatcher):
@@ -612,22 +677,46 @@ class _TelegodexDispatcher(Dispatcher):
         backoff = Backoff(config=backoff_config)
         get_updates = GetUpdates(timeout=polling_timeout, allowed_updates=allowed_updates)
         failed = False
+        poll_sequence = 0
+        probe_sequence = 0
         while True:
             if failed:
+                probe_sequence += 1
+                finish_probe = _start_polling_phase_watchdog(
+                    "getMe probe",
+                    probe_sequence,
+                    _POLLING_PROBE_HARD_TIMEOUT_SECONDS + 1.0,
+                    bot.id,
+                    f"request_timeout={_POLLING_PROBE_TIMEOUT_SECONDS:.1f}s, "
+                    f"hard_timeout={_POLLING_PROBE_HARD_TIMEOUT_SECONDS:.1f}s",
+                )
+                probe_started = time.monotonic()
                 try:
                     await _probe_telegram_api(bot)
                 except Exception as exc:
+                    probe_elapsed = time.monotonic() - probe_started
+                    finish_probe("failed")
                     if isinstance(exc, asyncio.TimeoutError):
                         loggers.dispatcher.error(
                             "Failed to fetch updates - TelegramNetworkError: "
-                            "Telegram API probe hard timeout after %.1fs; rebuilding HTTP session",
+                            "Telegram API probe #%d hard timeout after %.1fs "
+                            "(elapsed %.3fs); rebuilding HTTP session",
+                            probe_sequence,
                             _POLLING_PROBE_HARD_TIMEOUT_SECONDS,
+                            probe_elapsed,
                         )
                     else:
                         loggers.dispatcher.error(
-                            "Failed to fetch updates - %s: %s", type(exc).__name__, exc
+                            "Failed to fetch updates - %s after %.3fs during "
+                            "Telegram API probe #%d: %s",
+                            type(exc).__name__,
+                            probe_elapsed,
+                            probe_sequence,
+                            exc,
                         )
-                    await _close_polling_session(bot)
+                    await _close_polling_session(
+                        bot, reason=f"probe #{probe_sequence} failure"
+                    )
                     loggers.dispatcher.warning(
                         "Sleep for %f seconds and try again... (tryings = %d, bot id = %d)",
                         backoff.next_delay,
@@ -637,34 +726,64 @@ class _TelegodexDispatcher(Dispatcher):
                     await backoff.asleep()
                     continue
 
+                probe_elapsed = time.monotonic() - probe_started
+                finish_probe("success")
                 loggers.dispatcher.info(
-                    "Connection established (tryings = %d, bot id = %d)",
+                    "Connection established "
+                    "(tryings = %d, bot id = %d, probe = %d, elapsed = %.3fs)",
                     backoff.counter,
                     bot.id,
+                    probe_sequence,
+                    probe_elapsed,
                 )
                 backoff.reset()
                 failed = False
 
+            poll_sequence += 1
+            request_timeout = int(polling_timeout + bot.session.timeout)
+            finish_poll = _start_polling_phase_watchdog(
+                "getUpdates",
+                poll_sequence,
+                _POLLING_HARD_TIMEOUT_SECONDS + 1.0,
+                bot.id,
+                f"request_timeout={request_timeout}s, "
+                f"hard_timeout={_POLLING_HARD_TIMEOUT_SECONDS:.1f}s",
+            )
+            poll_started = time.monotonic()
             try:
                 updates = await _await_polling_response(
                     bot,
                     get_updates,
-                    request_timeout=int(polling_timeout + bot.session.timeout),
+                    request_timeout=request_timeout,
                 )
             except Exception as exc:
+                poll_elapsed = time.monotonic() - poll_started
+                finish_poll("failed")
                 failed = True
                 if isinstance(exc, asyncio.TimeoutError):
                     loggers.dispatcher.error(
                         "Failed to fetch updates - TelegramNetworkError: "
-                        "getUpdates hard timeout after %.1fs; rebuilding HTTP session",
+                        "getUpdates #%d hard timeout after %.1fs "
+                        "(elapsed %.3fs); rebuilding HTTP session",
+                        poll_sequence,
                         _POLLING_HARD_TIMEOUT_SECONDS,
+                        poll_elapsed,
                     )
                 else:
                     loggers.dispatcher.error(
-                        "Failed to fetch updates - %s: %s", type(exc).__name__, exc
+                        "Failed to fetch updates - %s after %.3fs during "
+                        "getUpdates #%d: %s",
+                        type(exc).__name__,
+                        poll_elapsed,
+                        poll_sequence,
+                        exc,
                     )
-                await _close_polling_session(bot)
+                await _close_polling_session(
+                    bot, reason=f"getUpdates #{poll_sequence} failure"
+                )
                 continue
+
+            finish_poll("success")
 
             for update in updates:
                 yield update

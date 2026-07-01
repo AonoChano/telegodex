@@ -11,6 +11,7 @@ related: [PRODUCT_EXPERIENCE.md, RICH_MESSAGES.md, STARTUP.md]
 
 ## Unreleased
 
+- Added polling reconnect diagnostics that report stuck `getUpdates`, `getMe` probe, and HTTP session close phases with elapsed timings, so long `probing` states can be traced to the exact blocked phase.
 - Fixed Telegram polling reconnect semantics by using short `getMe` health probes during reconnect state, so recovery is detected without waiting for a user message or a long-poll `getUpdates` response.
 - Fixed Telegram polling hard timeout handling so a stuck `getUpdates` cancellation cannot keep one reconnect attempt running for minutes after the 20-second deadline.
 - Fixed Telegram polling reconnect robustness so every polling or probe exception closes the aiogram HTTP session before backoff, preventing stale Windows/proxy sockets from being reused.

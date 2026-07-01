@@ -6,8 +6,6 @@ import os
 
 from main import (
     _AiogramPollingRetryCompactor,
-    _TerminalStatusLine,
-    _TelegodexDispatcher,
     _await_polling_response,
     _classify_polling_error,
     _fit_terminal_status_text,
@@ -15,6 +13,8 @@ from main import (
     _format_reconnect_status,
     _format_retry_limit,
     _parse_aiogram_retry_sleep,
+    _TelegodexDispatcher,
+    _TerminalStatusLine,
     _visible_width,
     _wrap_terminal_status_text,
 )
@@ -349,7 +349,7 @@ async def test_await_polling_response_timeout_does_not_wait_for_stuck_cancel(mon
     started = asyncio.get_running_loop().time()
     try:
         await _await_polling_response(FakeBot(), FakeGetUpdates(), request_timeout=18)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         elapsed = asyncio.get_running_loop().time() - started
     else:
         raise AssertionError("expected polling timeout")
