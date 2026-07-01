@@ -11,6 +11,7 @@ related: [PRODUCT_EXPERIENCE.md, RICH_MESSAGES.md, STARTUP.md]
 
 ## Unreleased
 
+- Fixed Telegram polling reconnect robustness so every polling exception closes the aiogram HTTP session before backoff, and live retry status is constrained to one terminal row to avoid erasing ordinary logs.
 - Added a hard timeout around Telegram `getUpdates` polling retries; timed-out polling requests now close the aiogram HTTP session before backoff so stale Windows/proxy sockets do not block reconnects for minutes, and reconnect details can wrap without truncation.
 - Fixed aiogram polling reconnect status so backoff shows `retry in X.Xs`, active HTTP attempts show `retrying` with a single elapsed timer, and the polling request timeout is explicitly bounded by `polling_timeout=10` plus an 8-second HTTP session timeout.
 - Redesigned aiogram polling retry display into a state-machine-driven in-place terminal status: dim italic color-blocked layout (Reconnecting · attempt/limit · retry countdown · elapsed · error), category-aware retry limits (network ∞, auth 5, server/client/unknown 10), golden-ratio backoff (max 30 s), success → green log, failure → red log + sys.exit for auth, and worker-generation guard against stale-thread races.

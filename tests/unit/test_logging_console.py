@@ -9,10 +9,11 @@ from main import (
     _TerminalStatusLine,
     _TelegodexDispatcher,
     _classify_polling_error,
+    _fit_terminal_status_text,
     _format_reconnect_status,
     _format_retry_limit,
     _parse_aiogram_retry_sleep,
-    _terminal_wrapped_line_count,
+    _visible_width,
 )
 
 
@@ -123,15 +124,38 @@ def test_format_reconnect_status_unlimited_limit() -> None:
     assert "7/∞" in text
 
 
-# ── _TerminalStatusLine ────────────────────────────────────────────────
+# ── _fit_terminal_status_text / _TerminalStatusLine ─────────────────────
 
 
-def test_terminal_wrapped_line_count_counts_cjk_and_newlines() -> None:
-    assert _terminal_wrapped_line_count("abcdef", 3) == 2
-    assert _terminal_wrapped_line_count("abc\ndef", 20) == 2
-    assert _terminal_wrapped_line_count("中文abcd", 6) == 2
+def test_fit_terminal_status_text_uses_ascii_ellipsis() -> None:
+    assert _fit_terminal_status_text("abcdefghij", 8) == "abcde..."
 
-def test_terminal_status_line_clears_before_each_update(monkeypatch) -> None:
+
+def test_fit_terminal_status_text_ansi_aware() -> None:
+    text = _format_reconnect_status(
+        "network", "TelegramNetworkError", "timeout", 1, 3.2, 12.4
+    )
+    truncated = _fit_terminal_status_text(text, 20)
+    assert _visible_width(truncated) == 20
+    assert truncated.endswith("\033[0m...")
+    assert "Reconnecting" in truncated
+
+
+def test_fit_terminal_status_text_cjk_double_width() -> None:
+    text = _format_reconnect_status(
+        "network",
+        "TelegramNetworkError",
+        "[WinError 1236] 由本地系统终止网络连接",
+        1,
+        3.2,
+        12.4,
+    )
+    truncated = _fit_terminal_status_text(text, 40)
+    assert _visible_width(truncated) <= 40
+    assert truncated.endswith("\033[0m...")
+
+
+def test_terminal_status_line_replaces_one_physical_row(monkeypatch) -> None:
     stream = io.StringIO()
     stream.isatty = lambda: True
     monkeypatch.setattr("main.sys.stderr", stream)
@@ -146,11 +170,10 @@ def test_terminal_status_line_clears_before_each_update(monkeypatch) -> None:
     status.update("Telegram polling / Telegram API unreachable (2/∞), retry in 2.3s")
 
     output = stream.getvalue()
-    assert output.count("\033[2K") >= 2
-    assert "\033[1A" in output
-    assert "Request timeout Request timeout" in output
+    assert output.count("\033[2K") == 1
+    assert "\033[1A" not in output
+    assert "..." in output
     assert "Telegram API unreachable" in output
-
 
 # ── _AiogramPollingRetryCompactor state machine ────────────────────────
 
@@ -324,5 +347,43 @@ async def test_telegodex_dispatcher_hard_timeout_rebuilds_session(monkeypatch) -
     await updates.aclose()
 
     assert update.update_id == 1
+    assert bot.calls == 2
+    assert bot.session.closed == 1
+async def test_telegodex_dispatcher_network_error_rebuilds_session(monkeypatch) -> None:
+    class FakeSession:
+        timeout = 8
+
+        def __init__(self) -> None:
+            self.closed = 0
+
+        async def close(self) -> None:
+            self.closed += 1
+
+    class FakeUpdate:
+        update_id = 2
+
+    class FakeBot:
+        id = 123
+
+        def __init__(self) -> None:
+            self.session = FakeSession()
+            self.calls = 0
+
+        async def __call__(self, *args, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("Request timeout error")
+            return [FakeUpdate()]
+
+    async def tiny_sleep(self):
+        return None
+
+    monkeypatch.setattr("main.Backoff.asleep", tiny_sleep)
+    bot = FakeBot()
+    updates = _TelegodexDispatcher._listen_updates(bot, polling_timeout=10)
+    update = await asyncio.wait_for(updates.__anext__(), timeout=0.5)
+    await updates.aclose()
+
+    assert update.update_id == 2
     assert bot.calls == 2
     assert bot.session.closed == 1

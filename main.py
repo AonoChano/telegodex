@@ -75,10 +75,10 @@ def _strip_exception_block(text: str) -> str:
 
 
 class _TerminalStatusLine:
-    """Terminal status renderer that can replace wrapped multi-line text."""
+    """Single physical terminal row that can be replaced in place."""
 
     def __init__(self) -> None:
-        self._last_rendered_lines = 0
+        self._has_line = False
         self._lock = threading.Lock()
 
     @property
@@ -89,12 +89,12 @@ class _TerminalStatusLine:
         if not self.enabled:
             return
         width = _terminal_status_width()
-        rendered_lines = _terminal_wrapped_line_count(text, width)
+        text = _fit_terminal_status_text(text, width)
         with self._lock:
             self._clear_locked()
             sys.stderr.write(text)
             sys.stderr.flush()
-            self._last_rendered_lines = rendered_lines
+            self._has_line = True
 
     def clear(self) -> None:
         if not self.enabled:
@@ -103,15 +103,11 @@ class _TerminalStatusLine:
             self._clear_locked()
 
     def _clear_locked(self) -> None:
-        if self._last_rendered_lines <= 0:
+        if not self._has_line:
             return
-        for line_index in range(self._last_rendered_lines):
-            if line_index:
-                sys.stderr.write("\033[1A")
-            sys.stderr.write("\r\033[2K")
-        self._last_rendered_lines = 0
+        sys.stderr.write("\r\033[2K")
+        self._has_line = False
         sys.stderr.flush()
-
 
 # ── Polling retry status rendering ──────────────────────────────────────
 
@@ -408,35 +404,48 @@ def _terminal_status_width() -> int:
     return max(shutil.get_terminal_size((120, 20)).columns - 2, 40)
 
 
-def _terminal_wrapped_line_count(text: str, width: int) -> int:
-    """Return how many terminal rows ``text`` will occupy at ``width`` columns."""
-    rows = 1
-    col = 0
-    pos = 0
-    while pos < len(text):
-        match = _ANSI_ESCAPE_RE.match(text, pos)
-        if match:
-            pos = match.end()
-            continue
-        ch = text[pos]
-        if ch == "\n":
-            rows += 1
-            col = 0
-            pos += 1
-            continue
-        ch_w = _char_display_width(ch)
-        if col + ch_w > width:
-            rows += 1
-            col = 0
-        col += ch_w
-        pos += 1
-    return rows
-
-
 def _char_display_width(ch: str) -> int:
     """单字符终端显示列宽：CJK 全角/宽字符占 2 列，其余 1 列。"""
     return 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
 
+
+def _visible_width(text: str) -> int:
+    """终端显示宽度：剔除 ANSI 转义码，CJK 全角字符按 2 列计算。"""
+    stripped = _ANSI_ESCAPE_RE.sub("", text)
+    return sum(_char_display_width(ch) for ch in stripped)
+
+
+def _fit_terminal_status_text(text: str, width: int) -> str:
+    """Fit status text into one terminal row without leaking ANSI styles."""
+    if _visible_width(text) <= width:
+        return text
+
+    ellipsis = "..."
+    budget = max(width - len(ellipsis), 1)
+    result: list[str] = []
+    visible = 0
+    pos = 0
+    has_ansi = False
+    while pos < len(text):
+        match = _ANSI_ESCAPE_RE.match(text, pos)
+        if match:
+            result.append(match.group(0))
+            pos = match.end()
+            has_ansi = True
+            continue
+
+        ch = text[pos]
+        ch_w = _char_display_width(ch)
+        if visible + ch_w > budget:
+            break
+        result.append(ch)
+        visible += ch_w
+        pos += 1
+
+    fitted = "".join(result).rstrip()
+    if has_ansi and not fitted.endswith(_ANSI_RESET):
+        fitted += _ANSI_RESET
+    return fitted + ellipsis
 
 def _parse_aiogram_retry_sleep(message: str) -> tuple[float, int, str] | None:
     match = re.search(
@@ -458,10 +467,28 @@ _polling_retry_compactor = _AiogramPollingRetryCompactor(_terminal_status_line)
 
 
 _POLLING_HARD_TIMEOUT_SECONDS = 20.0
+_POLLING_SESSION_CLOSE_TIMEOUT_SECONDS = 3.0
+
+
+async def _close_polling_session(bot: Bot) -> None:
+    """Close aiogram HTTP session after polling failures so the next try rebuilds it."""
+    from aiogram.dispatcher.dispatcher import loggers
+
+    try:
+        await asyncio.wait_for(
+            bot.session.close(),
+            timeout=_POLLING_SESSION_CLOSE_TIMEOUT_SECONDS,
+        )
+    except Exception as exc:
+        loggers.dispatcher.warning(
+            "Failed to close Telegram polling HTTP session - %s: %s",
+            type(exc).__name__,
+            exc,
+        )
 
 
 class _TelegodexDispatcher(Dispatcher):
-    """Dispatcher with a hard timeout around Telegram long-polling requests."""
+    """Dispatcher with a hard timeout and session rebuild around long polling."""
 
     @classmethod
     async def _listen_updates(
@@ -495,11 +522,11 @@ class _TelegodexDispatcher(Dispatcher):
                         "getUpdates hard timeout after %.1fs; rebuilding HTTP session",
                         _POLLING_HARD_TIMEOUT_SECONDS,
                     )
-                    await bot.session.close()
                 else:
                     loggers.dispatcher.error(
                         "Failed to fetch updates - %s: %s", type(exc).__name__, exc
                     )
+                await _close_polling_session(bot)
                 loggers.dispatcher.warning(
                     "Sleep for %f seconds and try again... (tryings = %d, bot id = %d)",
                     backoff.next_delay,
@@ -521,7 +548,6 @@ class _TelegodexDispatcher(Dispatcher):
             for update in updates:
                 yield update
                 get_updates.offset = update.update_id + 1
-
 
 def _handle_aiogram_polling_retry(record: logging.LogRecord, level, depth: int) -> bool:
     if record.name != "aiogram.dispatcher":
