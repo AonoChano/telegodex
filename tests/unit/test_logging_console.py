@@ -1,17 +1,18 @@
 from __future__ import annotations
 
+import asyncio
 import io
 import os
 
 from main import (
     _AiogramPollingRetryCompactor,
     _TerminalStatusLine,
+    _TelegodexDispatcher,
     _classify_polling_error,
-    _fit_terminal_status_text,
     _format_reconnect_status,
     _format_retry_limit,
     _parse_aiogram_retry_sleep,
-    _visible_width,
+    _terminal_wrapped_line_count,
 )
 
 
@@ -109,10 +110,10 @@ def test_format_reconnect_status_retrying() -> None:
 
 def test_format_reconnect_status_retrying_duration() -> None:
     text = _format_reconnect_status(
-        "network", "TelegramNetworkError", "timeout", 2, 0.0, 42.0, 24.0
+        "network", "TelegramNetworkError", "timeout", 2, 0.0, 42.0
     )
     assert "2/∞" in text
-    assert "retrying 24.0s" in text
+    assert "retrying" in text
     assert "42.0s" in text
 
 def test_format_reconnect_status_unlimited_limit() -> None:
@@ -122,48 +123,13 @@ def test_format_reconnect_status_unlimited_limit() -> None:
     assert "7/∞" in text
 
 
-# ── _fit_terminal_status_text ──────────────────────────────────────────
-
-
-def test_fit_terminal_status_text_uses_ascii_ellipsis() -> None:
-    assert _fit_terminal_status_text("abcdefghij", 8) == "abcde..."
-
-
-def test_fit_terminal_status_text_ansi_aware() -> None:
-    """ANSI 转义码不计入可见宽度，截断按可见字符计算并补 reset 防泄漏。"""
-    text = _format_reconnect_status(
-        "network", "TelegramNetworkError", "timeout", 1, 3.2, 12.4
-    )
-    # 完整可见宽度 > 20，强制截断到 width=20
-    truncated = _fit_terminal_status_text(text, 20)
-    # 预算 = 20 - 3 = 17 显示列 + "..." = 20 显示列
-    assert _visible_width(truncated) == 20
-    # 截断尾部必须是 reset + 省略号，防止颜色泄漏
-    assert truncated.endswith("\033[0m...")
-    # 前缀可见内容保留
-    assert "Reconnecting" in truncated
-
-
-def test_fit_terminal_status_text_cjk_double_width() -> None:
-    """CJK 全角字符按 2 列计算，避免中文错误消息撑爆终端宽度导致换行堆叠。"""
-    text = _format_reconnect_status(
-        "network",
-        "TelegramNetworkError",
-        "[WinError 1236] 由本地系统终止网络连接",
-        1,
-        3.2,
-        12.4,
-    )
-    # 强制截断到 40 列：必须按显示宽度算，否则中文按 1 列算会漏截
-    truncated = _fit_terminal_status_text(text, 40)
-    assert _visible_width(truncated) == 40  # 37 + "..."
-    assert truncated.endswith("\033[0m...")
-    # 中文尾部应被截断（不应完整保留）
-    assert "网络连接" not in truncated
-
-
 # ── _TerminalStatusLine ────────────────────────────────────────────────
 
+
+def test_terminal_wrapped_line_count_counts_cjk_and_newlines() -> None:
+    assert _terminal_wrapped_line_count("abcdef", 3) == 2
+    assert _terminal_wrapped_line_count("abc\ndef", 20) == 2
+    assert _terminal_wrapped_line_count("中文abcd", 6) == 2
 
 def test_terminal_status_line_clears_before_each_update(monkeypatch) -> None:
     stream = io.StringIO()
@@ -175,13 +141,15 @@ def test_terminal_status_line_clears_before_each_update(monkeypatch) -> None:
     )
 
     status = _TerminalStatusLine()
-    status.update("Telegram polling | network connection aborted (1/∞), retry in 1.2s")
+    long_detail = "TelegramNetworkError: " + "Request timeout " * 8
+    status.update("Telegram polling | " + long_detail)
     status.update("Telegram polling / Telegram API unreachable (2/∞), retry in 2.3s")
 
     output = stream.getvalue()
-    assert output.count("\033[2K") == 2
-    assert "WinError" not in output
-    assert "network connection aborted" in output
+    assert output.count("\033[2K") >= 2
+    assert "\033[1A" in output
+    assert "Request timeout Request timeout" in output
+    assert "Telegram API unreachable" in output
 
 
 # ── _AiogramPollingRetryCompactor state machine ────────────────────────
@@ -315,3 +283,46 @@ def test_parse_aiogram_retry_sleep_message() -> None:
 
 def test_parse_aiogram_retry_sleep_ignores_other_messages() -> None:
     assert _parse_aiogram_retry_sleep("Bot started") is None
+
+# ── _TelegodexDispatcher polling hard timeout ──────────────────────────
+
+
+async def test_telegodex_dispatcher_hard_timeout_rebuilds_session(monkeypatch) -> None:
+    class FakeSession:
+        timeout = 8
+
+        def __init__(self) -> None:
+            self.closed = 0
+
+        async def close(self) -> None:
+            self.closed += 1
+
+    class FakeUpdate:
+        update_id = 1
+
+    class FakeBot:
+        id = 123
+
+        def __init__(self) -> None:
+            self.session = FakeSession()
+            self.calls = 0
+
+        async def __call__(self, *args, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                await asyncio.sleep(999)
+            return [FakeUpdate()]
+
+    async def tiny_sleep(self):
+        return None
+
+    monkeypatch.setattr("main._POLLING_HARD_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr("main.Backoff.asleep", tiny_sleep)
+    bot = FakeBot()
+    updates = _TelegodexDispatcher._listen_updates(bot, polling_timeout=10)
+    update = await asyncio.wait_for(updates.__anext__(), timeout=0.5)
+    await updates.aclose()
+
+    assert update.update_id == 1
+    assert bot.calls == 2
+    assert bot.session.closed == 1

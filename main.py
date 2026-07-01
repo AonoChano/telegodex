@@ -7,13 +7,15 @@ import sys
 import threading
 import time
 import unicodedata
+from collections.abc import AsyncGenerator
 from pathlib import Path
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
+from aiogram.methods import GetUpdates
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ParseMode
-from aiogram.utils.backoff import BackoffConfig
+from aiogram.utils.backoff import Backoff, BackoffConfig
 from loguru import logger
 
 from ai import AIRouter
@@ -73,10 +75,10 @@ def _strip_exception_block(text: str) -> str:
 
 
 class _TerminalStatusLine:
-    """Single-line terminal status that can be replaced in place."""
+    """Terminal status renderer that can replace wrapped multi-line text."""
 
     def __init__(self) -> None:
-        self._last_line_len = 0
+        self._last_rendered_lines = 0
         self._lock = threading.Lock()
 
     @property
@@ -86,23 +88,29 @@ class _TerminalStatusLine:
     def update(self, text: str) -> None:
         if not self.enabled:
             return
-        width = max(shutil.get_terminal_size((120, 20)).columns - 2, 40)
-        text = _fit_terminal_status_text(text, width)
+        width = _terminal_status_width()
+        rendered_lines = _terminal_wrapped_line_count(text, width)
         with self._lock:
-            sys.stderr.write("\r\033[2K")
+            self._clear_locked()
             sys.stderr.write(text)
             sys.stderr.flush()
-            self._last_line_len = len(text)
+            self._last_rendered_lines = rendered_lines
 
     def clear(self) -> None:
         if not self.enabled:
             return
         with self._lock:
-            if self._last_line_len <= 0:
-                return
+            self._clear_locked()
+
+    def _clear_locked(self) -> None:
+        if self._last_rendered_lines <= 0:
+            return
+        for line_index in range(self._last_rendered_lines):
+            if line_index:
+                sys.stderr.write("\033[1A")
             sys.stderr.write("\r\033[2K")
-            sys.stderr.flush()
-            self._last_line_len = 0
+        self._last_rendered_lines = 0
+        sys.stderr.flush()
 
 
 # ── Polling retry status rendering ──────────────────────────────────────
@@ -186,14 +194,11 @@ def _format_reconnect_status(
     attempt: int,
     remaining: float,
     elapsed: float,
-    retrying_for: float = 0.0,
 ) -> str:
-    """单行灰度斜体分块：◦ Reconnecting · 1/5 · retry in 3.2s · 12.4s · Error: detail"""
+    """灰度斜体分块：◦ Reconnecting · 1/5 · retry in 3.2s · 12.4s · Error: detail"""
     limit_str = _format_retry_limit(category)
     if remaining > 0:
         retry_part = f"retry in {remaining:.1f}s"
-    elif retrying_for > 0:
-        retry_part = f"retrying {retrying_for:.1f}s"
     else:
         retry_part = "retrying"
     error_part = f"{error_type}: {detail}" if detail else error_type
@@ -381,7 +386,6 @@ class _AiogramPollingRetryCompactor:
                 return False  # 更新的 worker 已接管
             now = time.monotonic()
             remaining = max(self._retry_deadline - now, 0.0)
-            retrying_for = max(now - self._retry_deadline, 0.0)
             elapsed = now - self._error_time
             self._status_line.update(
                 _format_reconnect_status(
@@ -391,7 +395,6 @@ class _AiogramPollingRetryCompactor:
                     self._attempt,
                     remaining,
                     elapsed,
-                    retrying_for,
                 )
             )
             return True
@@ -401,47 +404,38 @@ class _AiogramPollingRetryCompactor:
 _ANSI_ESCAPE_RE = re.compile(r"\033\[[0-9;]*m")
 
 
-def _char_display_width(ch: str) -> int:
-    """单字符终端显示列宽：CJK 全角/宽字符占 2 列，其余 1 列。"""
-    return 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+def _terminal_status_width() -> int:
+    return max(shutil.get_terminal_size((120, 20)).columns - 2, 40)
 
 
-def _visible_width(text: str) -> int:
-    """终端显示宽度：剔除 ANSI 转义码，CJK 全角字符按 2 列计算。"""
-    stripped = _ANSI_ESCAPE_RE.sub("", text)
-    return sum(_char_display_width(ch) for ch in stripped)
-
-
-def _fit_terminal_status_text(text: str, width: int) -> str:
-    """按显示宽度截断；CJK 全角占 2 列；含 ANSI 时截断处补 reset 防泄漏。
-
-    必须按显示列宽而非字符数计算，否则中文错误消息会超出终端宽度，
-    触发自动换行，破坏 ``\\r\\033[2K`` 的原地替换语义。
-    """
-    if _visible_width(text) <= width:
-        return text
-    budget = max(width - 3, 0)
-    result: list[str] = []
-    used = 0
+def _terminal_wrapped_line_count(text: str, width: int) -> int:
+    """Return how many terminal rows ``text`` will occupy at ``width`` columns."""
+    rows = 1
+    col = 0
     pos = 0
-    has_ansi = False
     while pos < len(text):
         match = _ANSI_ESCAPE_RE.match(text, pos)
         if match:
-            # ANSI 转义码原样保留，不计入显示预算
-            result.append(match.group())
             pos = match.end()
-            has_ansi = True
             continue
         ch = text[pos]
+        if ch == "\n":
+            rows += 1
+            col = 0
+            pos += 1
+            continue
         ch_w = _char_display_width(ch)
-        if used + ch_w > budget:
-            break
-        result.append(ch)
-        used += ch_w
+        if col + ch_w > width:
+            rows += 1
+            col = 0
+        col += ch_w
         pos += 1
-    result.append(f"{_ANSI_RESET}..." if has_ansi else "...")
-    return "".join(result)
+    return rows
+
+
+def _char_display_width(ch: str) -> int:
+    """单字符终端显示列宽：CJK 全角/宽字符占 2 列，其余 1 列。"""
+    return 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
 
 
 def _parse_aiogram_retry_sleep(message: str) -> tuple[float, int, str] | None:
@@ -461,6 +455,72 @@ def _parse_aiogram_retry_sleep(message: str) -> tuple[float, int, str] | None:
 
 _terminal_status_line = _TerminalStatusLine()
 _polling_retry_compactor = _AiogramPollingRetryCompactor(_terminal_status_line)
+
+
+_POLLING_HARD_TIMEOUT_SECONDS = 20.0
+
+
+class _TelegodexDispatcher(Dispatcher):
+    """Dispatcher with a hard timeout around Telegram long-polling requests."""
+
+    @classmethod
+    async def _listen_updates(
+        cls,
+        bot: Bot,
+        polling_timeout: int = 10,
+        backoff_config: BackoffConfig = BackoffConfig(
+            min_delay=1.0,
+            max_delay=5.0,
+            factor=1.3,
+            jitter=0.1,
+        ),
+        allowed_updates: list[str] | None = None,
+    ) -> AsyncGenerator[object, None]:
+        from aiogram.dispatcher.dispatcher import loggers
+
+        backoff = Backoff(config=backoff_config)
+        get_updates = GetUpdates(timeout=polling_timeout, allowed_updates=allowed_updates)
+        failed = False
+        while True:
+            try:
+                updates = await asyncio.wait_for(
+                    bot(get_updates, request_timeout=int(polling_timeout + bot.session.timeout)),
+                    timeout=_POLLING_HARD_TIMEOUT_SECONDS,
+                )
+            except Exception as exc:
+                failed = True
+                if isinstance(exc, asyncio.TimeoutError):
+                    loggers.dispatcher.error(
+                        "Failed to fetch updates - TelegramNetworkError: "
+                        "getUpdates hard timeout after %.1fs; rebuilding HTTP session",
+                        _POLLING_HARD_TIMEOUT_SECONDS,
+                    )
+                    await bot.session.close()
+                else:
+                    loggers.dispatcher.error(
+                        "Failed to fetch updates - %s: %s", type(exc).__name__, exc
+                    )
+                loggers.dispatcher.warning(
+                    "Sleep for %f seconds and try again... (tryings = %d, bot id = %d)",
+                    backoff.next_delay,
+                    backoff.counter,
+                    bot.id,
+                )
+                await backoff.asleep()
+                continue
+
+            if failed:
+                loggers.dispatcher.info(
+                    "Connection established (tryings = %d, bot id = %d)",
+                    backoff.counter,
+                    bot.id,
+                )
+                backoff.reset()
+                failed = False
+
+            for update in updates:
+                yield update
+                get_updates.offset = update.update_id + 1
 
 
 def _handle_aiogram_polling_retry(record: logging.LogRecord, level, depth: int) -> bool:
@@ -658,14 +718,14 @@ async def main():
     #
     # 网络断后一次 getUpdates 会一直等到 request_timeout 才抛异常；这段时间
     # 不是 backoff sleep，而是正在尝试连接 Telegram。保持 polling_timeout=10，
-    # session timeout=8 后，故障兜底约 18s + backoff，状态行会显示 retrying。
+    # session timeout=8 外再加 20s hard timeout；超时后重建 HTTP session，状态行会显示 retrying。
     bot = Bot(
         token=bot_token,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
         session=AiohttpSession(timeout=8),
     )
     await run_telegram_startup_checks(bot, settings.admin_ids)
-    dp = Dispatcher()
+    dp = _TelegodexDispatcher()
 
     # 注册路由
     dp.include_router(toolbar_router)

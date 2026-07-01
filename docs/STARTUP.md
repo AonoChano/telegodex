@@ -70,9 +70,9 @@ The banner version is read from `pyproject.toml`. If the project version changes
 When Telegram polling loses connectivity, Telegodex renders one in-place terminal status line instead of repeating full tracebacks.
 
 - `retry in X.Xs` means aiogram is in backoff before the next `getUpdates` request.
-- `retrying` or `retrying X.Xs` means the next `getUpdates` request has started and has not returned yet.
+- `retrying` means the next `getUpdates` request has started and has not returned yet; the following elapsed field is the only running timer.
 
-The polling loop uses `polling_timeout=10` and an aiogram HTTP session timeout of 8 seconds. Aiogram combines these into the request timeout for `getUpdates`, so a broken network should fail in roughly 18 seconds plus the configured backoff instead of appearing stuck for a long system-level timeout.
+The polling loop uses `polling_timeout=10`, an aiogram HTTP session timeout of 8 seconds, and an outer 20-second hard timeout around each `getUpdates` request. If the request reaches the hard timeout, Telegodex closes the aiogram HTTP session so the next retry rebuilds the connection instead of waiting on a stale Windows/proxy socket. Long error details are allowed to wrap; the terminal status renderer clears all rows from the previous status before drawing the next one.
 
 ## Telegram Startup Checks
 

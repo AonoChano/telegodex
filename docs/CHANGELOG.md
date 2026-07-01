@@ -11,8 +11,9 @@ related: [PRODUCT_EXPERIENCE.md, RICH_MESSAGES.md, STARTUP.md]
 
 ## Unreleased
 
-- Fixed aiogram polling reconnect status so backoff shows `retry in X.Xs`, active HTTP attempts show `retrying` / `retrying X.Xs`, and the polling request timeout is explicitly bounded by `polling_timeout=10` plus an 8-second HTTP session timeout.
-- Redesigned aiogram polling retry display into a state-machine-driven single-line status: dim italic color-blocked layout (Reconnecting · attempt/limit · retry countdown · elapsed · error), category-aware retry limits (network ∞, auth 5, server/client/unknown 10), golden-ratio backoff (max 30 s), success → green log, failure → red log + sys.exit for auth, and worker-generation guard against stale-thread races.
+- Added a hard timeout around Telegram `getUpdates` polling retries; timed-out polling requests now close the aiogram HTTP session before backoff so stale Windows/proxy sockets do not block reconnects for minutes, and reconnect details can wrap without truncation.
+- Fixed aiogram polling reconnect status so backoff shows `retry in X.Xs`, active HTTP attempts show `retrying` with a single elapsed timer, and the polling request timeout is explicitly bounded by `polling_timeout=10` plus an 8-second HTTP session timeout.
+- Redesigned aiogram polling retry display into a state-machine-driven in-place terminal status: dim italic color-blocked layout (Reconnecting · attempt/limit · retry countdown · elapsed · error), category-aware retry limits (network ∞, auth 5, server/client/unknown 10), golden-ratio backoff (max 30 s), success → green log, failure → red log + sys.exit for auth, and worker-generation guard against stale-thread races.
 - Removed deprecated vendor-specific AI provider modules now superseded by the TOML transport registry, and added a chat/thread conversation index for existing and new databases.
 - Updated public README, Quickstart, Usage, Architecture, and localized README docs to describe the `provider.toml` registry instead of the removed JSON custom-provider flow.
 - Fixed provider TOML runtime behavior so `.env` API keys are hydrated without overriding shell variables, missing default providers fail closed, provider `headers`/`query` reach SDK clients, and `[global]` request defaults are honored by normal chat.
