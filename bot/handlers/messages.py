@@ -1,4 +1,3 @@
-import time
 from inspect import isawaitable
 from typing import Any
 
@@ -10,17 +9,15 @@ from sqlalchemy import select
 
 from ai import AIRouter, MessageRole
 from ai import Message as AIMessage
+from bot.handlers.chat_response import DRAFT_MAX_CALLS_PER_ID, generate_chat_provider_response
 from bot.handlers.chat_runtime import select_chat_runtime
 from bot.handlers.chat_sessions import load_session_data, resolve_provider_conversation, save_session_data
 from bot.handlers.chat_tool_requests import (
     handle_chat_tool_request,
     has_chat_tool_request,
-    looks_like_chat_tool_request_prefix,
 )
-from bot.handlers.provider_errors import format_provider_error, is_terminal_provider_error
 from bot.keyboards import get_main_menu, get_settings_menu
 from bot.telegram_draft import DraftStream
-from bot.utils.latex import normalize_rich_markdown_latex
 from bot.utils.markdown import format_markdown_v2
 from bot.utils.rich_messages import send_rich_message
 from bot.utils.routing import TelegramRoute
@@ -32,30 +29,6 @@ from storage import ContextManager
 from storage.models import User
 
 router = Router()
-
-# 流式 draft 触发字符阈值：积攒 N 字符再推送一次。Telegram 官方文档没有公开
-# draft 的更新频率上限，参考 telegramify-markdown 的 DraftStream 实践，64 字符
-# 是一个在"动画流畅"和"不刷屏"之间的折中。
-DRAFT_FLUSH_CHARS = 64
-# 流式 draft 触发最长时间：超过 N 秒强制推送一次（兜底）
-DRAFT_FLUSH_INTERVAL = 1.5
-# 单次草稿内容上限：sendMessageDraft 文本最大 4096 字符
-DRAFT_MAX_CHARS = 4000
-# 同一次响应内对**同一 draft_id** 的最大推送次数。超过后停止草稿，攒到
-# sendRichMessage 持久化时一次性发出。30 秒预览窗口 + 反滥用保护实测上
-# 6 次左右开始出现 raised/拒绝。
-DRAFT_MAX_CALLS_PER_ID = 6
-# 响应总字符数低于此值时跳过草稿阶段，直接 sendRichMessage 持久化。短回复
-# 频繁推草稿不划算（看起来在闪、实则在等）。
-DRAFT_MIN_RESPONSE_CHARS = 80
-
-
-async def _push_draft(stream: DraftStream | None, text: str) -> None:
-    """Wrapper around DraftStream.push with empty-text guard."""
-    if stream is None or not text:
-        return
-    await stream.push(text)
-
 
 def escape_markdown(text: str) -> str:
     """转义 Telegram MarkdownV2 特殊字符（用于 Bot 自身消息）"""
@@ -376,102 +349,18 @@ async def handle_message(
         temperature = runtime.temperature
         max_output_tokens = runtime.max_output_tokens
 
-        response_text = ""
-        response_model = model_name
-        response_tokens = None
-        stream_used = False
-
-        # ---- 1) 优先尝试流式 ----
-        if runtime.streaming:
-            try:
-                buffer = ""
-                last_flush = time.monotonic()
-                if stream is not None:
-                    # 推送占位草稿（让用户立即看到"思考中"）
-                    await stream.push("💭 …", force_plain=True)
-
-                async for chunk in provider.chat_stream(
-                    messages=messages_with_system,
-                    model=model_name,
-                    temperature=temperature,
-                    max_tokens=max_output_tokens,
-                ):
-                    if not chunk:
-                        continue
-                    stream_used = True
-                    response_text += chunk
-                    buffer += chunk
-                    now = time.monotonic()
-                    # 草稿会带动画；按字符数 + 时间双触发，但短回复不推草稿
-                    if len(buffer) >= DRAFT_FLUSH_CHARS or (now - last_flush) >= DRAFT_FLUSH_INTERVAL:
-                        if len(response_text) >= DRAFT_MIN_RESPONSE_CHARS and not looks_like_chat_tool_request_prefix(
-                            response_text
-                        ):
-                            await _push_draft(
-                                stream,
-                                normalize_rich_markdown_latex(response_text[-DRAFT_MAX_CHARS:]),
-                            )
-                        buffer = ""
-                        last_flush = now
-
-                # 流结束：若响应已经够长，推送一次最终草稿
-                if (
-                    stream_used
-                    and stream is not None
-                    and response_text
-                    and len(response_text) >= DRAFT_MIN_RESPONSE_CHARS
-                    and not looks_like_chat_tool_request_prefix(response_text)
-                ):
-                    await _push_draft(
-                        stream,
-                        normalize_rich_markdown_latex(response_text[-DRAFT_MAX_CHARS:]),
-                    )
-            except Exception as stream_err:
-                if is_terminal_provider_error(stream_err):
-                    logger.warning(
-                        f"流式 chat_stream 遇到终止性服务商错误，不再回退非流式: {type(stream_err).__name__}: {stream_err}"
-                    )
-                    await message.answer(
-                        format_provider_error(stream_err, provider_name),
-                        **route.send_kwargs(),
-                    )
-                    return
-                logger.warning(f"流式 chat_stream 失败，回退非流式: {type(stream_err).__name__}: {stream_err}")
-                stream_used = False
-                response_text = ""
-
-        # ---- 2) 流式失败 / 没拿到内容则回退非流式 ----
-        if not stream_used:
-            try:
-                response = await provider.chat(
-                    messages=messages_with_system,
-                    model=model_name,
-                    temperature=temperature,
-                    max_tokens=max_output_tokens,
-                )
-            except Exception as chat_err:
-                logger.error(f"非流式 provider.chat 失败: {type(chat_err).__name__}: {chat_err}")
-                await message.answer(
-                    format_provider_error(chat_err, provider_name),
-                    **route.send_kwargs(),
-                )
-                return
-            response_text = response.content
-            response_model = response.model
-            response_tokens = response.usage.get("total_tokens") if response.usage else None
-            # 非流式时尝试一次草稿，让用户在持久化前先看到完整预览
-            if (
-                stream is not None
-                and response_text
-                and len(response_text) >= DRAFT_MIN_RESPONSE_CHARS
-                and not looks_like_chat_tool_request_prefix(response_text)
-            ):
-                await _push_draft(
-                    stream,
-                    normalize_rich_markdown_latex(response_text[-DRAFT_MAX_CHARS:]),
-                )
-
-        response_text = normalize_rich_markdown_latex(response_text)
+        provider_response = await generate_chat_provider_response(
+            message=message,
+            route=route,
+            messages_with_system=messages_with_system,
+            runtime=runtime,
+            stream=stream,
+        )
+        if provider_response is None:
+            return
+        response_text = provider_response.text
+        response_model = provider_response.model
+        response_tokens = provider_response.tokens
 
         tool_outcome = await handle_chat_tool_request(
             tool_response_text=response_text,
