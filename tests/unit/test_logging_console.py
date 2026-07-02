@@ -79,6 +79,30 @@ def test_classify_polling_error_unknown_exception() -> None:
     assert detail == "something broke"
 
 
+
+def test_classify_polling_error_phase_variant() -> None:
+    message = (
+        "Failed to fetch updates - TelegramNetworkError after 3.104s during "
+        "startup getMe #2: HTTP Client says - Request timeout error"
+    )
+    category, error_type, _, detail = _classify_polling_error(message)
+    assert category == "network"
+    assert error_type == "TelegramNetworkError"
+    assert "startup getMe #2 after 3.104s" in detail
+    assert "Request timeout error" in detail
+
+
+def test_classify_polling_error_startup_getme_detail() -> None:
+    message = (
+        "Failed to fetch updates - TelegramNetworkError: startup getMe #2 "
+        "failed after 3.104s: HTTP Client says - Request timeout error"
+    )
+    category, error_type, _, detail = _classify_polling_error(message)
+    assert category == "network"
+    assert error_type == "TelegramNetworkError"
+    assert "startup getMe #2 failed after 3.104s" in detail
+    assert "Request timeout error" in detail
+
 # ── _format_retry_limit ────────────────────────────────────────────────
 
 

@@ -11,6 +11,7 @@ related: [PRODUCT_EXPERIENCE.md, RICH_MESSAGES.md, STARTUP.md]
 
 ## Unreleased
 
+- Fixed startup polling reconnect classification so phase-timed Telegram network errors remain `TelegramNetworkError` with an unlimited network retry limit instead of showing `Unknown` and `2/10`.
 - Fixed Telegram polling startup so aiogram's initial `getMe` identity request uses the bounded reconnect path instead of exiting the process on transient Bot API network failures.
 - Fixed Codex daemon shutdown during startup failure cleanup by calling the existing `shutdown()` method instead of a nonexistent `stop()` method.
 - Added polling reconnect diagnostics that report stuck `getUpdates`, `getMe` probe, and HTTP session close phases with elapsed timings, so long `probing` states can be traced to the exact blocked phase.

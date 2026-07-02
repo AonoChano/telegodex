@@ -150,7 +150,9 @@ _POLLING_RETRY_LIMITS: dict[str, int | None] = {
 }
 
 _POLLING_ERROR_PATTERN = re.compile(
-    r"^Failed to fetch updates - (?P<type>\w+): (?P<detail>.*)$"
+    r"^Failed to fetch updates - (?P<type>\w+)"
+    r"(?:: (?P<detail>.*)| after (?P<elapsed>[0-9.]+)s during "
+    r"(?P<phase>[^:]+): (?P<phase_detail>.*))$"
 )
 
 
@@ -165,7 +167,13 @@ def _classify_polling_error(message: str) -> tuple[str, str, str, str]:
         return ("unknown", "Unknown", "未知错误", "")
 
     error_type = match.group("type")
-    detail = match.group("detail").strip()
+    detail = match.group("detail")
+    if detail is None:
+        detail = (
+            f"{match.group('phase')} after {match.group('elapsed')}s: "
+            f"{match.group('phase_detail')}"
+        )
+    detail = detail.strip()
 
     # 砍掉 aiogram / aiohttp 的冗长前缀
     for prefix in (
@@ -661,11 +669,11 @@ async def _wait_for_bot_identity(bot: Bot, backoff_config: BackoffConfig):
                 )
             else:
                 loggers.dispatcher.error(
-                    "Failed to fetch updates - %s after %.3fs during "
-                    "startup getMe #%d: %s",
+                    "Failed to fetch updates - %s: startup getMe #%d "
+                    "failed after %.3fs: %s",
                     type(exc).__name__,
-                    elapsed,
                     sequence,
+                    elapsed,
                     exc,
                 )
             await _close_polling_session(
@@ -828,11 +836,11 @@ class _TelegodexDispatcher(Dispatcher):
                         )
                     else:
                         loggers.dispatcher.error(
-                            "Failed to fetch updates - %s after %.3fs during "
-                            "Telegram API probe #%d: %s",
+                            "Failed to fetch updates - %s: Telegram API probe #%d "
+                            "failed after %.3fs: %s",
                             type(exc).__name__,
-                            probe_elapsed,
                             probe_sequence,
+                            probe_elapsed,
                             exc,
                         )
                     await _close_polling_session(
@@ -892,11 +900,11 @@ class _TelegodexDispatcher(Dispatcher):
                     )
                 else:
                     loggers.dispatcher.error(
-                        "Failed to fetch updates - %s after %.3fs during "
-                        "getUpdates #%d: %s",
+                        "Failed to fetch updates - %s: getUpdates #%d "
+                        "failed after %.3fs: %s",
                         type(exc).__name__,
-                        poll_elapsed,
                         poll_sequence,
+                        poll_elapsed,
                         exc,
                     )
                 await _close_polling_session(
