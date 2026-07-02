@@ -134,7 +134,7 @@ async def _handle_close(callback: CallbackQuery) -> None:
 async def _handle_toc_navigation(
     callback: CallbackQuery, renderer: HelpRenderer, locale: str
 ) -> None:
-    """Handle TOC pagination: in-place edit, fall back to delete + send."""
+    """Handle TOC pagination: in-place edit, fall back to send-new + delete-old."""
     data = callback.data or ""
     try:
         page = int(data[len("help:toc:") :])
@@ -146,25 +146,35 @@ async def _handle_toc_navigation(
         try:
             await callback.message.edit_text(text, reply_markup=keyboard)
         except Exception as exc:
-            logger.debug(f"TOC edit_text failed, falling back to delete + send: {exc}")
+            # edit_text fails when the current message is a Rich Message
+            # (Telegram Bot API has no editMessageRichMessage). Fall back to
+            # sending the new page FIRST, then deleting the old one — this
+            # keeps content visible at all times instead of flashing blank.
+            logger.debug(f"TOC edit_text failed, falling back to send + delete: {exc}")
             route = TelegramRoute.from_message(callback.message)
             try:
+                await callback.bot.send_message(
+                    chat_id=route.chat_id,
+                    text=text,
+                    reply_markup=keyboard,
+                    **_bot_send_kwargs(route),
+                )
                 await callback.message.delete()
-            except Exception:
-                pass
-            await callback.bot.send_message(
-                chat_id=route.chat_id,
-                text=text,
-                reply_markup=keyboard,
-                **_bot_send_kwargs(route),
-            )
+            except Exception as fallback_exc:
+                logger.debug(f"TOC fallback send+delete failed: {fallback_exc}")
     await callback.answer()
 
 
 async def _handle_chapter_navigation(
     callback: CallbackQuery, renderer: HelpRenderer, locale: str
 ) -> None:
-    """Handle chapter page navigation: delete old + send rich message."""
+    """Handle chapter page navigation: send new rich message, then delete old.
+
+    Rich Messages cannot be edited in place (Telegram Bot API has no
+    ``editMessageRichMessage``), so we must resend. To avoid the "disappear
+    then reappear" flash, the new page is sent FIRST and the old message is
+    deleted only after the new one is visible.
+    """
     data = callback.data or ""
     parts = data.split(":")
     if len(parts) != 4:
@@ -185,11 +195,11 @@ async def _handle_chapter_navigation(
         await callback.answer()
         return
     route = TelegramRoute.from_message(callback.message)
-    try:
-        await callback.message.delete()
-    except Exception as exc:
-        logger.debug(f"Failed to delete old help message: {exc}")
     bot_token = callback.bot.token if callback.bot else None
+
+    # Send the new page FIRST so content is always visible (no blank gap),
+    # then delete the old message. Only delete after a successful send —
+    # if sending fails, leave the old page intact so the user can retry.
     sent = False
     if bot_token:
         sent = await send_rich_message(
@@ -200,11 +210,22 @@ async def _handle_chapter_navigation(
             message_thread_id=route.message_thread_id,
         )
     if not sent:
-        await callback.bot.send_message(
-            chat_id=route.chat_id,
-            text=text,
-            parse_mode="Markdown",
-            reply_markup=keyboard,
-            **_bot_send_kwargs(route),
-        )
+        try:
+            await callback.bot.send_message(
+                chat_id=route.chat_id,
+                text=text,
+                parse_mode="Markdown",
+                reply_markup=keyboard,
+                **_bot_send_kwargs(route),
+            )
+            sent = True
+        except Exception as exc:
+            logger.debug(f"Help chapter fallback send_message failed: {exc}")
+
+    if sent:
+        try:
+            await callback.message.delete()
+        except Exception as exc:
+            logger.debug(f"Failed to delete old help message: {exc}")
+
     await callback.answer()
