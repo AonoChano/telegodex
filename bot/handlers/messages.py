@@ -17,12 +17,13 @@ from bot.handlers.chat_tool_requests import (
     handle_chat_tool_request,
     has_chat_tool_request,
 )
-from bot.keyboards import get_main_menu, get_settings_menu
+from bot.keyboards import get_language_selector, get_main_menu, get_settings_menu
 from bot.telegram_draft import DraftStream
 from bot.utils.routing import TelegramRoute
 from config import settings
 from core.orchestrator.chat_tools import build_telegodex_capability_prompt
 from core.session import SessionKey, session_manager
+from i18n import list_available_locales, resolve_locale, tr
 from prompts import get_prompt_manager
 from storage import ContextManager
 from storage.models import User
@@ -44,47 +45,42 @@ async def cmd_start(message: Message, context_manager: ContextManager, ai_router
     route = TelegramRoute.from_message(message)
 
     # 创建或更新用户
-    await context_manager.get_or_create_user(
+    db_user = await context_manager.get_or_create_user(
         user_id=user.id,
         username=user.username,
         first_name=user.first_name,
         last_name=user.last_name,
         language_code=user.language_code,
     )
+    locale = resolve_locale(db_user.ui_language, db_user.language_code)
 
     user_name = escape_markdown(user.first_name or "User")
     providers = []
     if ai_router.is_provider_available("openai"):
-        providers.append("• ✅ OpenAI \\(GPT\\)")
+        providers.append(tr("bot.commands.start.providers_prefix.openai", locale))
     if ai_router.is_provider_available("anthropic"):
-        providers.append("• ✅ Anthropic \\(Claude\\)")
+        providers.append(tr("bot.commands.start.providers_prefix.anthropic", locale))
     if ai_router.is_provider_available("google"):
-        providers.append("• ✅ Google \\(Gemini\\)")
+        providers.append(tr("bot.commands.start.providers_prefix.google", locale))
     for provider_name in ai_router.list_available_providers():
         if provider_name.lower() not in {"openai", "anthropic", "google"}:
-            providers.append(f"• ✅ {escape_markdown(provider_name)}")
+            providers.append(
+                tr("bot.commands.start.providers_prefix.custom", locale, provider=escape_markdown(provider_name))
+            )
 
-    providers_text = "\n".join(providers) if providers else "• ⚠️ 无可用服务商"
+    providers_text = "\n".join(providers) if providers else tr("bot.commands.start.no_providers", locale)
 
-    welcome_text = f"""👋 欢迎使用 **Telegodex**\\!
-
-你好，{user_name}\\!
-
-我是一个多 AI 服务商的智能助手，支持：
-{providers_text}
-
-发送任何消息开始对话，或使用菜单按钮\\!
-
-📌 快速命令：
-/new \\- 开始新对话
-/settings \\- 设置
-/help \\- 帮助
-"""
+    welcome_text = tr(
+        "bot.commands.start.welcome",
+        locale,
+        name=user_name,
+        providers=providers_text,
+    )
 
     await message.answer(
         welcome_text,
         parse_mode="MarkdownV2",
-        reply_markup=get_main_menu(),
+        reply_markup=get_main_menu(locale),
         **route.send_kwargs(),
     )
 
@@ -93,27 +89,8 @@ async def cmd_start(message: Message, context_manager: ContextManager, ai_router
 async def cmd_help(message: Message):
     """处理 /help 命令"""
     route = TelegramRoute.from_message(message)
-    help_text = """📖 **帮助文档**
-
-**基本命令：**
-/start \\- 启动机器人
-/new \\- 开始新对话
-/clear \\- 清空当前对话
-/settings \\- 打开设置
-/help \\- 显示帮助
-
-**功能说明：**
-• 直接发送消息即可与 AI 对话
-• 支持多轮对话，自动保存上下文
-• 可在设置中切换不同的 AI 服务商
-• 支持完整的 Markdown 格式
-
-**Markdown 示例：**
-\\*斜体\\* \\- *斜体*
-\\*\\*粗体\\*\\* \\- **粗体**
-\\[链接\\]\\(url\\) \\- [链接](https://example.com)
-\\`代码\\` \\- `代码`
-"""
+    locale = resolve_locale(None, message.from_user.language_code if message.from_user else None)
+    help_text = tr("bot.commands.help.text", locale)
 
     await message.answer(help_text, parse_mode="MarkdownV2", **route.send_kwargs())
 
@@ -123,6 +100,7 @@ async def cmd_settings(message: Message, context_manager: ContextManager | None 
     """Open the settings menu."""
     route = TelegramRoute.from_message(message)
     permission_mode = None
+    locale = resolve_locale(None, message.from_user.language_code if message.from_user else None)
     if context_manager is not None and message.from_user is not None:
         try:
             result = await context_manager.session.execute(select(User).where(User.id == message.from_user.id))
@@ -130,11 +108,26 @@ async def cmd_settings(message: Message, context_manager: ContextManager | None 
             if isawaitable(user):
                 user = await user
             permission_mode = getattr(user, "tool_permission_mode", None)
+            locale = resolve_locale(user.ui_language, user.language_code)
         except Exception as exc:
             logger.debug(f"Failed to load settings permission mode: {exc}")
     await message.answer(
-        "Settings",
-        reply_markup=get_settings_menu(permission_mode),
+        tr("bot.commands.settings.title", locale),
+        reply_markup=get_settings_menu(permission_mode, locale),
+        **route.send_kwargs(),
+    )
+
+
+@router.message(Command("language"))
+async def cmd_language(message: Message) -> None:
+    """Open the language selector."""
+    route = TelegramRoute.from_message(message)
+    locale = resolve_locale(None, message.from_user.language_code if message.from_user else None)
+    available = list_available_locales()
+    keyboard = get_language_selector(available, locale, back_callback="settings:back", locale=locale)
+    await message.answer(
+        tr("bot.callbacks.language_title", locale),
+        reply_markup=keyboard,
         **route.send_kwargs(),
     )
 
@@ -149,8 +142,9 @@ async def cmd_new(message: Message, context_manager: ContextManager):
     # 创建新对话（按 topic 隔离）
     await context_manager.create_new_conversation(user_id, thread_id=thread_id, chat_id=route.chat_id)
 
+    locale = resolve_locale(None, message.from_user.language_code if message.from_user else None)
     await message.answer(
-        "✅ 已开始新对话\\!",
+        tr("bot.commands.new.success", locale),
         parse_mode="MarkdownV2",
         **route.send_kwargs(),
     )
@@ -167,8 +161,9 @@ async def cmd_clear(message: Message, context_manager: ContextManager):
 
     await context_manager.clear_conversation(conversation.id)
 
+    locale = resolve_locale(None, message.from_user.language_code if message.from_user else None)
     await message.answer(
-        "🗑️ 当前对话历史已清空\\!",
+        tr("bot.commands.clear.success", locale),
         parse_mode="MarkdownV2",
         **route.send_kwargs(),
     )
@@ -191,11 +186,14 @@ async def cmd_model(
     if prompt.startswith("/model"):
         prompt = prompt[len("/model") :].strip()
 
+    user = await context_manager.get_or_create_user(user_id)
+    locale = resolve_locale(user.ui_language, user.language_code)
+
     if not prompt:
         available = ai_router.list_available_providers()
-        lines = ["**Usage:** `/model <provider>`", "", "**Available providers:**"]
+        lines = [tr("bot.commands.model.usage", locale), ""]
         for name in available:
-            lines.append(f"- `{name}`")
+            lines.append(tr("bot.commands.model.available", locale, name=name))
         await message.answer(
             "\n".join(lines),
             parse_mode="Markdown",
@@ -206,13 +204,12 @@ async def cmd_model(
     provider_name = prompt.lower()
     if not ai_router.is_provider_available(provider_name):
         await message.answer(
-            f"❌ Unknown provider: `{provider_name}`",
+            tr("bot.commands.model.unknown", locale, provider=provider_name),
             parse_mode="Markdown",
             **route.send_kwargs(),
         )
         return
 
-    user = await context_manager.get_or_create_user(user_id)
     conversation = await context_manager.get_or_create_conversation(user_id, thread_id=thread_id, chat_id=route.chat_id)
 
     session_data = await load_session_data(conversation, session_key)
@@ -235,7 +232,7 @@ async def cmd_model(
     await context_manager.session.commit()
 
     await message.answer(
-        f"✅ Switched to `{provider_name}`\\.\n_Messages in this thread are now isolated per provider\\._",
+        tr("bot.commands.model.switched", locale, provider=provider_name),
         parse_mode="MarkdownV2",
         **route.send_kwargs(),
     )
@@ -257,26 +254,43 @@ async def handle_message(
     user_text = sanitize_input(user_text, max_length=4000)
 
     if not user_text:
-        await message.answer("⚠️ 消息内容为空或过长", **route.send_kwargs())
-        return
-
-    # 菜单按钮处理
-    if user_text in ["💬 新对话", "📝 历史记录", "⚙️ 设置", "ℹ️ 帮助"]:
-        if user_text == "💬 新对话":
-            await cmd_new(message, context_manager)
-            return
-        if user_text == "⚙️ 设置":
-            await cmd_settings(message, context_manager)
-            return
-        if user_text == "ℹ️ 帮助":
-            await cmd_help(message)
-            return
-        # TODO: 实现历史记录
-        await message.answer("功能开发中...", **route.send_kwargs())
+        locale = resolve_locale(None, message.from_user.language_code if message.from_user else None)
+        await message.answer(tr("bot.errors.empty_input", locale), **route.send_kwargs())
         return
 
     # 获取用户和对话（按 topic + provider 隔离）
     user = await context_manager.get_or_create_user(user_id)
+    locale = resolve_locale(user.ui_language, user.language_code)
+
+    # 菜单按钮处理 — match across ALL locales for robustness
+    # (user's ReplyKeyboard may still show old-language text after language change)
+    menu_keys = {
+        "bot.menu.new_chat": "new_chat",
+        "bot.menu.history": "history",
+        "bot.menu.settings": "settings",
+        "bot.menu.help": "help",
+    }
+    menu_options = {}
+    for _locale_info in list_available_locales():
+        for _key, _action in menu_keys.items():
+            _text = tr(_key, _locale_info.locale)
+            if _text != _key:
+                menu_options[_text] = _action
+    if user_text in menu_options:
+        choice = menu_options[user_text]
+        if choice == "new_chat":
+            await cmd_new(message, context_manager)
+            return
+        if choice == "settings":
+            await cmd_settings(message, context_manager)
+            return
+        if choice == "help":
+            await cmd_help(message)
+            return
+        # TODO: 实现历史记录
+        await message.answer(tr("bot.callbacks.wip", locale), **route.send_kwargs())
+        return
+
     session_key = SessionKey.from_telegram_message(route.chat_id, route.message_thread_id)
 
     # Bootstrap session data from the current active conversation.
@@ -286,7 +300,7 @@ async def handle_message(
     runtime = select_chat_runtime(user, ai_router)
     if runtime is None:
         await message.answer(
-            "❌ 没有可用的 AI 服务商，请检查配置",
+            tr("bot.errors.no_provider", locale),
             **route.send_kwargs(),
         )
         return
@@ -354,6 +368,7 @@ async def handle_message(
             messages_with_system=messages_with_system,
             runtime=runtime,
             stream=stream,
+            locale=locale,
         )
         if provider_response is None:
             return
@@ -375,6 +390,7 @@ async def handle_message(
             model_name=model_name,
             temperature=temperature,
             max_output_tokens=max_output_tokens,
+            locale=locale,
         )
         if has_chat_tool_request(response_text):
             if tool_outcome is None:
@@ -383,7 +399,7 @@ async def handle_message(
 
         if not response_text.strip():
             await message.answer(
-                "⚠️ AI 返回了空内容",
+                tr("bot.errors.empty_response", locale),
                 **route.send_kwargs(),
             )
             return
@@ -419,6 +435,6 @@ async def handle_message(
     except Exception as e:
         logger.error(f"AI 调用失败: {e}")
         await message.answer(
-            f"❌ 处理失败: {str(e)}",
+            tr("bot.errors.processing_failed", locale, error=str(e)),
             **route.send_kwargs(),
         )

@@ -10,7 +10,9 @@ from core.orchestrator.chat_tools import (
 
 
 def test_permission_mode_labels_and_cycle() -> None:
-    assert permission_mode_label(None) == "用户确认"
+    assert permission_mode_label(None, "zh-cn") == "用户确认"
+    assert permission_mode_label(None) == "User confirm"
+    assert permission_mode_label(None, "en") == "User confirm"
     assert next_permission_mode("confirm") == "full"
     assert next_permission_mode("full") == "chat"
     assert next_permission_mode("chat") == "confirm"

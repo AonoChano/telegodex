@@ -8,8 +8,9 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 from sqlalchemy import desc, func, select
 
 from bot.utils.routing import TelegramRoute
+from i18n import resolve_locale, tr
 from storage import ContextManager
-from storage.models import ConversationMessage
+from storage.models import ConversationMessage, User
 
 router = Router(name="history")
 
@@ -17,27 +18,27 @@ PAGE_SIZE = 10
 
 
 def _history_keyboard(
-    page: int, total_pages: int, conversation_id: int
+    page: int, total_pages: int, conversation_id: int, locale: str | None = None
 ) -> InlineKeyboardMarkup:
     """Build pagination keyboard for history."""
     nav: list[InlineKeyboardButton] = []
     if page > 1:
         nav.append(
             InlineKeyboardButton(
-                text="⬅️ Previous",
+                text=tr("bot.history.prev_page", locale),
                 callback_data=f"history:{conversation_id}:{page - 1}",
             )
         )
     nav.append(
         InlineKeyboardButton(
-            text=f"{page}/{total_pages}",
+            text=tr("bot.history.page_indicator", locale, page=page, total_pages=total_pages),
             callback_data="history:ignore",
         )
     )
     if page < total_pages:
         nav.append(
             InlineKeyboardButton(
-                text="Next ➡️",
+                text=tr("bot.history.next_page", locale),
                 callback_data=f"history:{conversation_id}:{page + 1}",
             )
         )
@@ -70,7 +71,7 @@ async def _fetch_history_page(
     return messages, total
 
 
-def _format_messages(messages: list[ConversationMessage]) -> str:
+def _format_messages(messages: list[ConversationMessage], locale: str | None = None) -> str:
     """Format a list of messages into Markdown text."""
     lines: list[str] = []
     for msg in reversed(messages):
@@ -82,7 +83,7 @@ def _format_messages(messages: list[ConversationMessage]) -> str:
         lines.append(content)
         lines.append("")
     text = "\n".join(lines).strip()
-    return text or "📭 No messages on this page."
+    return text or tr("bot.history.empty_page", locale)
 
 
 @router.message(Command("history"))
@@ -93,6 +94,14 @@ async def cmd_history(
     """Handle /history [page] command."""
     route = TelegramRoute.from_message(message)
     user_id = message.from_user.id if message.from_user else 0
+
+    # Resolve user locale
+    user_result = await context_manager.session.execute(select(User).where(User.id == user_id))
+    user_obj = user_result.scalar_one_or_none()
+    locale = resolve_locale(
+        getattr(user_obj, "ui_language", None) if user_obj else None,
+        message.from_user.language_code if message.from_user else None,
+    )
 
     # Parse optional page number
     text = message.text or ""
@@ -117,7 +126,7 @@ async def cmd_history(
 
     if not messages and total == 0:
         await message.answer(
-            "📭 当前对话没有历史消息。",
+            tr("bot.history.empty_conversation", locale),
             **route.send_kwargs(),
         )
         return
@@ -130,8 +139,8 @@ async def cmd_history(
         )
         total_pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
 
-    text = _format_messages(messages)
-    keyboard = _history_keyboard(page, total_pages, conversation.id)
+    text = _format_messages(messages, locale)
+    keyboard = _history_keyboard(page, total_pages, conversation.id, locale)
 
     await message.answer(
         text,
@@ -147,14 +156,24 @@ async def handle_history_callback(
     context_manager: ContextManager,
 ) -> None:
     """Handle history pagination inline buttons."""
+    # Resolve user locale
+    user_result = await context_manager.session.execute(
+        select(User).where(User.id == callback_query.from_user.id)
+    )
+    user_obj = user_result.scalar_one_or_none()
+    locale = resolve_locale(
+        getattr(user_obj, "ui_language", None) if user_obj else None,
+        callback_query.from_user.language_code if callback_query.from_user else None,
+    )
+
     data = callback_query.data
     if data is None:
-        await callback_query.answer("Invalid callback")
+        await callback_query.answer(tr("bot.history.invalid_callback", locale))
         return
 
     parts = data.split(":")
     if len(parts) != 3:
-        await callback_query.answer("Invalid callback")
+        await callback_query.answer(tr("bot.history.invalid_callback", locale))
         return
 
     _, conv_id_str, page_str = parts
@@ -166,7 +185,7 @@ async def handle_history_callback(
         conversation_id = int(conv_id_str)
         page = int(page_str)
     except ValueError:
-        await callback_query.answer("Invalid callback")
+        await callback_query.answer(tr("bot.history.invalid_callback", locale))
         return
 
     messages, total = await _fetch_history_page(
@@ -174,12 +193,12 @@ async def handle_history_callback(
     )
 
     if not messages:
-        await callback_query.answer("No messages on this page.")
+        await callback_query.answer(tr("bot.history.empty_page", locale))
         return
 
     total_pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
-    text = _format_messages(messages)
-    keyboard = _history_keyboard(page, total_pages, conversation_id)
+    text = _format_messages(messages, locale)
+    keyboard = _history_keyboard(page, total_pages, conversation_id, locale)
 
     await callback_query.message.edit_text(
         text,

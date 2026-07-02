@@ -19,6 +19,7 @@ from core.orchestrator.chat_tools import (
 )
 from core.orchestrator.shell_pipeline import ShellCommandProposal, format_shell_proposal_html
 from core.session import SessionKey
+from i18n import tr
 from storage import ContextManager
 from storage.models import Conversation
 
@@ -51,6 +52,7 @@ async def handle_chat_tool_request(
     model_name: str | None,
     temperature: float,
     max_output_tokens: int,
+    locale: str | None = None,
 ) -> tuple[str, str | None, int | None] | None:
     """Handle a normal-chat tool request.
 
@@ -62,14 +64,10 @@ async def handle_chat_tool_request(
         return None
 
     mode = normalize_permission_mode(permission_mode)
-    label = permission_mode_label(mode)
+    label = permission_mode_label(mode, locale)
 
     if mode == "chat":
-        text = (
-            "权限当前为 `仅对话`。我不会运行命令或调用本地工具。\n\n"
-            "需要我查看本地环境、执行命令或使用工具时，请在设置里把权限切到 `用户确认` "
-            "或 `⚠️ 完全访问` 后再继续。"
-        )
+        text = tr("bot.chat_tool.permission_denied", locale)
         await context_manager.add_message(
             conversation_id=conversation.id,
             role=MessageRole.ASSISTANT,
@@ -80,7 +78,7 @@ async def handle_chat_tool_request(
 
     if mode == "confirm":
         if orchestrator is None or not hasattr(orchestrator, "pending_shell_commands"):
-            text = "Telegodex detected a tool request, but approval handling is not available in this chat runtime."
+            text = tr("bot.chat_tool.approval_unavailable", locale)
             await context_manager.add_message(
                 conversation_id=conversation.id,
                 role=MessageRole.ASSISTANT,
@@ -99,14 +97,20 @@ async def handle_chat_tool_request(
         }
         proposal = ShellCommandProposal(
             command=request.command,
-            explanation=request.reason or "The chat AI requested this command to complete the task.",
-            risk=request.risk or f"Permission mode: {label}",
+            explanation=request.reason or tr("bot.chat_tool.proposal_explanation", locale),
+            risk=request.risk or tr("bot.chat_tool.proposal_risk", locale, label=label),
         )
         keyboard = InlineKeyboardMarkup(
             inline_keyboard=[
                 [
-                    InlineKeyboardButton(text="Run", callback_data=f"shell_ai:{approval_id}:run"),
-                    InlineKeyboardButton(text="Cancel", callback_data=f"shell_ai:{approval_id}:cancel"),
+                    InlineKeyboardButton(
+                        text=tr("bot.chat_tool.run_button", locale),
+                        callback_data=f"shell_ai:{approval_id}:run",
+                    ),
+                    InlineKeyboardButton(
+                        text=tr("bot.chat_tool.cancel_button", locale),
+                        callback_data=f"shell_ai:{approval_id}:cancel",
+                    ),
                 ]
             ]
         )
@@ -126,7 +130,7 @@ async def handle_chat_tool_request(
 
     shell_provider = getattr(orchestrator, "shell_provider", None) if orchestrator is not None else None
     if shell_provider is None or not hasattr(shell_provider, "execute"):
-        text = "Telegodex full-access tool execution is unavailable because no shell provider is attached."
+        text = tr("bot.chat_tool.shell_unavailable", locale)
         await context_manager.add_message(
             conversation_id=conversation.id,
             role=MessageRole.ASSISTANT,
@@ -161,5 +165,5 @@ async def handle_chat_tool_request(
         response_tokens = response.usage.get("total_tokens") if response.usage else None
 
     if parse_chat_tool_request(current_text) is not None:
-        current_text = "Tool loop stopped after 3 rounds. Please review the latest command result and try again."
+        current_text = tr("bot.chat_tool.tool_loop_stopped", locale)
     return current_text, response_model, response_tokens

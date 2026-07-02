@@ -15,6 +15,7 @@ from bot.handlers.provider_errors import format_provider_error, is_terminal_prov
 from bot.telegram_draft import DraftStream
 from bot.utils.latex import normalize_rich_markdown_latex
 from bot.utils.routing import TelegramRoute
+from i18n import tr
 
 # 流式 draft 触发字符阈值：积攒 N 字符再推送一次。Telegram 官方文档没有公开
 # draft 的更新频率上限，参考 telegramify-markdown 的 DraftStream 实践，64 字符
@@ -54,6 +55,7 @@ async def generate_chat_provider_response(
     messages_with_system: list[AIMessage],
     runtime: ChatRuntimeSelection,
     stream: DraftStream | None,
+    locale: str | None = None,
 ) -> ChatProviderResponse | None:
     """Generate one normal-chat provider response, including stream fallback."""
     provider_name = runtime.provider_name
@@ -114,7 +116,7 @@ async def generate_chat_provider_response(
                     f"流式 chat_stream 遇到终止性服务商错误，不再回退非流式: {type(stream_err).__name__}: {stream_err}"
                 )
                 await message.answer(
-                    format_provider_error(stream_err, provider_name),
+                    format_provider_error(stream_err, provider_name, locale),
                     **route.send_kwargs(),
                 )
                 return None
@@ -133,7 +135,7 @@ async def generate_chat_provider_response(
         except Exception as chat_err:
             logger.error(f"非流式 provider.chat 失败: {type(chat_err).__name__}: {chat_err}")
             await message.answer(
-                format_provider_error(chat_err, provider_name),
+                format_provider_error(chat_err, provider_name, locale),
                 **route.send_kwargs(),
             )
             return None

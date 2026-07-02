@@ -43,7 +43,7 @@ def test_provider_error_message_reads_nested_body_error():
 def test_format_provider_error_includes_provider_and_status_hint():
     exc = ProviderError(status_code=402, body={"message": "insufficient balance"})
 
-    text = format_provider_error(exc, "deepseek")
+    text = format_provider_error(exc, "deepseek", "zh-cn")
 
     assert "余额或额度不足" in text
     assert "服务商: deepseek" in text
@@ -54,4 +54,4 @@ def test_non_terminal_provider_error_uses_generic_hint():
     exc = ProviderError("temporary upstream failure")
 
     assert is_terminal_provider_error(exc) is False
-    assert "稍后重试" in format_provider_error(exc, "zhipu")
+    assert "稍后重试" in format_provider_error(exc, "zhipu", "zh-cn")

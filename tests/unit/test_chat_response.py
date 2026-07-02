@@ -50,6 +50,7 @@ async def test_generate_chat_provider_response_falls_back_after_stream_error():
         messages_with_system=[Message(role=MessageRole.USER, content="hello")],
         runtime=_runtime(provider),
         stream=None,
+        locale="zh-cn",
     )
 
     assert result is not None
@@ -72,6 +73,7 @@ async def test_generate_chat_provider_response_stops_on_terminal_stream_error():
         messages_with_system=[Message(role=MessageRole.USER, content="hello")],
         runtime=_runtime(provider),
         stream=None,
+        locale="zh-cn",
     )
 
     assert result is None

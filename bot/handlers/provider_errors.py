@@ -1,5 +1,7 @@
 """Provider error classification for normal chat handlers."""
 
+from i18n import tr
+
 TERMINAL_PROVIDER_STATUS_CODES = {401, 402, 403, 429}
 TERMINAL_PROVIDER_ERROR_MARKERS = (
     "insufficient balance",
@@ -50,19 +52,19 @@ def is_terminal_provider_error(exc: Exception) -> bool:
     return any(marker in message for marker in TERMINAL_PROVIDER_ERROR_MARKERS)
 
 
-def format_provider_error(exc: Exception, provider_name: str) -> str:
+def format_provider_error(exc: Exception, provider_name: str, locale: str | None = None) -> str:
     """Build a user-facing provider error without exposing raw SDK payloads."""
     status_code = provider_error_status_code(exc)
     message = provider_error_message(exc).lower()
 
     if status_code == 402 or "insufficient balance" in message or "余额" in message:
-        hint = "当前 AI 服务商返回余额或额度不足。请充值、更换服务商，或稍后再试。"
+        hint = tr("bot.provider_errors.hint_insufficient_balance", locale)
     elif status_code == 429 or "rate limit" in message or "quota" in message or "限额" in message:
-        hint = "当前 AI 服务商触发了频率或额度限制。请稍后再试，或切换到其他服务商。"
+        hint = tr("bot.provider_errors.hint_rate_limit", locale)
     elif status_code in {401, 403} or "unauthorized" in message or "forbidden" in message:
-        hint = "当前 AI 服务商拒绝了请求。请检查 API Key、账号权限、余额或中转站额度。"
+        hint = tr("bot.provider_errors.hint_auth_failed", locale)
     else:
-        hint = "AI 服务商请求失败。请稍后重试，或切换到其他服务商。"
+        hint = tr("bot.provider_errors.hint_generic", locale)
 
-    status_line = f"\nHTTP 状态码: {status_code}" if status_code is not None else ""
-    return f"❌ AI 服务商请求失败\n\n{hint}\n\n服务商: {provider_name}{status_line}"
+    status_line = tr("bot.provider_errors.status_line", locale, status_code=status_code) if status_code is not None else ""
+    return tr("bot.provider_errors.main", locale, hint=hint, provider=provider_name, status_line=status_line)

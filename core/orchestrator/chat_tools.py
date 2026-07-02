@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from ai.base import Message, MessageRole
+from i18n import tr
 from prompts.shell import SHELL_TOOL_RESULT_TEMPLATE
 from prompts.telegodex import TELEGODEX_CAPABILITY_CHAT_PROMPT, TELEGODEX_CAPABILITY_TOOL_TEMPLATE
 
@@ -20,12 +21,6 @@ ToolPermissionMode = Literal["chat", "confirm", "full"]
 
 PERMISSION_MODES: tuple[ToolPermissionMode, ...] = ("chat", "confirm", "full")
 DEFAULT_PERMISSION_MODE: ToolPermissionMode = "confirm"
-
-PERMISSION_MODE_LABELS: dict[ToolPermissionMode, str] = {
-    "chat": "仅对话",
-    "confirm": "用户确认",
-    "full": "⚠️ 完全访问",
-}
 
 
 @dataclass(frozen=True)
@@ -52,15 +47,16 @@ def next_permission_mode(value: str | None) -> ToolPermissionMode:
     return PERMISSION_MODES[(idx + 1) % len(PERMISSION_MODES)]
 
 
-def permission_mode_label(value: str | None) -> str:
+def permission_mode_label(value: str | None, locale: str | None = None) -> str:
     """Return the human-readable Telegram label for a permission mode."""
-    return PERMISSION_MODE_LABELS[normalize_permission_mode(value)]
+    mode = normalize_permission_mode(value)
+    return tr(f"core.permission.{mode}", locale or "en")
 
 
-def build_telegodex_capability_prompt(permission_mode: str | None) -> str:
+def build_telegodex_capability_prompt(permission_mode: str | None, locale: str | None = None) -> str:
     """Build the normal-chat system addendum for Telegodex capability awareness."""
     mode = normalize_permission_mode(permission_mode)
-    label = permission_mode_label(mode)
+    label = permission_mode_label(mode, locale)
 
     if mode == "chat":
         return "\n\n" + TELEGODEX_CAPABILITY_CHAT_PROMPT
