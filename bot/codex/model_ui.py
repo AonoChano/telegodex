@@ -36,10 +36,10 @@ async def handle_model_command(
 ) -> None:
     """Switch AI provider without losing other provider context."""
     if load_session_data is None or resolve_provider_conversation is None or save_session_data is None:
-        from bot.handlers.messages import (
-            _load_session_data,
-            _resolve_provider_conversation,
-            _save_session_data,
+        from bot.handlers.chat_sessions import (
+            load_session_data as _load_session_data,
+            resolve_provider_conversation as _resolve_provider_conversation,
+            save_session_data as _save_session_data,
         )
 
         load_session_data = load_session_data or _load_session_data
