@@ -11,6 +11,7 @@ related: [PRODUCT_EXPERIENCE.md, RICH_MESSAGES.md, STARTUP.md]
 
 ## Unreleased
 
+- Extracted normal-chat tool request handling from the message handler into a focused module with parser coverage.
 - Extracted normal-chat provider error classification from the message handler into a focused module with unit coverage.
 - Removed the unused in-memory AuthManager export from the security module so authorization state is not confused with persisted user records.
 - Restored the in-place Telegram polling reconnect status as the default display, while keeping `TELEGODEX_POLLING_INLINE_STATUS=0` for diagnostic line-by-line logs.
