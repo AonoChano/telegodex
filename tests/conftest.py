@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -10,6 +11,16 @@ import pytest
 
 from core.session import SessionKey, session_manager
 from core.session.data import ProviderSessionData, SessionData
+from i18n import get_i18n_manager
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _init_i18n():
+    """Initialize the i18n manager once for all tests."""
+    locales_dir = Path(__file__).parent.parent / "i18n" / "locales"
+    manager = get_i18n_manager()
+    manager.initialize(locales_dir)
+    yield
 
 
 @pytest.fixture(autouse=True)

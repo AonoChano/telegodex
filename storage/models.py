@@ -40,6 +40,7 @@ class User(Base):
     preferred_model = Column(String(100), nullable=True)
     temperature = Column(String(10), default="0.7")
     tool_permission_mode = Column(String(20), default="confirm")
+    ui_language = Column(String(10), nullable=True)  # UI language preference (e.g., "zh-cn", "en")
     # 关系
     conversations = relationship("Conversation", back_populates="user", cascade="all, delete-orphan")
 
@@ -126,6 +127,7 @@ class Database:
             await self._ensure_column(conn, "conversations", "cwd", "VARCHAR")
             await self._ensure_column(conn, "conversations", "provider_sessions", "JSON")
             await self._ensure_column(conn, "users", "tool_permission_mode", "VARCHAR(20)")
+            await self._ensure_column(conn, "users", "ui_language", "VARCHAR(10)")
             await self._ensure_index(conn, "conversations", "ix_conversations_user_chat_thread_active")
         logger.info("✓ 数据库初始化完成")
 

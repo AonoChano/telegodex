@@ -1075,6 +1075,18 @@ async def main():
     db = Database(settings.database_url)
     await db.init_db()
 
+    # Initialize i18n
+    from i18n import get_i18n_manager
+    from pathlib import Path
+
+    locales_dir = Path(__file__).parent / "i18n" / "locales"
+    try:
+        i18n_manager = get_i18n_manager()
+        i18n_manager.initialize(locales_dir)
+        logger.info(f"i18n: {len(i18n_manager.list_available_locales())} locale(s) loaded")
+    except Exception as e:
+        logger.error(f"i18n initialization failed: {e}")
+
     # Wire DB session factory into codex handler for approval DB fallback.
     from bot.handlers.codex import set_db_session_factory
     set_db_session_factory(db.get_session)

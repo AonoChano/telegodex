@@ -1,0 +1,130 @@
+{
+  "_meta": {
+    "locale": "zh-cn",
+    "display_name": "简体中文(中国)"
+  },
+  "bot": {
+    "menu": {
+      "new_chat": "💬 新对话",
+      "history": "📝 历史记录",
+      "settings": "⚙️ 设置",
+      "help": "ℹ️ 帮助"
+    },
+    "commands": {
+      "start": {
+        "welcome": "👋 欢迎使用 **Telegodex**\\!\n\n你好，{name}\\!\n\n我是一个多 AI 服务商的智能助手，支持：\n{providers}\n\n发送任何消息开始对话，或使用菜单按钮\\!\n\n📌 快速命令：\n/new \\- 开始新对话\n/settings \\- 设置\n/help \\- 帮助",
+        "no_providers": "• ⚠️ 无可用服务商",
+        "providers_prefix": {
+          "openai": "• ✅ OpenAI \\(GPT\\)",
+          "anthropic": "• ✅ Anthropic \\(Claude\\)",
+          "google": "• ✅ Google \\(Gemini\\)",
+          "custom": "• ✅ {provider}"
+        }
+      },
+      "help": {
+        "text": "📖 **帮助文档**\n\n**基本命令：**\n/start \\- 启动机器人\n/new \\- 开始新对话\n/clear \\- 清空当前对话\n/settings \\- 打开设置\n/help \\- 显示帮助\n\n**功能说明：**\n• 直接发送消息即可与 AI 对话\n• 支持多轮对话，自动保存上下文\n• 可在设置中切换不同的 AI 服务商\n• 支持完整的 Markdown 格式\n\n**Markdown 示例：**\n\\*斜体\\* \\- *斜体*\n\\*\\*粗体\\*\\* \\- **粗体**\n\\[链接\\]\\(url\\) \\- [链接](https://example.com)\n\\`代码\\` \\- `代码`"
+      },
+      "new": {
+        "success": "✅ 已开始新对话\\!"
+      },
+      "clear": {
+        "success": "🗑️ 当前对话历史已清空\\!"
+      },
+      "settings": {
+        "title": "设置"
+      },
+      "model": {
+        "usage": "**用法：** `/model <provider>`\n\n**可用服务商：**",
+        "available": "- `{name}`",
+        "unknown": "❌ 未知服务商：`{provider}`",
+        "switched": "✅ 已切换到 `{provider}`\\.\n_此话题中的消息现在按服务商隔离\\._"
+      }
+    },
+    "settings": {
+      "title": "⚙️ 设置",
+      "switch_provider": "🤖 切换 AI 服务商",
+      "select_model": "🎯 选择模型",
+      "adjust_temperature": "🌡️ 调整温度参数",
+      "permission": "权限:{label}",
+      "language": "🌐 语言",
+      "stats": "📊 查看使用统计",
+      "close": "« 关闭",
+      "back": "« 返回",
+      "select_provider_title": "🤖 选择 AI 服务商：",
+      "select_model_title": "🎯 选择模型 ({provider})："
+    },
+    "callbacks": {
+      "provider_switched": "✅ 已切换到 {provider}",
+      "model_switched": "✅ 已切换到 {model}",
+      "confirm_clear": "⚠️ 确定要清空所有对话历史吗？此操作不可撤销！",
+      "history_cleared": "✅ 所有对话历史已清空！",
+      "canceled": "已取消",
+      "wip": "功能开发中...",
+      "language_title": "🌐 选择语言：",
+      "approval_handled": "Codex 审批已处理：{decision}",
+      "language_changed": "✅ 已切换到 {language}"
+    },
+    "errors": {
+      "empty_input": "⚠️ 消息内容为空或过长",
+      "no_provider": "❌ 没有可用的 AI 服务商，请检查配置",
+      "empty_response": "⚠️ AI 返回了空内容",
+      "processing_failed": "❌ 处理失败: {error}",
+      "unknown_provider": "❌ 未知服务商: `{provider}`",
+      "invalid_callback": "无效的回调数据",
+      "approval_timeout": "审批已超时"
+    },
+    "common": {
+      "back": "« 返回",
+      "close": "« 关闭",
+      "confirm": "✅ 确认",
+      "cancel": "❌ 取消"
+    },
+    "keyboards": {
+      "provider_openai": "🟢 OpenAI (GPT)",
+      "provider_anthropic": "🔵 Anthropic (Claude)",
+      "provider_google": "🔴 Google (Gemini)",
+      "provider_active": "✅ {label}",
+      "clear_history": "🗑️ 清空历史",
+      "help_tutorial": "📚 使用教程",
+      "help_commands": "🔧 命令列表",
+      "help_markdown": "💡 Markdown 语法",
+      "help_contact": "👨‍💻 联系开发者"
+    },
+    "history": {
+      "prev_page": "⬅️ 上一页",
+      "next_page": "下一页 ➡️",
+      "page_indicator": "{page}/{total_pages}",
+      "empty_page": "📭 本页无消息。",
+      "empty_conversation": "📭 当前对话没有历史消息。",
+      "invalid_callback": "无效的回调"
+    },
+    "chat_tool": {
+      "permission_denied": "权限当前为 `仅对话`。我不会运行命令或调用本地工具。\n\n需要我查看本地环境、执行命令或使用工具时，请在设置里把权限切到 `用户确认` 或 `⚠️ 完全访问` 后再继续。",
+      "approval_unavailable": "Telegodex 检测到工具请求，但当前聊天运行时不可用审批处理。",
+      "shell_unavailable": "Telegodex 完全访问工具执行不可用，因为未附加 shell provider。",
+      "proposal_explanation": "聊天 AI 请求执行此命令以完成任务。",
+      "proposal_risk": "权限模式: {label}",
+      "tool_loop_stopped": "工具循环已停止（3 轮后）。请查看最新的命令结果并重试。",
+      "run_button": "运行",
+      "cancel_button": "取消"
+    },
+    "provider_errors": {
+      "main": "❌ AI 服务商请求失败\n\n{hint}\n\n服务商: {provider}{status_line}",
+      "hint_insufficient_balance": "当前 AI 服务商返回余额或额度不足。请充值、更换服务商，或稍后再试。",
+      "hint_rate_limit": "当前 AI 服务商触发了频率或额度限制。请稍后再试，或切换到其他服务商。",
+      "hint_auth_failed": "当前 AI 服务商拒绝了请求。请检查 API Key、账号权限、余额或中转站额度。",
+      "hint_generic": "AI 服务商请求失败。请稍后重试，或切换到其他服务商。",
+      "status_line": "\nHTTP 状态码: {status_code}"
+    },
+    "streaming": {
+      "typing": "💭 …"
+    }
+  },
+  "core": {
+    "permission": {
+      "chat": "仅对话",
+      "confirm": "用户确认",
+      "full": "⚠️ 完全访问"
+    }
+  }
+}

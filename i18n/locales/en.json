@@ -1,0 +1,130 @@
+{
+  "_meta": {
+    "locale": "en",
+    "display_name": "English"
+  },
+  "bot": {
+    "menu": {
+      "new_chat": "💬 New chat",
+      "history": "📝 History",
+      "settings": "⚙️ Settings",
+      "help": "ℹ️ Help"
+    },
+    "commands": {
+      "start": {
+        "welcome": "👋 Welcome to **Telegodex**\\!\n\nHello, {name}\\!\n\nI'm an intelligent assistant with multi\\-provider AI support, supporting:\n{providers}\n\nSend any message to start a conversation, or use the menu buttons\\!\n\n📌 Quick commands:\n/new \\- Start a new conversation\n/settings \\- Settings\n/help \\- Help",
+        "no_providers": "• ⚠️ No providers available",
+        "providers_prefix": {
+          "openai": "• ✅ OpenAI \\(GPT\\)",
+          "anthropic": "• ✅ Anthropic \\(Claude\\)",
+          "google": "• ✅ Google \\(Gemini\\)",
+          "custom": "• ✅ {provider}"
+        }
+      },
+      "help": {
+        "text": "📖 **Help**\n\n**Basic commands:**\n/start \\- Start the bot\n/new \\- Start a new conversation\n/clear \\- Clear current conversation\n/settings \\- Open settings\n/help \\- Show help\n\n**Features:**\n• Send a message to chat with AI directly\n• Multi\\-turn conversation with automatic context saving\n• Switch between AI providers in settings\n• Full Markdown support\n\n**Markdown examples:**\n\\*italic\\* \\- *italic*\n\\*\\*bold\\*\\* \\- **bold**\n\\[link\\]\\(url\\) \\- [link](https://example.com)\n\\`code\\` \\- `code`"
+      },
+      "new": {
+        "success": "✅ Started a new conversation\\!"
+      },
+      "clear": {
+        "success": "🗑️ Current conversation history cleared\\!"
+      },
+      "settings": {
+        "title": "Settings"
+      },
+      "model": {
+        "usage": "**Usage:** `/model <provider>`\n\n**Available providers:**",
+        "available": "- `{name}`",
+        "unknown": "❌ Unknown provider: `{provider}`",
+        "switched": "✅ Switched to `{provider}`\\.\n_Messages in this thread are now isolated per provider\\._"
+      }
+    },
+    "settings": {
+      "title": "⚙️ Settings",
+      "switch_provider": "🤖 Switch AI provider",
+      "select_model": "🎯 Select model",
+      "adjust_temperature": "🌡️ Adjust temperature",
+      "permission": "Permission:{label}",
+      "language": "🌐 Language",
+      "stats": "📊 View usage statistics",
+      "close": "« Close",
+      "back": "« Back",
+      "select_provider_title": "🤖 Select AI provider:",
+      "select_model_title": "🎯 Select model ({provider}):"
+    },
+    "callbacks": {
+      "provider_switched": "✅ Switched to {provider}",
+      "model_switched": "✅ Switched to {model}",
+      "confirm_clear": "⚠️ Are you sure you want to clear all conversation history? This action cannot be undone!",
+      "history_cleared": "✅ All conversation history cleared!",
+      "canceled": "Cancelled",
+      "wip": "Feature in development...",
+      "language_title": "🌐 Select Language:",
+      "approval_handled": "Codex approval handled: {decision}",
+      "language_changed": "✅ Language switched to {language}"
+    },
+    "errors": {
+      "empty_input": "⚠️ Message is empty or too long",
+      "no_provider": "❌ No AI provider available, please check configuration",
+      "empty_response": "⚠️ AI returned empty content",
+      "processing_failed": "❌ Processing failed: {error}",
+      "unknown_provider": "❌ Unknown provider: `{provider}`",
+      "invalid_callback": "Invalid callback data",
+      "approval_timeout": "Approval already timed out"
+    },
+    "common": {
+      "back": "« Back",
+      "close": "« Close",
+      "confirm": "✅ Confirm",
+      "cancel": "❌ Cancel"
+    },
+    "keyboards": {
+      "provider_openai": "🟢 OpenAI (GPT)",
+      "provider_anthropic": "🔵 Anthropic (Claude)",
+      "provider_google": "🔴 Google (Gemini)",
+      "provider_active": "✅ {label}",
+      "clear_history": "🗑️ Clear history",
+      "help_tutorial": "📚 Tutorial",
+      "help_commands": "🔧 Commands list",
+      "help_markdown": "💡 Markdown syntax",
+      "help_contact": "👨‍💻 Contact developer"
+    },
+    "history": {
+      "prev_page": "⬅️ Previous",
+      "next_page": "Next ➡️",
+      "page_indicator": "{page}/{total_pages}",
+      "empty_page": "📭 No messages on this page.",
+      "empty_conversation": "📭 No history messages in this conversation.",
+      "invalid_callback": "Invalid callback"
+    },
+    "chat_tool": {
+      "permission_denied": "Permission is currently `Chat only`. I will not run commands or invoke local tools.\n\nTo inspect the local environment, execute commands, or use tools, switch the permission to `User confirm` or `⚠️ Full access` in settings before continuing.",
+      "approval_unavailable": "Telegodex detected a tool request, but approval handling is not available in this chat runtime.",
+      "shell_unavailable": "Telegodex full-access tool execution is unavailable because no shell provider is attached.",
+      "proposal_explanation": "The chat AI requested this command to complete the task.",
+      "proposal_risk": "Permission mode: {label}",
+      "tool_loop_stopped": "Tool loop stopped after 3 rounds. Please review the latest command result and try again.",
+      "run_button": "Run",
+      "cancel_button": "Cancel"
+    },
+    "provider_errors": {
+      "main": "❌ AI provider request failed\n\n{hint}\n\nProvider: {provider}{status_line}",
+      "hint_insufficient_balance": "The current AI provider returned insufficient balance or quota. Please recharge, switch providers, or try again later.",
+      "hint_rate_limit": "The current AI provider triggered a rate or quota limit. Please try again later or switch to another provider.",
+      "hint_auth_failed": "The current AI provider rejected the request. Please check API Key, account permissions, balance, or relay quota.",
+      "hint_generic": "AI provider request failed. Please try again later or switch to another provider.",
+      "status_line": "\nHTTP status code: {status_code}"
+    },
+    "streaming": {
+      "typing": "💭 …"
+    }
+  },
+  "core": {
+    "permission": {
+      "chat": "Chat only",
+      "confirm": "User confirm",
+      "full": "⚠️ Full access"
+    }
+  }
+}
