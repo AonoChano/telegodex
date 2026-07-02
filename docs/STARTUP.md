@@ -67,7 +67,9 @@ The banner version is read from `pyproject.toml`. If the project version changes
 
 ## Polling Reconnect Status
 
-When Telegram polling loses connectivity, Telegodex renders one in-place terminal status block instead of repeating full tracebacks.
+When Telegram polling loses connectivity, Telegodex currently logs each reconnect event as ordinary terminal log lines so timing problems can be diagnosed from the exact sequence of failures, sleeps, probes, and phase diagnostics. The older in-place reconnect status can be enabled explicitly by setting `TELEGODEX_POLLING_INLINE_STATUS=1` before startup.
+
+When inline status is enabled:
 
 - `retry in <duration>` means aiogram is in backoff before the next Bot API health probe.
 - `probing` means Telegodex is sending a short Bot API health probe to check whether Telegram is reachable again; the following elapsed field is the total reconnect duration.

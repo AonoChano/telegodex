@@ -16,6 +16,7 @@ from main import (
     _format_reconnect_status,
     _format_retry_limit,
     _parse_aiogram_retry_sleep,
+    _polling_inline_status_enabled,
     _TelegodexDispatcher,
     _TerminalStatusLine,
     _visible_width,
@@ -37,6 +38,20 @@ class _FakeStatusLine:
     def clear(self) -> None:
         self.clears += 1
 
+
+# ── polling inline status switch ───────────────────────────────────────
+
+
+def test_polling_inline_status_disabled_by_default(monkeypatch) -> None:
+    monkeypatch.delenv("TELEGODEX_POLLING_INLINE_STATUS", raising=False)
+
+    assert not _polling_inline_status_enabled()
+
+
+def test_polling_inline_status_can_be_enabled(monkeypatch) -> None:
+    monkeypatch.setenv("TELEGODEX_POLLING_INLINE_STATUS", "1")
+
+    assert _polling_inline_status_enabled()
 
 # ── _classify_polling_error ────────────────────────────────────────────
 

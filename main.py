@@ -918,8 +918,16 @@ class _TelegodexDispatcher(Dispatcher):
                 yield update
                 get_updates.offset = update.update_id + 1
 
+def _polling_inline_status_enabled() -> bool:
+    """Enable in-place polling status only when explicitly requested."""
+    value = os.getenv("TELEGODEX_POLLING_INLINE_STATUS", "").strip().lower()
+    return value in {"1", "true", "yes", "on"}
+
+
 def _handle_aiogram_polling_retry(record: logging.LogRecord, level, depth: int) -> bool:
     if record.name != "aiogram.dispatcher":
+        return False
+    if not _polling_inline_status_enabled():
         return False
 
     message = record.getMessage()
@@ -997,9 +1005,11 @@ def _setup_logging() -> None:
     root = logging.getLogger()
     root.handlers = [_InterceptHandler()]
     root.setLevel(logging.INFO)
-    for noisy in ("aiogram.event", "aiogram.dispatcher",
-                  "aiogram.middlewares", "aiohttp.access"):
+    for noisy in ("aiogram.event", "aiogram.middlewares", "aiohttp.access"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
+    logging.getLogger("aiogram.dispatcher").setLevel(
+        logging.WARNING if _polling_inline_status_enabled() else logging.INFO
+    )
 
 if os.name == "nt":
     import msvcrt

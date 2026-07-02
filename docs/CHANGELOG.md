@@ -11,6 +11,7 @@ related: [PRODUCT_EXPERIENCE.md, RICH_MESSAGES.md, STARTUP.md]
 
 ## Unreleased
 
+- Switched Telegram polling reconnect output to ordinary diagnostic log lines by default, with `TELEGODEX_POLLING_INLINE_STATUS=1` available to opt back into the in-place status renderer.
 - Fixed startup polling reconnect classification so phase-timed Telegram network errors remain `TelegramNetworkError` with an unlimited network retry limit instead of showing `Unknown` and `2/10`.
 - Fixed Telegram polling startup so aiogram's initial `getMe` identity request uses the bounded reconnect path instead of exiting the process on transient Bot API network failures.
 - Fixed Codex daemon shutdown during startup failure cleanup by calling the existing `shutdown()` method instead of a nonexistent `stop()` method.
