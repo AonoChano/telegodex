@@ -11,6 +11,7 @@ related: [PRODUCT_EXPERIENCE.md, RICH_MESSAGES.md, STARTUP.md]
 
 ## Unreleased
 
+- Added i18n system.
 - Extracted normal-chat response delivery fallbacks from the message handler into a focused module.
 - Extracted normal-chat provider response generation from the message handler while preserving draft streaming fallback behavior.
 - Extracted normal-chat provider session helpers from the message handler into a focused module.
