@@ -31,9 +31,15 @@ def _bot_send_kwargs(route: TelegramRoute) -> dict:
 
 
 async def _resolve_locale_from_db(
-    context_manager: ContextManager, user_id: int, fallback_code: str | None
+    context_manager: ContextManager | None, user_id: int, fallback_code: str | None
 ) -> str:
-    """Resolve locale from stored user preference, falling back to Telegram code."""
+    """Resolve locale from stored user preference, falling back to Telegram code.
+
+    If *context_manager* is ``None`` (e.g., dependency injection unavailable),
+    falls back to *fallback_code* only.
+    """
+    if context_manager is None:
+        return resolve_locale(None, fallback_code)
     result = await context_manager.session.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
     return resolve_locale(
@@ -62,10 +68,17 @@ async def send_help_toc(message: Message, locale: str) -> None:
 
 
 @router.message(Command("help"))
-async def cmd_help(message: Message) -> None:
-    """Handle /help command — send TOC page 1."""
-    locale = resolve_locale(
-        None, message.from_user.language_code if message.from_user else None
+async def cmd_help(message: Message, context_manager: ContextManager | None = None) -> None:
+    """Handle /help command — send TOC page 1.
+
+    Resolves locale from the user's stored ``ui_language`` preference when
+    *context_manager* is injected, falling back to the Telegram client
+    ``language_code`` otherwise.
+    """
+    locale = await _resolve_locale_from_db(
+        context_manager,
+        message.from_user.id if message.from_user else 0,
+        message.from_user.language_code if message.from_user else None,
     )
     await send_help_toc(message, locale)
 
