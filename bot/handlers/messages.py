@@ -11,6 +11,7 @@ from sqlalchemy import select
 from ai import AIRouter, MessageRole
 from ai import Message as AIMessage
 from bot.handlers.chat_runtime import select_chat_runtime
+from bot.handlers.chat_sessions import load_session_data, resolve_provider_conversation, save_session_data
 from bot.handlers.chat_tool_requests import (
     handle_chat_tool_request,
     has_chat_tool_request,
@@ -25,10 +26,10 @@ from bot.utils.rich_messages import send_rich_message
 from bot.utils.routing import TelegramRoute
 from config import settings
 from core.orchestrator.chat_tools import build_telegodex_capability_prompt
-from core.session import SessionData, SessionKey, session_manager
+from core.session import SessionKey, session_manager
 from prompts import get_prompt_manager
 from storage import ContextManager
-from storage.models import Conversation, User
+from storage.models import User
 
 router = Router()
 
@@ -201,57 +202,6 @@ async def cmd_clear(message: Message, context_manager: ContextManager):
     )
 
 
-async def _load_session_data(
-    conversation: Conversation,
-    session_key: SessionKey,
-) -> SessionData:
-    """Load ``SessionData`` from *conversation* or memory."""
-    data = session_manager.get_session_data(session_key)
-    if data is None:
-        data = SessionData.from_dict(conversation.provider_sessions)
-        session_manager.set_session_data(session_key, data)
-    return data
-
-
-async def _save_session_data(
-    conversation: Conversation,
-    session_key: SessionKey,
-) -> None:
-    """Persist ``SessionData`` back to *conversation*."""
-    data = session_manager.get_session_data(session_key)
-    if data is not None:
-        conversation.provider_sessions = data.to_dict()
-
-
-async def _resolve_provider_conversation(
-    context_manager: ContextManager,
-    session_key: SessionKey,
-    session_data: SessionData,
-    user_id: int,
-    thread_id: int | None,
-    provider_name: str,
-) -> Conversation:
-    """Return the conversation for *provider_name*, creating one if needed.
-
-    Uses the provider bucket ``session_id`` when available so that switching
-    providers never loses context.
-    """
-    bucket = session_data.get_or_create_bucket(provider_name)
-
-    if bucket.session_id:
-        stmt = select(Conversation).where(Conversation.id == int(bucket.session_id))
-        result = await context_manager.session.execute(stmt)
-        conv = result.scalar_one_or_none()
-        if conv is not None:
-            if not conv.is_active:
-                conv.is_active = True
-            return conv
-
-    # No bucket or stale session_id: create a fresh conversation.
-    conv = await context_manager.create_new_conversation(user_id, thread_id=thread_id, chat_id=session_key.chat_id)
-    bucket.session_id = str(conv.id)
-    return conv
-
 
 @router.message(Command("model"))
 async def cmd_model(
@@ -293,7 +243,7 @@ async def cmd_model(
     user = await context_manager.get_or_create_user(user_id)
     conversation = await context_manager.get_or_create_conversation(user_id, thread_id=thread_id, chat_id=route.chat_id)
 
-    session_data = await _load_session_data(conversation, session_key)
+    session_data = await load_session_data(conversation, session_key)
 
     # Save current provider bucket before switching.
     if user.preferred_provider:
@@ -305,11 +255,11 @@ async def cmd_model(
     session_manager.set_active_provider(session_key, provider_name)
 
     # Resolve or create the provider-specific conversation.
-    provider_conv = await _resolve_provider_conversation(
+    provider_conv = await resolve_provider_conversation(
         context_manager, session_key, session_data, user_id, thread_id, provider_name
     )
 
-    await _save_session_data(provider_conv, session_key)
+    await save_session_data(provider_conv, session_key)
     await context_manager.session.commit()
 
     await message.answer(
@@ -359,7 +309,7 @@ async def handle_message(
 
     # Bootstrap session data from the current active conversation.
     base_conv = await context_manager.get_or_create_conversation(user_id, thread_id=thread_id, chat_id=route.chat_id)
-    session_data = await _load_session_data(base_conv, session_key)
+    session_data = await load_session_data(base_conv, session_key)
 
     runtime = select_chat_runtime(user, ai_router)
     if runtime is None:
@@ -372,12 +322,12 @@ async def handle_message(
     provider = runtime.provider
 
     # Resolve the provider-isolated conversation.
-    conversation = await _resolve_provider_conversation(
+    conversation = await resolve_provider_conversation(
         context_manager, session_key, session_data, user_id, thread_id, provider_name
     )
 
     # Ensure the base conversation also carries the latest session data.
-    await _save_session_data(conversation, session_key)
+    await save_session_data(conversation, session_key)
 
     # 添加用户消息到历史
     await context_manager.add_message(conversation_id=conversation.id, role=MessageRole.USER, content=user_text)
@@ -567,7 +517,7 @@ async def handle_message(
             message_count=1,
             tokens=response_tokens or 0,
         )
-        await _save_session_data(conversation, session_key)
+        await save_session_data(conversation, session_key)
         await context_manager.session.commit()
 
         # ---- 4) 持久化收尾 ----
