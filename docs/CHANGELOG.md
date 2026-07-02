@@ -1,7 +1,7 @@
 ---
 title: Changelog
 category: changelog
-last_updated: 2026-07-01
+last_updated: 2026-07-02
 relevance: medium
 summary: Human-maintained release notes for Telegodex
 related: [PRODUCT_EXPERIENCE.md, RICH_MESSAGES.md, STARTUP.md]
@@ -11,6 +11,8 @@ related: [PRODUCT_EXPERIENCE.md, RICH_MESSAGES.md, STARTUP.md]
 
 ## Unreleased
 
+- Fixed Telegram polling startup so aiogram's initial `getMe` identity request uses the bounded reconnect path instead of exiting the process on transient Bot API network failures.
+- Fixed Codex daemon shutdown during startup failure cleanup by calling the existing `shutdown()` method instead of a nonexistent `stop()` method.
 - Added polling reconnect diagnostics that report stuck `getUpdates`, `getMe` probe, and HTTP session close phases with elapsed timings, so long `probing` states can be traced to the exact blocked phase.
 - Fixed Telegram polling reconnect semantics by using short `getMe` health probes during reconnect state, so recovery is detected without waiting for a user message or a long-poll `getUpdates` response.
 - Fixed Telegram polling hard timeout handling so a stuck `getUpdates` cancellation cannot keep one reconnect attempt running for minutes after the 20-second deadline.

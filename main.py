@@ -615,6 +615,85 @@ async def _probe_telegram_api(bot: Bot) -> None:
     )
 
 
+async def _await_bot_identity(bot: Bot):
+    """Fetch and cache bot identity with the same short timeout as health probes."""
+    user = await _await_with_hard_timeout(
+        bot.get_me(request_timeout=int(_POLLING_PROBE_TIMEOUT_SECONDS)),
+        timeout_seconds=_POLLING_PROBE_HARD_TIMEOUT_SECONDS,
+        task_name="telegram-startup-getme",
+    )
+    bot._me = user
+    return user
+
+
+async def _wait_for_bot_identity(bot: Bot, backoff_config: BackoffConfig):
+    """Retry aiogram's startup getMe request instead of letting polling exit."""
+    from aiogram.dispatcher.dispatcher import loggers
+
+    backoff = Backoff(config=backoff_config)
+    sequence = 0
+    failed = False
+    while True:
+        sequence += 1
+        finish_getme = _start_polling_phase_watchdog(
+            "startup getMe",
+            sequence,
+            _POLLING_PROBE_HARD_TIMEOUT_SECONDS + 1.0,
+            bot.id,
+            f"request_timeout={_POLLING_PROBE_TIMEOUT_SECONDS:.1f}s, "
+            f"hard_timeout={_POLLING_PROBE_HARD_TIMEOUT_SECONDS:.1f}s",
+        )
+        started = time.monotonic()
+        try:
+            user = await _await_bot_identity(bot)
+        except Exception as exc:
+            elapsed = time.monotonic() - started
+            failed = True
+            finish_getme("failed")
+            if isinstance(exc, asyncio.TimeoutError):
+                loggers.dispatcher.error(
+                    "Failed to fetch updates - TelegramNetworkError: "
+                    "startup getMe #%d hard timeout after %.1fs "
+                    "(elapsed %.3fs); rebuilding HTTP session",
+                    sequence,
+                    _POLLING_PROBE_HARD_TIMEOUT_SECONDS,
+                    elapsed,
+                )
+            else:
+                loggers.dispatcher.error(
+                    "Failed to fetch updates - %s after %.3fs during "
+                    "startup getMe #%d: %s",
+                    type(exc).__name__,
+                    elapsed,
+                    sequence,
+                    exc,
+                )
+            await _close_polling_session(
+                bot, reason=f"startup getMe #{sequence} failure"
+            )
+            loggers.dispatcher.warning(
+                "Sleep for %f seconds and try again... (tryings = %d, bot id = %d)",
+                backoff.next_delay,
+                backoff.counter,
+                bot.id,
+            )
+            await backoff.asleep()
+            continue
+
+        elapsed = time.monotonic() - started
+        finish_getme("success")
+        if failed:
+            loggers.dispatcher.info(
+                "Connection established "
+                "(tryings = %d, bot id = %d, startup_getme = %d, elapsed = %.3fs)",
+                backoff.counter,
+                bot.id,
+                sequence,
+                elapsed,
+            )
+        return user
+
+
 def _consume_late_task_result(task: asyncio.Task) -> None:
     """Observe late completion of a cancelled Telegram request task."""
     if task.cancelled():
@@ -658,6 +737,48 @@ async def _close_polling_session(bot: Bot, reason: str) -> None:
 
 class _TelegodexDispatcher(Dispatcher):
     """Dispatcher with a hard timeout and session rebuild around long polling."""
+
+    async def _polling(
+        self,
+        bot: Bot,
+        polling_timeout: int = 30,
+        handle_as_tasks: bool = True,
+        backoff_config: BackoffConfig = BackoffConfig(
+            min_delay=1.0,
+            max_delay=5.0,
+            factor=1.3,
+            jitter=0.1,
+        ),
+        allowed_updates: list[str] | None = None,
+        **kwargs: object,
+    ) -> None:
+        from aiogram.dispatcher.dispatcher import loggers
+
+        user = await _wait_for_bot_identity(bot, backoff_config)
+        loggers.dispatcher.info(
+            "Run polling for bot @%s id=%d - %r", user.username, bot.id, user.full_name
+        )
+        try:
+            async for update in self._listen_updates(
+                bot,
+                polling_timeout=polling_timeout,
+                backoff_config=backoff_config,
+                allowed_updates=allowed_updates,
+            ):
+                handle_update = self._process_update(bot=bot, update=update, **kwargs)
+                if handle_as_tasks:
+                    handle_update_task = asyncio.create_task(handle_update)
+                    self._handle_update_tasks.add(handle_update_task)
+                    handle_update_task.add_done_callback(self._handle_update_tasks.discard)
+                else:
+                    await handle_update
+        finally:
+            loggers.dispatcher.info(
+                "Polling stopped for bot @%s id=%d - %r",
+                user.username,
+                bot.id,
+                user.full_name,
+            )
 
     @classmethod
     async def _listen_updates(
@@ -1017,6 +1138,8 @@ async def main():
 
     # 启动轮询
     #
+    # Telegodex wraps both aiogram's startup getMe identity check and getUpdates
+    # long polling so transient Telegram network failures retry instead of exiting.
     # 黄金分割退避：min=1s, max=30s, factor=1.618
     # 序列：1.0, 1.6, 2.6, 4.2, 6.9, 11.1, 17.9, 29.0, 30.0, 30.0...
     # 网络错误无限重试，最长间隔 30s；认证错误 5 次后退出（≈6.9s 累计）。
@@ -1047,7 +1170,7 @@ async def main():
         try:
             codex = get_codex_daemon()
             if codex.is_alive():
-                await codex.stop()
+                await codex.shutdown()
         except Exception as e:
             logger.warning(
                 f"Codex daemon 关闭失败: {type(e).__name__}: {e!r}"

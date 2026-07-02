@@ -3,6 +3,9 @@ from __future__ import annotations
 import asyncio
 import io
 import os
+from types import SimpleNamespace
+
+from aiogram.utils.backoff import BackoffConfig
 
 from main import (
     _AiogramPollingRetryCompactor,
@@ -16,6 +19,7 @@ from main import (
     _TelegodexDispatcher,
     _TerminalStatusLine,
     _visible_width,
+    _wait_for_bot_identity,
     _wrap_terminal_status_text,
 )
 
@@ -333,6 +337,53 @@ def test_parse_aiogram_retry_sleep_message() -> None:
 def test_parse_aiogram_retry_sleep_ignores_other_messages() -> None:
     assert _parse_aiogram_retry_sleep("Bot started") is None
 
+
+async def test_wait_for_bot_identity_retries_and_rebuilds_session(monkeypatch) -> None:
+    class FakeSession:
+        timeout = 8
+
+        def __init__(self) -> None:
+            self.closed = 0
+
+        async def close(self) -> None:
+            self.closed += 1
+
+    class FakeBot:
+        id = 456
+
+        def __init__(self) -> None:
+            self.session = FakeSession()
+            self.calls = 0
+            self._me = None
+
+        async def get_me(self, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("Request timeout error")
+            return SimpleNamespace(username="telegodex_bot", full_name="Telegodex")
+
+    async def tiny_sleep(self):
+        return None
+
+    monkeypatch.setattr("main.Backoff.asleep", tiny_sleep)
+    bot = FakeBot()
+    user = await asyncio.wait_for(
+        _wait_for_bot_identity(
+            bot,
+            backoff_config=BackoffConfig(
+                min_delay=1.0,
+                max_delay=5.0,
+                factor=1.3,
+                jitter=0.0,
+            ),
+        ),
+        timeout=0.5,
+    )
+
+    assert user.username == "telegodex_bot"
+    assert bot._me is user
+    assert bot.calls == 2
+    assert bot.session.closed == 1
 
 async def test_await_polling_response_timeout_does_not_wait_for_stuck_cancel(monkeypatch) -> None:
     class FakeBot:
