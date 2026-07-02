@@ -63,6 +63,8 @@ def test_language_selector_uses_three_columns_for_many_short_locales() -> None:
 def test_provider_selector_uses_pairs_with_full_width_back() -> None:
     markup = get_provider_selector(["openai", "anthropic", "deepseek"], "openai", "en")
 
+    # "✅ 🟢 OpenAI (GPT)" (18) + "🔵 Anthropic (Claude)" (21) = 40 <= 42 row width,
+    # so they pair up; the shorter "deepseek" (8) gets its own row.
     assert _row_lengths(markup) == [2, 1, 1]
     assert markup.inline_keyboard[-1][0].callback_data == "settings:back"
 
@@ -88,7 +90,9 @@ def test_model_selector_keeps_long_model_names_single_column() -> None:
 def test_temperature_selector_marks_current_value_and_keeps_back_footer() -> None:
     markup = get_temperature_selector("0.70", "en")
 
-    assert _row_lengths(markup) == [2, 2, 1, 1]
+    # Five short numeric labels pack into [3, 2] under the adaptive layout,
+    # plus the full-width back button on its own row.
+    assert _row_lengths(markup) == [3, 2, 1]
     # ✅ prefix is on the "0.70" button (3rd button, index 2)
     flat = [btn for row in markup.inline_keyboard for btn in row]
     marked = [btn for btn in flat if btn.text.startswith("✅")]

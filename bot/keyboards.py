@@ -19,47 +19,81 @@ def _display_width(text: str) -> int:
     return width
 
 
-def _choose_button_columns(
-    buttons: list[InlineKeyboardButton],
-    *,
-    max_columns: int,
-    wide_button_width: int,
-) -> int:
-    if not buttons:
-        return 1
-
-    count = len(buttons)
-    if count == 1:
-        return 1
-
-    widths = [_display_width(button.text or "") for button in buttons]
-    max_width = max(widths)
-    average_width = sum(widths) / count
-
-    if max_width >= wide_button_width:
-        return 1
-    if count >= 6 and max_columns >= 3 and average_width <= 12 and max_width <= 16:
-        return 3
-    return min(2, max_columns)
-
-
 def arrange_inline_buttons(
     buttons: list[InlineKeyboardButton],
     *,
     max_columns: int = 3,
     wide_button_width: int = 24,
+    max_row_width: int = 42,
 ) -> list[list[InlineKeyboardButton]]:
-    """Arrange command-like inline buttons into compact Telegram rows.
+    """Arrange inline buttons into rows with per-row adaptive column counts.
 
-    Telegram exposes rows, not exact button widths. This helper keeps long
-    labels readable while avoiding one-button-per-row menus for short actions.
+    Instead of forcing a single column count for the whole button list, this
+    packs short buttons into multi-column rows and lets long buttons occupy
+    their own row. A single long label no longer drags the whole menu into a
+    single column.
+
+    Algorithm:
+        - Iterate buttons in order. Maintain a current row.
+        - A button whose label width >= *wide_button_width* always starts a
+          new row (and ends the previous one) — it gets a full-width row.
+        - Otherwise, append to the current row if both:
+            * adding it would not exceed *max_row_width* (sum of display widths
+              plus 1 unit gap between adjacent buttons), and
+            * the row has fewer than *max_columns* buttons already.
+        - If either constraint is violated, flush the current row and start a
+          new one with the button.
+
+    This keeps locale-agnostic layouts compact: short numeric/language labels
+    naturally form 3-column rows, mixed settings menus mix 2-column and
+    1-column rows, and long descriptive labels stay on their own row.
+
+    Args:
+        buttons: Flat list of ``InlineKeyboardButton`` to arrange.
+        max_columns: Upper bound on buttons per row.
+        wide_button_width: Labels at least this wide force a full-width row.
+        max_row_width: Soft cap on the cumulative display width of a row.
+
+    Returns:
+        List of rows (each a list of ``InlineKeyboardButton``).
     """
-    columns = _choose_button_columns(
-        buttons,
-        max_columns=max(1, max_columns),
-        wide_button_width=wide_button_width,
-    )
-    return [buttons[i : i + columns] for i in range(0, len(buttons), columns)]
+    if not buttons:
+        return []
+
+    max_columns = max(1, max_columns)
+    rows: list[list[InlineKeyboardButton]] = []
+    current_row: list[InlineKeyboardButton] = []
+    current_width = 0
+
+    for button in buttons:
+        btn_width = _display_width(button.text or "")
+
+        # Wide buttons always get their own row.
+        if btn_width >= wide_button_width:
+            if current_row:
+                rows.append(current_row)
+                current_row = []
+                current_width = 0
+            rows.append([button])
+            continue
+
+        # Gap between adjacent buttons in the same row.
+        gap = 1 if current_row else 0
+        new_width = current_width + gap + btn_width
+
+        # Flush if row would overflow width or column cap.
+        if current_row and (new_width > max_row_width or len(current_row) >= max_columns):
+            rows.append(current_row)
+            current_row = [button]
+            current_width = btn_width
+        else:
+            current_row.append(button)
+            current_width = new_width
+
+    if current_row:
+        rows.append(current_row)
+
+    return rows
 
 
 def smart_inline_keyboard(
