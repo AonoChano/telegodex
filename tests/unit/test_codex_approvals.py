@@ -193,6 +193,7 @@ async def test_codex_approval_callback_resolves_token_via_orchestrator() -> None
         delete=AsyncMock(),
     )
     callback = SimpleNamespace(
+        from_user=None,
         data=callback_data,
         message=message,
         answer=AsyncMock(),
@@ -229,6 +230,7 @@ async def test_codex_approval_callback_resolves_object_decision() -> None:
         delete=AsyncMock(),
     )
     callback = SimpleNamespace(
+        from_user=None,
         data=callback_data,
         message=message,
         answer=AsyncMock(),
@@ -260,6 +262,7 @@ async def test_codex_approval_callback_compacts_message_when_delete_fails() -> N
         delete=AsyncMock(side_effect=RuntimeError("delete failed")),
     )
     callback = SimpleNamespace(
+        from_user=None,
         data=callback_data,
         message=message,
         answer=AsyncMock(),
@@ -282,6 +285,7 @@ async def test_codex_approval_callback_compacts_message_when_delete_fails() -> N
 @pytest.mark.asyncio
 async def test_codex_approval_callback_rejects_unknown_token() -> None:
     callback = SimpleNamespace(
+        from_user=None,
         data="codex_approval:missing",
         answer=AsyncMock(),
     )
