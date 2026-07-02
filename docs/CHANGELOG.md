@@ -1,7 +1,7 @@
 ---
 title: Changelog
 category: changelog
-last_updated: 2026-07-02
+last_updated: 2026-07-03
 relevance: medium
 summary: Human-maintained release notes for Telegodex
 related: [PRODUCT_EXPERIENCE.md, RICH_MESSAGES.md, STARTUP.md]
@@ -11,6 +11,7 @@ related: [PRODUCT_EXPERIENCE.md, RICH_MESSAGES.md, STARTUP.md]
 
 ## Unreleased
 
+- Improved Telegram inline keyboard layout so settings and action menus use compact rows with full-width footer buttons.
 - Added i18n system.
 - Extracted normal-chat response delivery fallbacks from the message handler into a focused module.
 - Extracted normal-chat provider response generation from the message handler while preserving draft streaming fallback behavior.

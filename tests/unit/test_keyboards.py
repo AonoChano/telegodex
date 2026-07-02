@@ -1,0 +1,73 @@
+from aiogram.types import InlineKeyboardButton
+
+from bot.keyboards import (
+    arrange_inline_buttons,
+    get_help_keyboard,
+    get_language_selector,
+    get_provider_selector,
+    get_settings_menu,
+)
+from i18n import LocaleInfo
+
+
+def _buttons(count: int) -> list[InlineKeyboardButton]:
+    return [InlineKeyboardButton(text=f"B{i}", callback_data=f"b:{i}") for i in range(count)]
+
+
+def _row_lengths(markup) -> list[int]:
+    return [len(row) for row in markup.inline_keyboard]
+
+
+def test_arrange_inline_buttons_uses_three_columns_for_many_short_labels() -> None:
+    rows = arrange_inline_buttons(_buttons(7))
+
+    assert [len(row) for row in rows] == [3, 3, 1]
+
+
+def test_arrange_inline_buttons_keeps_wide_labels_single_column() -> None:
+    buttons = [
+        InlineKeyboardButton(text="Extremely long action label", callback_data="a"),
+        InlineKeyboardButton(text="Another extremely long label", callback_data="b"),
+    ]
+
+    rows = arrange_inline_buttons(buttons)
+
+    assert [len(row) for row in rows] == [1, 1]
+
+
+def test_settings_menu_uses_compact_pairs_with_full_width_close() -> None:
+    markup = get_settings_menu("confirm", "zh-cn")
+
+    assert _row_lengths(markup) == [2, 2, 2, 1]
+    assert markup.inline_keyboard[-1][0].callback_data == "settings:close"
+
+
+def test_help_keyboard_uses_pairs_with_full_width_close() -> None:
+    markup = get_help_keyboard("zh-cn")
+
+    assert _row_lengths(markup) == [2, 2, 1]
+    assert markup.inline_keyboard[-1][0].callback_data == "help:close"
+
+
+def test_language_selector_uses_three_columns_for_many_short_locales() -> None:
+    locales = [
+        LocaleInfo(locale="en", display_name="EN"),
+        LocaleInfo(locale="zh-cn", display_name="ZH"),
+        LocaleInfo(locale="ja", display_name="JA"),
+        LocaleInfo(locale="ko", display_name="KO"),
+        LocaleInfo(locale="fr", display_name="FR"),
+        LocaleInfo(locale="de", display_name="DE"),
+        LocaleInfo(locale="es", display_name="ES"),
+    ]
+
+    markup = get_language_selector(locales, "en", locale="en")
+
+    assert _row_lengths(markup) == [3, 3, 1, 1]
+    assert markup.inline_keyboard[-1][0].callback_data == "settings:back"
+
+
+def test_provider_selector_uses_pairs_with_full_width_back() -> None:
+    markup = get_provider_selector(["openai", "anthropic", "deepseek"], "openai", "en")
+
+    assert _row_lengths(markup) == [2, 1, 1]
+    assert markup.inline_keyboard[-1][0].callback_data == "settings:back"
