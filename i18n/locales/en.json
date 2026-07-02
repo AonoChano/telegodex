@@ -26,9 +26,6 @@
         "providers_section": "## Providers\n\n| Provider | Status |\n|---|---|\n{rows}",
         "commands_section": "## Quick actions\n\n| Command | Action |\n|---|---|\n| `/new` | New conversation |\n| `/settings` | Settings |\n| `/history` | History |\n| `/help` | Help |"
       },
-      "help": {
-        "text": "📖 **Help**\n\n**Basic commands:**\n/start \\- Start the bot\n/new \\- Start a new conversation\n/clear \\- Clear current conversation\n/settings \\- Open settings\n/help \\- Show help\n\n**Features:**\n• Send a message to chat with AI directly\n• Multi\\-turn conversation with automatic context saving\n• Switch between AI providers in settings\n• Full Markdown support\n\n**Markdown examples:**\n\\*italic\\* \\- *italic*\n\\*\\*bold\\*\\* \\- **bold**\n\\[link\\]\\(url\\) \\- [link](https://example.com)\n\\`code\\` \\- `code`"
-      },
       "new": {
         "success": "✅ Started a new conversation\\!"
       },
@@ -91,11 +88,7 @@
       "provider_anthropic": "🔵 Anthropic (Claude)",
       "provider_google": "🔴 Google (Gemini)",
       "provider_active": "✅ {label}",
-      "clear_history": "🗑️ Clear history",
-      "help_tutorial": "📚 Tutorial",
-      "help_commands": "🔧 Commands list",
-      "help_markdown": "💡 Markdown syntax",
-      "help_contact": "👨‍💻 Contact developer"
+      "clear_history": "🗑️ Clear history"
     },
     "history": {
       "prev_page": "⏪",
@@ -127,6 +120,16 @@
     },
     "streaming": {
       "typing": "💭 …"
+    },
+    "help": {
+      "toc_title": "📖 Help — Table of Contents",
+      "close": "✖️ Close",
+      "contents": "« Contents",
+      "prev": "⬅️",
+      "next": "➡️",
+      "page_indicator": "{page}/{total}",
+      "empty": "No help content available.",
+      "chapter_not_found": "Chapter not found."
     }
   },
   "core": {

@@ -84,3 +84,6 @@ docs/Claudian\[AnObsidianPlugin]/
 docs/DeepSeek-V4-Encoding.md
 docs/SourceCodes/
 docs/USER_SUGGESTIONS/
+
+# Help system runtime logs
+i18n/help/log/

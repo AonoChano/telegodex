@@ -23,6 +23,16 @@ def _init_i18n():
     yield
 
 
+@pytest.fixture(autouse=True, scope="session")
+def _init_help_renderer():
+    """Initialize the HelpRenderer singleton once for all tests."""
+    from bot.help import init_help_renderer
+
+    help_root = Path(__file__).parent.parent / "i18n" / "help"
+    init_help_renderer(help_root)
+    yield
+
+
 @pytest.fixture(autouse=True)
 def _reset_global_session_manager():
     """Reset the global ``session_manager`` between tests."""

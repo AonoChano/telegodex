@@ -2,7 +2,6 @@ from aiogram.types import InlineKeyboardButton
 
 from bot.keyboards import (
     arrange_inline_buttons,
-    get_help_keyboard,
     get_language_selector,
     get_model_selector,
     get_provider_selector,
@@ -42,13 +41,6 @@ def test_settings_menu_uses_compact_pairs_with_full_width_close() -> None:
 
     assert _row_lengths(markup) == [2, 2, 2, 1]
     assert markup.inline_keyboard[-1][0].callback_data == "settings:close"
-
-
-def test_help_keyboard_uses_pairs_with_full_width_close() -> None:
-    markup = get_help_keyboard("zh-cn")
-
-    assert _row_lengths(markup) == [2, 2, 1]
-    assert markup.inline_keyboard[-1][0].callback_data == "help:close"
 
 
 def test_language_selector_uses_three_columns_for_many_short_locales() -> None:

@@ -233,21 +233,6 @@ def get_confirmation_keyboard(action: str, locale: str | None = None) -> InlineK
     return keyboard
 
 
-def get_help_keyboard(locale: str | None = None) -> InlineKeyboardMarkup:
-    """帮助菜单键盘"""
-    buttons = [
-        InlineKeyboardButton(text=tr("bot.keyboards.help_tutorial", locale), callback_data="help:tutorial"),
-        InlineKeyboardButton(text=tr("bot.keyboards.help_commands", locale), callback_data="help:commands"),
-        InlineKeyboardButton(text=tr("bot.keyboards.help_markdown", locale), callback_data="help:markdown"),
-        InlineKeyboardButton(text=tr("bot.keyboards.help_contact", locale), url="https://t.me/your_channel"),
-    ]
-    return smart_inline_keyboard(
-        buttons,
-        footer_buttons=[InlineKeyboardButton(text=tr("bot.common.close", locale), callback_data="help:close")],
-        max_columns=2,
-    )
-
-
 def get_language_selector(
     available_locales: list[LocaleInfo],
     current_locale: str | None,

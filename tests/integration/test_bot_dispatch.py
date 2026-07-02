@@ -16,7 +16,7 @@ from aiogram import Dispatcher
 from aiogram.types import Message, Update
 
 from ai.base import AIResponse, MessageRole
-from bot.handlers import codex_router, messages_router
+from bot.handlers import codex_router, help_router, messages_router
 
 
 def _make_mock_message(
@@ -55,18 +55,20 @@ def _make_update(message: Message) -> Update:
 
 @pytest.fixture
 def dp():
-    """Provide a Dispatcher with ``messages_router`` attached.
+    """Provide a Dispatcher with ``help_router`` and ``messages_router`` attached.
 
-    The router is detached after the test so it can be re-attached cleanly.
+    The routers are detached after the test so they can be re-attached cleanly.
     """
     dispatcher = Dispatcher()
+    dispatcher.include_router(help_router)
     dispatcher.include_router(messages_router)
     yield dispatcher
+    help_router._parent_router = None
     messages_router._parent_router = None
 
 
 class TestHelpCommandRouting:
-    """Verify ``/help`` reaches ``cmd_help`` through the dispatcher."""
+    """Verify ``/help`` reaches the help router through the dispatcher."""
 
     @pytest.mark.asyncio
     async def test_help_command_routed(self, dp: Dispatcher) -> None:
@@ -81,7 +83,7 @@ class TestHelpCommandRouting:
 
         assert bot.called
         call_arg = bot.await_args[0][0]
-        assert "帮助文档" in call_arg.text
+        assert "Help" in call_arg.text
 
 
 class TestStartCommandRouting:

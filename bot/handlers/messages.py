@@ -118,16 +118,6 @@ async def cmd_start(message: Message, context_manager: ContextManager, ai_router
     )
 
 
-@router.message(Command("help"))
-async def cmd_help(message: Message):
-    """处理 /help 命令"""
-    route = TelegramRoute.from_message(message)
-    locale = resolve_locale(None, message.from_user.language_code if message.from_user else None)
-    help_text = tr("bot.commands.help.text", locale)
-
-    await message.answer(help_text, parse_mode="MarkdownV2", **route.send_kwargs())
-
-
 @router.message(Command("settings"))
 async def cmd_settings(message: Message, context_manager: ContextManager | None = None) -> None:
     """Open the settings menu."""
@@ -318,7 +308,9 @@ async def handle_message(
             await cmd_settings(message, context_manager)
             return
         if choice == "help":
-            await cmd_help(message)
+            from bot.handlers.help import send_help_toc
+
+            await send_help_toc(message, locale)
             return
         # TODO: 实现历史记录
         await message.answer(tr("bot.callbacks.wip", locale), **route.send_kwargs())

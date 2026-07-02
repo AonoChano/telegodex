@@ -11,6 +11,7 @@ related: [PRODUCT_EXPERIENCE.md, RICH_MESSAGES.md, STARTUP.md]
 
 ## Unreleased
 
+- Replaced the single-text `/help` reply with a paginated ebook system: `/help` now opens a table-of-contents inline keyboard (max 6 chapters per page), chapter content is rendered as Rich Message Markdown sourced from per-language `.md` files under `i18n/help/<locale>/`, with YAML frontmatter, page breaks, JSONL error logging to `i18n/help/log/`, and English as the base fallback language.
 - Improved Telegram inline keyboard layout so settings and action menus use compact rows with full-width footer buttons.
 - Added i18n system.
 - Added temperature selector with callback handler so the settings button is now functional.

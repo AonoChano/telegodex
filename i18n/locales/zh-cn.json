@@ -26,9 +26,6 @@
         "providers_section": "## 服务商\n\n| 服务商 | 状态 |\n|---|---|\n{rows}",
         "commands_section": "## 快速操作\n\n| 指令 | 操作 |\n|---|---|\n| `/new` | 新对话 |\n| `/settings` | 设置 |\n| `/history` | 历史记录 |\n| `/help` | 帮助 |"
       },
-      "help": {
-        "text": "📖 **帮助文档**\n\n**基本命令：**\n/start \\- 启动机器人\n/new \\- 开始新对话\n/clear \\- 清空当前对话\n/settings \\- 打开设置\n/help \\- 显示帮助\n\n**功能说明：**\n• 直接发送消息即可与 AI 对话\n• 支持多轮对话，自动保存上下文\n• 可在设置中切换不同的 AI 服务商\n• 支持完整的 Markdown 格式\n\n**Markdown 示例：**\n\\*斜体\\* \\- *斜体*\n\\*\\*粗体\\*\\* \\- **粗体**\n\\[链接\\]\\(url\\) \\- [链接](https://example.com)\n\\`代码\\` \\- `代码`"
-      },
       "new": {
         "success": "✅ 已开始新对话\\!"
       },
@@ -91,11 +88,7 @@
       "provider_anthropic": "🔵 Anthropic (Claude)",
       "provider_google": "🔴 Google (Gemini)",
       "provider_active": "✅ {label}",
-      "clear_history": "🗑️ 清空历史",
-      "help_tutorial": "📚 使用教程",
-      "help_commands": "🔧 命令列表",
-      "help_markdown": "💡 Markdown 语法",
-      "help_contact": "👨‍💻 联系开发者"
+      "clear_history": "🗑️ 清空历史"
     },
     "history": {
       "prev_page": "⏪",
@@ -127,6 +120,16 @@
     },
     "streaming": {
       "typing": "💭 …"
+    },
+    "help": {
+      "toc_title": "📖 帮助 — 目录",
+      "close": "✖️ 关闭",
+      "contents": "« 目录",
+      "prev": "⬅️",
+      "next": "➡️",
+      "page_indicator": "{page}/{total}",
+      "empty": "暂无帮助内容。",
+      "chapter_not_found": "未找到该章节。"
     }
   },
   "core": {

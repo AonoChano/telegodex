@@ -23,6 +23,7 @@ from ai.router import unavailable_default_provider_error
 from bot.handlers import (
     callbacks_router,
     codex_router,
+    help_router,
     history_router,
     messages_router,
     send_router,
@@ -1087,6 +1088,16 @@ async def main():
     except Exception as e:
         logger.error(f"i18n initialization failed: {e}")
 
+    # Initialize help system
+    from bot.help import init_help_renderer
+
+    try:
+        help_root = Path(__file__).parent / "i18n" / "help"
+        init_help_renderer(help_root)
+        logger.info("Help system initialized")
+    except Exception as e:
+        logger.error(f"Help system initialization failed: {e}")
+
     # Wire DB session factory into codex handler for approval DB fallback.
     from bot.handlers.codex import set_db_session_factory
     set_db_session_factory(db.get_session)
@@ -1154,6 +1165,7 @@ async def main():
     dp.include_router(codex_router)
     dp.include_router(history_router)
     dp.include_router(send_router)
+    dp.include_router(help_router)
     dp.include_router(messages_router)
     dp.include_router(callbacks_router)
 
