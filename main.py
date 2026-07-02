@@ -919,9 +919,11 @@ class _TelegodexDispatcher(Dispatcher):
                 get_updates.offset = update.update_id + 1
 
 def _polling_inline_status_enabled() -> bool:
-    """Enable in-place polling status only when explicitly requested."""
-    value = os.getenv("TELEGODEX_POLLING_INLINE_STATUS", "").strip().lower()
-    return value in {"1", "true", "yes", "on"}
+    """Use in-place polling status unless diagnostic log mode is requested."""
+    value = os.getenv("TELEGODEX_POLLING_INLINE_STATUS")
+    if value is None:
+        return True
+    return value.strip().lower() not in {"0", "false", "no", "off"}
 
 
 def _handle_aiogram_polling_retry(record: logging.LogRecord, level, depth: int) -> bool:

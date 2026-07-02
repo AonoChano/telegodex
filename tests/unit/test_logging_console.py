@@ -57,17 +57,16 @@ def test_dispatcher_info_logs_remain_enabled_for_reconnect_success() -> None:
 # ── polling inline status switch ───────────────────────────────────────
 
 
-def test_polling_inline_status_disabled_by_default(monkeypatch) -> None:
+def test_polling_inline_status_enabled_by_default(monkeypatch) -> None:
     monkeypatch.delenv("TELEGODEX_POLLING_INLINE_STATUS", raising=False)
-
-    assert not _polling_inline_status_enabled()
-
-
-def test_polling_inline_status_can_be_enabled(monkeypatch) -> None:
-    monkeypatch.setenv("TELEGODEX_POLLING_INLINE_STATUS", "1")
 
     assert _polling_inline_status_enabled()
 
+
+def test_polling_inline_status_can_be_disabled(monkeypatch) -> None:
+    monkeypatch.setenv("TELEGODEX_POLLING_INLINE_STATUS", "0")
+
+    assert not _polling_inline_status_enabled()
 # ── _classify_polling_error ────────────────────────────────────────────
 
 
