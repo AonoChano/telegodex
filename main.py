@@ -952,6 +952,13 @@ def _terminal_sink(message) -> None:
     _polling_retry_compactor.stop()
     sys.stderr.write(_strip_exception_block(str(message)))
 
+def _configure_stdlib_log_levels() -> None:
+    for noisy in ("aiogram.event", "aiogram.middlewares", "aiohttp.access"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
+    # The reconnect compactor must see INFO-level "Connection established" logs.
+    logging.getLogger("aiogram.dispatcher").setLevel(logging.INFO)
+
+
 def _setup_logging() -> None:
     """双 sink：终端精简 / 文件详尽。
 
@@ -1005,11 +1012,7 @@ def _setup_logging() -> None:
     root = logging.getLogger()
     root.handlers = [_InterceptHandler()]
     root.setLevel(logging.INFO)
-    for noisy in ("aiogram.event", "aiogram.middlewares", "aiohttp.access"):
-        logging.getLogger(noisy).setLevel(logging.WARNING)
-    logging.getLogger("aiogram.dispatcher").setLevel(
-        logging.WARNING if _polling_inline_status_enabled() else logging.INFO
-    )
+    _configure_stdlib_log_levels()
 
 if os.name == "nt":
     import msvcrt

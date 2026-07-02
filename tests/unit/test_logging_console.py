@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import logging
 import os
 from types import SimpleNamespace
 
@@ -11,6 +12,7 @@ from main import (
     _AiogramPollingRetryCompactor,
     _await_polling_response,
     _classify_polling_error,
+    _configure_stdlib_log_levels,
     _fit_terminal_status_text,
     _format_duration,
     _format_reconnect_status,
@@ -38,6 +40,19 @@ class _FakeStatusLine:
     def clear(self) -> None:
         self.clears += 1
 
+
+# ── stdlib logger levels ───────────────────────────────────────────────
+
+
+def test_dispatcher_info_logs_remain_enabled_for_reconnect_success() -> None:
+    dispatcher_logger = logging.getLogger("aiogram.dispatcher")
+    previous_level = dispatcher_logger.level
+    dispatcher_logger.setLevel(logging.WARNING)
+    try:
+        _configure_stdlib_log_levels()
+        assert dispatcher_logger.isEnabledFor(logging.INFO)
+    finally:
+        dispatcher_logger.setLevel(previous_level)
 
 # ── polling inline status switch ───────────────────────────────────────
 
