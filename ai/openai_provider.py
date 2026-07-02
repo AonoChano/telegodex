@@ -78,7 +78,7 @@ class OpenAIProvider(BaseAIProvider):
             )
 
         except Exception as e:
-            logger.error(f"OpenAI API 调用失败: {e}")
+            logger.error(f"OpenAI API call failed: {e}")
             raise
 
     async def chat_stream(
@@ -112,7 +112,7 @@ class OpenAIProvider(BaseAIProvider):
                     yield chunk.choices[0].delta.content
 
         except Exception as e:
-            logger.error(f"OpenAI Stream 失败: {e}")
+            logger.error(f"OpenAI Stream failed: {e}")
             raise
 
     def get_available_models(self) -> list[str]:
@@ -134,14 +134,14 @@ class OpenAIProvider(BaseAIProvider):
             # 检查是否已在运行的事件循环中
             try:
                 asyncio.get_running_loop()
-                logger.warning(f"{self.provider_name}: 跳过 API Key 验证（事件循环已运行）")
+                logger.warning(f"{self.provider_name}: Skipping API Key validation (running in event loop)")
                 return True
             except RuntimeError:
                 # 没有运行的循环，可以安全调用 asyncio.run
                 asyncio.run(self.client.models.list())
                 return True
         except Exception as e:
-            logger.debug(f"{self.provider_name} API Key 验证失败: {e}")
+            logger.debug(f"{self.provider_name} API Key validation failed: {e}")
             return False
 
     @property

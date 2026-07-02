@@ -17,7 +17,7 @@ def print_header():
     """打印欢迎信息"""
     print("""
 ╔═══════════════════════════════════════════════════════╗
-║       Telegodex 自定义 Provider 配置助手             ║
+║       Telegodex Custom Provider Configurer            ║
 ╚═══════════════════════════════════════════════════════╝
 """)
 
@@ -33,40 +33,40 @@ def get_input(prompt: str, default: str = "") -> str:
 def create_provider_config():
     """交互式创建 Provider 配置"""
     print_header()
-    print("请回答以下问题来创建自定义 Provider 配置：\n")
+    print("Create custom Provider configuration:\n")
 
     # 配置名称
-    name = get_input("配置名称（如: ollama, my_api）")
+    name = get_input("Provider name (e.g., ollama, my_api)")
     if not name:
-        print("❌ 配置名称不能为空")
+        print("❌ Provider name cannot be empty")
         return None
 
     # Provider 类型（当前只支持 openai_compatible）
-    print("\n当前支持的类型: openai_compatible")
+    print("\nSupported types: openai_compatible")
     provider_type = "openai_compatible"
 
     # API Key
-    api_key = get_input("API Key（如果不需要可填任意值）")
+    api_key = get_input("API Key (leave empty if not required)")
     if not api_key:
-        print("❌ API Key 不能为空")
+        print("❌ API Key cannot be empty")
         return None
 
     # Base URL
-    base_url = get_input("API 基础 URL（例如: http://localhost:11434/v1）")
+    base_url = get_input("API Base URL (e.g. http://localhost:11434/v1)")
     if not base_url:
-        print("❌ Base URL 不能为空")
+        print("❌ Base URL cannot be empty")
         return None
 
     # 模型列表
-    models_input = get_input("可用模型列表（逗号分隔，如: llama3.2,qwen2.5）")
+    models_input = get_input("Available models (comma-separated, e.g., llama3.2,qwen2.5)")
     models = [m.strip() for m in models_input.split(",") if m.strip()] if models_input else []
 
     # 默认模型
     default_model = ""
     if models:
-        default_model = get_input("默认模型", models[0])
+        default_model = get_input("Default model (e.g., llama3.2)", models[0])
     else:
-        default_model = get_input("默认模型（如果未指定模型列表，请填写）")
+        default_model = get_input("Default model (if no models are specified)")
 
     # 构建配置
     config = {
@@ -88,7 +88,7 @@ def create_provider_config():
 def show_config_preview(config: dict):
     """显示配置预览"""
     print("\n" + "="*60)
-    print("配置预览：")
+    print("Preview of the configuration:")
     print("="*60)
     print(json.dumps(config, indent=2, ensure_ascii=False))
     print("="*60)
@@ -100,8 +100,8 @@ def save_config(config: dict, filename: str = "custom_providers.json"):
 
     # 如果文件已存在，询问是否合并
     if filepath.exists():
-        print(f"\n⚠️  配置文件 {filename} 已存在")
-        action = get_input("选择操作: [1] 合并配置  [2] 覆盖文件  [3] 另存为", "1")
+        print(f"\n⚠️  Configuration file {filename} already exists")
+        action = get_input("Select action: [1] Merge config  [2] Overwrite file  [3] Save as new", "1")
 
         if action == "1":
             # 合并配置
@@ -109,22 +109,22 @@ def save_config(config: dict, filename: str = "custom_providers.json"):
                 existing_config = json.load(f)
             existing_config.update(config)
             config = existing_config
-            print("✓ 将合并到现有配置")
+            print("✓ Configuration merged with existing file")
 
         elif action == "3":
             # 另存为
-            new_filename = get_input("新文件名", "custom_providers_new.json")
+            new_filename = get_input("New filename (default: custom_providers_new.json)", "custom_providers_new.json")
             filepath = Path(new_filename)
 
     # 保存文件
     with open(filepath, "w", encoding="utf-8") as f:
         json.dump(config, f, indent=2, ensure_ascii=False)
 
-    print(f"\n✅ 配置已保存到: {filepath.absolute()}")
-    print("\n下一步：")
-    print(f"  1. 检查配置: cat {filepath}")
-    print(f"  2. 在 .env 中设置: CUSTOM_PROVIDERS_CONFIG={filepath}")
-    print("  3. 重启 Bot: python run.py")
+    print(f"\n✅ Configuration saved to: {filepath.absolute()}")
+    print("\nNext steps:")
+    print(f"  1. Check the configuration: cat {filepath}")
+    print(f"  2. Set in .env: CUSTOM_PROVIDERS_CONFIG={filepath}")
+    print("  3. Restart the Bot: python run.py")
 
 
 def show_examples():
@@ -159,7 +159,7 @@ def show_examples():
         }
     }
 
-    print("\n常见配置示例：\n")
+    print("\nCommon Provider Configurations:\n")
     for title, example in examples.items():
         print(f"【{title}】")
         print(json.dumps(example, indent=2, ensure_ascii=False))
@@ -182,16 +182,16 @@ def main():
         show_config_preview(config)
 
         # 确认保存
-        confirm = get_input("\n是否保存此配置？[Y/n]", "Y")
+        confirm = get_input("\nSave this configuration? [Y/n]", "Y")
         if confirm.lower() in ["y", "yes", ""]:
             save_config(config)
         else:
-            print("❌ 已取消保存")
+            print("❌ Configuration save canceled")
 
     except KeyboardInterrupt:
-        print("\n\n❌ 用户取消")
+        print("\n\n❌ User canceled")
     except Exception as e:
-        print(f"\n❌ 错误: {e}")
+        print(f"\n❌ Error: {e}")
 
 
 if __name__ == "__main__":

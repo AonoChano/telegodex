@@ -126,17 +126,17 @@ _ANSI_RESET = "\033[0m"
 
 # aiogram exception class → (category, hint)
 _POLLING_ERROR_CLASSES: dict[str, tuple[str, str]] = {
-    "TelegramNetworkError": ("network", "无法连接 Telegram 服务器"),
-    "TelegramUnauthorizedError": ("auth", "Bot token 无效，请检查 TELEGRAM_BOT_TOKEN"),
-    "TelegramForbiddenError": ("auth", "Bot 被禁用或无权访问"),
-    "TelegramConflictError": ("auth", "Bot token 被其他实例占用"),
-    "TelegramServerError": ("server", "Telegram 服务端异常"),
-    "RestartingTelegram": ("server", "Telegram 服务器重启中"),
-    "TelegramRetryAfter": ("rate_limit", "触发洪水控制，等待重试"),
-    "TelegramBadRequest": ("client", "请求格式错误"),
-    "TelegramNotFound": ("client", "目标不存在"),
-    "TelegramEntityTooLarge": ("client", "文件过大"),
-    "ClientDecodeError": ("client", "响应解析失败"),
+    "TelegramNetworkError": ("network", "Failed to connect to Telegram server"),
+    "TelegramUnauthorizedError": ("auth", "Bot token is invalid, please check TELEGRAM_BOT_TOKEN"),
+    "TelegramForbiddenError": ("auth", "Bot is disabled or inaccessible"),
+    "TelegramConflictError": ("auth", "Bot token is currently tied up with another instance"),
+    "TelegramServerError": ("server", "Telegram server error"),
+    "RestartingTelegram": ("server", "Telegram server restarting"),
+    "TelegramRetryAfter": ("rate_limit", "Flood control triggered, waiting to retry"),
+    "TelegramBadRequest": ("client", "Invalid request format"),
+    "TelegramNotFound": ("client", "Target not found"),
+    "TelegramEntityTooLarge": ("client", "File is too large"),
+    "ClientDecodeError": ("client", "Response decoding failed"),
 }
 
 # category → max retries (None = unlimited)
@@ -353,8 +353,8 @@ class _AiogramPollingRetryCompactor:
         self._status_line.clear()
         # logger.success 走 _terminal_sink → stop()（幂等），不会死锁
         logger.success(
-            f"Telegram 重连成功 · {attempt}/{_format_retry_limit(category)} · "
-            f"耗时 {_format_duration(elapsed)} · 最后错误: {error_type}"
+            f"Telegram reconnect success · {attempt}/{_format_retry_limit(category)} · "
+            f"took {_format_duration(elapsed)} · last error: {error_type}"
         )
 
     def _handle_failed(self) -> None:
@@ -1088,20 +1088,20 @@ async def main():
         logger.error(f"❌ {e}")
         return
     except Exception as e:
-        logger.error(f"❌ 加载 provider.toml 失败: {e}")
+        logger.error(f"❌ Failed to load provider.toml: {e}")
         return
 
     ai_router = AIRouter(provider_configs, global_config)
 
     if not ai_router.list_available_providers():
-        logger.error("❌ 没有任何 AI 服务商可用 — 请检查 provider.toml 的 available_providers 列表与对应 .env 中的 API key")
+        logger.error("❌ No AI providers are available — please check provider.toml's available_providers list and API keys")
         return
 
     if error := unavailable_default_provider_error(ai_router):
         logger.error(f"❌ {error}")
         return
 
-    logger.info(f"可用的 AI 服务商: {', '.join(ai_router.list_available_providers())}")
+    logger.info(f"Available AI providers: {', '.join(ai_router.list_available_providers())}")
 
     # 初始化 Orchestrator
     from core.orchestrator import Orchestrator
@@ -1180,9 +1180,9 @@ async def main():
             codex_daemon = get_codex_daemon()
             await codex_daemon.start()
         except Exception as e:
-            logger.warning(f"Codex daemon 启动失败: {type(e).__name__}: {e!r}")
+            logger.warning(f"Codex daemon startup failed: {type(e).__name__}: {e!r}")
 
-    logger.info("✓ Telegodex 启动成功！")
+    logger.info("✓ Telegodex started successfully!")
     try:
         await dp.start_polling(bot, polling_timeout=10, backoff_config=polling_backoff)
     finally:
@@ -1196,7 +1196,7 @@ async def main():
                 await codex.shutdown()
         except Exception as e:
             logger.warning(
-                f"Codex daemon 关闭失败: {type(e).__name__}: {e!r}"
+                f"Codex daemon shutdown failed: {type(e).__name__}: {e!r}"
             )
 
         from bot.utils.rich_messages import close_shared_session
@@ -1205,7 +1205,7 @@ async def main():
             await close_shared_session()
         except Exception as e:
             logger.warning(
-                f"close_shared_session 失败: {type(e).__name__}: {e!r}"
+                f"close_shared_session failed: {type(e).__name__}: {e!r}"
             )
         await db.close()
         await bot.session.close()
@@ -1216,4 +1216,4 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        logger.info("Bot 已停止")
+        logger.info("Bot stopped")

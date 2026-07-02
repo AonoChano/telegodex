@@ -52,5 +52,5 @@ async def deliver_chat_response(
                 )
 
     except Exception as format_error:
-        logger.warning(f"格式化失败，使用纯文本: {format_error}")
+        logger.warning(f"Format failed, falling back to plain text: {format_error}")
         await message.answer(response_text, **route.send_kwargs())
