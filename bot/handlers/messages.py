@@ -9,6 +9,7 @@ from sqlalchemy import select
 
 from ai import AIRouter, MessageRole
 from ai import Message as AIMessage
+from bot.handlers.chat_delivery import deliver_chat_response
 from bot.handlers.chat_response import DRAFT_MAX_CALLS_PER_ID, generate_chat_provider_response
 from bot.handlers.chat_runtime import select_chat_runtime
 from bot.handlers.chat_sessions import load_session_data, resolve_provider_conversation, save_session_data
@@ -18,8 +19,6 @@ from bot.handlers.chat_tool_requests import (
 )
 from bot.keyboards import get_main_menu, get_settings_menu
 from bot.telegram_draft import DraftStream
-from bot.utils.markdown import format_markdown_v2
-from bot.utils.rich_messages import send_rich_message
 from bot.utils.routing import TelegramRoute
 from config import settings
 from core.orchestrator.chat_tools import build_telegodex_capability_prompt
@@ -409,42 +408,13 @@ async def handle_message(
         await save_session_data(conversation, session_key)
         await context_manager.session.commit()
 
-        # ---- 4) 持久化收尾 ----
-        sent = False
-        try:
-            if stream is not None:
-                sent = await stream.finalize(response_text)
-            else:
-                sent = await send_rich_message(
-                    bot_token=bot_token,
-                    chat_id=route.chat_id,
-                    markdown_text=response_text,
-                    message_thread_id=route.message_thread_id,
-                    direct_messages_topic_id=route.direct_messages_topic_id,
-                    business_connection_id=route.business_connection_id,
-                )
-
-            if sent:
-                logger.info("Rich Message sent successfully")
-            else:
-                logger.warning("Rich Messages unavailable, falling back to MarkdownV2")
-                formatted_content = format_markdown_v2(response_text)
-                try:
-                    await message.answer(
-                        formatted_content,
-                        parse_mode="MarkdownV2",
-                        **route.send_kwargs(),
-                    )
-                except Exception:
-                    await message.answer(
-                        response_text,
-                        **route.send_kwargs(),
-                    )
-
-        except Exception as format_error:
-            # 如果格式化失败，回退到纯文本
-            logger.warning(f"格式化失败，使用纯文本: {format_error}")
-            await message.answer(response_text, **route.send_kwargs())
+        await deliver_chat_response(
+            message=message,
+            route=route,
+            bot_token=bot_token,
+            stream=stream,
+            response_text=response_text,
+        )
 
     except Exception as e:
         logger.error(f"AI 调用失败: {e}")

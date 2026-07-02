@@ -219,7 +219,7 @@ class TestTextMessageRouting:
         with (
             patch("bot.handlers.messages.settings", mock_settings),
             patch(
-                "bot.handlers.messages.send_rich_message",
+                "bot.handlers.chat_delivery.send_rich_message",
                 AsyncMock(return_value=True),
             ) as mock_send_rich,
         ):
@@ -290,7 +290,7 @@ class TestTextMessageRouting:
 
         with (
             patch("bot.handlers.messages.settings", mock_settings),
-            patch("bot.handlers.messages.send_rich_message", AsyncMock(return_value=True)) as mock_send_rich,
+            patch("bot.handlers.chat_delivery.send_rich_message", AsyncMock(return_value=True)) as mock_send_rich,
         ):
             await dp.feed_update(bot, update)
 
@@ -348,7 +348,7 @@ class TestTextMessageRouting:
 
         with (
             patch("bot.handlers.messages.settings", mock_settings),
-            patch("bot.handlers.messages.send_rich_message", AsyncMock(return_value=True)) as mock_send_rich,
+            patch("bot.handlers.chat_delivery.send_rich_message", AsyncMock(return_value=True)) as mock_send_rich,
         ):
             await dp.feed_update(bot, update)
 
@@ -530,7 +530,7 @@ class TestCodexTopicFallthrough:
         with (
             patch("bot.handlers.messages.settings", mock_settings),
             patch(
-                "bot.handlers.messages.send_rich_message",
+                "bot.handlers.chat_delivery.send_rich_message",
                 AsyncMock(return_value=True),
             ) as mock_send_rich,
         ):
