@@ -7,7 +7,7 @@ order: 1
 
 Telegodex 是一个面向 AI 对话与 AI 智能体的 **Telegram 工作台**。它不只是
 又一个聊天机器人——而是一个控制面板,让你在 Telegram 中接入多家 AI 服务商,
-未来还能直接驱动 Codex 等 CLI 智能体。
+还能把 Codex CLI 当作本地子进程直接驱动。
 
 机器人常驻在你的会话列表里,跨轮保留上下文,并按照 Telegram 原生方式渲染
 富文本 Markdown(表格、代码块、LaTeX)。
@@ -22,22 +22,21 @@ Telegodex 是一个面向 AI 对话与 AI 智能体的 **Telegram 工作台**。
 | 富文本 Markdown 输出 | ✅ 已上线 |
 | 对话历史 | ✅ 已上线 |
 | 权限模式 | ✅ 已上线 |
-| Codex / CLI 智能体桥接 | 🚧 规划中 |
+| Codex 子进程桥接 | ✅ 已上线 |
 
 你只需选择一个服务商,发送消息,Telegodex 就会通过对应的适配器路由请求、
 流式回传回复,并把这一轮存档,让下一句话保持完整上下文。
 
 ---
 
-## 多服务商架构
+## 两大支柱
 
-Telegodex 内置了主流模型家族的适配器,同时支持通过 JSON 配置接入任意
-OpenAI 兼容的自定义服务商:
+Telegodex 建立在两大支柱之上:
 
-- **OpenAI** —— GPT 系列模型
-- **Anthropic** —— Claude 系列模型
-- **Google** —— Gemini 系列模型
-- **自定义服务商** —— 通过 JSON 配置定义
+- **AI 服务商** —— 通过 OpenAI、Anthropic、Google、DeepSeek 以及任意
+  OpenAI 兼容的自定义端点进行对话补全。详见 **🤖 AI 服务商** 一章。
+- **Codex 桥接** —— 将本地 Codex CLI 作为子进程驱动,用于远程智能体
+  工作、文件编辑与 Shell 执行。详见 **🛠️ Codex 桥接** 一章。
 
 无需离开对话即可在设置中切换服务商。每个服务商维护自己的模型列表与默认
 温度参数。

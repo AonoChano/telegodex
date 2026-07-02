@@ -1,6 +1,6 @@
 ---
 title: "🔒 Permission Modes"
-order: 5
+order: 6
 ---
 
 # Permission Modes

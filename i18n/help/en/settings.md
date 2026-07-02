@@ -1,6 +1,6 @@
 ---
 title: "⚙️ Settings"
-order: 7
+order: 8
 ---
 
 # Settings
@@ -14,7 +14,7 @@ with `/settings` or the **⚙️ Settings** button.
 
 | Item | What it does |
 |---|---|
-| 🤖 Switch AI provider | Choose between OpenAI, Anthropic, Google, custom |
+| 🤖 Switch AI provider | Choose between OpenAI, Anthropic, Google, DeepSeek, custom |
 | 🎯 Select model | Pick a model from the active provider |
 | 🌡️ Adjust temperature | Set creativity from 0.2 to 1.3 |
 | Permission | Cycle through permission modes |

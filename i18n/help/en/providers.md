@@ -12,14 +12,19 @@ each task without leaving Telegram.
 
 ## Built-in Providers
 
-| Provider | Family | Examples |
+| Provider | Family | Current models (2026) |
 |---|---|---|
-| OpenAI | GPT | GPT-4o, GPT-4 Turbo |
-| Anthropic | Claude | Claude 3.5 Sonnet, Claude 3 Opus |
-| Google | Gemini | Gemini 1.5 Pro, Gemini Flash |
+| OpenAI | GPT | GPT-5.5, GPT-5.4 |
+| Anthropic | Claude | Sonnet 5, Opus 4.8, Fable 5 |
+| Google | Gemini | Gemini 3.5 Flash, Gemini 3.1 Pro |
+| DeepSeek | DeepSeek | V4 Pro, V4 Flash, V3.2 |
 
 Built-in providers are configured on the server side. Once their API keys are
 in place, they appear automatically in the provider selector.
+
+> Models retire over time — `GPT-4o`, `Claude 3.5`, and `Gemini 1.5` have
+> all been sunset by their vendors. Telegodex always routes to whatever the
+> provider exposes as currently available.
 
 ---
 

@@ -22,6 +22,7 @@ i18n/help/
 │   ├── overview.md
 │   ├── getting-started.md
 │   ├── providers.md
+│   ├── codex.md
 │   ├── conversations.md
 │   ├── permissions.md
 │   ├── markdown.md
@@ -31,6 +32,7 @@ i18n/help/
     ├── overview.md
     ├── getting-started.md
     ├── providers.md
+    ├── codex.md
     ├── conversations.md
     ├── permissions.md
     ├── markdown.md
@@ -245,8 +247,8 @@ folder. It reports translation coverage across locales:
   "generated_at": "2026-07-03T14:22:01Z",
   "base_locale": "en",
   "locales": {
-    "en": {"chapters": 8, "missing": 0, "outdated": 0},
-    "zh-cn": {"chapters": 8, "missing": 0, "outdated": 0}
+    "en": {"chapters": 9, "missing": 0, "outdated": 0},
+    "zh-cn": {"chapters": 9, "missing": 0, "outdated": 0}
   }
 }
 ```

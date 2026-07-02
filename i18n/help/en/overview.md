@@ -7,7 +7,7 @@ order: 1
 
 Telegodex is a **Telegram Workbench** for AI chat and AI agents. It is not just
 another chatbot — it is a control surface for talking to multiple AI providers
-and, eventually, for driving CLI agents like Codex directly from Telegram.
+and for driving Codex CLI as a local subprocess directly from Telegram.
 
 The bot lives in your chat list, remembers context across turns, and renders
 rich Markdown (tables, code blocks, LaTeX) the way Telegram natively intends.
@@ -22,7 +22,7 @@ rich Markdown (tables, code blocks, LaTeX) the way Telegram natively intends.
 | Rich Markdown output | ✅ Available |
 | Conversation history | ✅ Available |
 | Permission modes | ✅ Available |
-| Codex / CLI agent bridge | 🚧 Planned |
+| Codex subprocess bridge | ✅ Available |
 
 You pick a provider, send a message, and Telegodex routes it through the
 matching adapter, streams the reply back, and stores the turn so the next
@@ -30,15 +30,16 @@ message keeps full context.
 
 ---
 
-## Multi-Provider Architecture
+## Two Pillars
 
-Telegodex ships with built-in adapters for the major model families, plus a
-custom-provider system for anything OpenAI-compatible:
+Telegodex rests on two pillars:
 
-- **OpenAI** — GPT models
-- **Anthropic** — Claude models
-- **Google** — Gemini models
-- **Custom providers** — defined via JSON config
+- **AI providers** — chat completion through OpenAI, Anthropic, Google,
+  DeepSeek, and any OpenAI-compatible custom endpoint. See the
+  **🤖 AI Providers** chapter.
+- **Codex Bridge** — drive the local Codex CLI as a subprocess for remote
+  agentic work, file edits, and shell execution. See the **🛠️ Codex Bridge**
+  chapter.
 
 Switch providers on the fly from Settings without leaving the chat. Each
 provider keeps its own model list and temperature defaults.

@@ -22,6 +22,9 @@ Telegodex 通过 Telegram 命令与聊天窗口底部的菜单按钮进行操作
 | `/language` | 切换界面语言 |
 | `/model` | 切换模型或服务商 |
 | `/history` | 查看对话历史 |
+| `/codex` | 以子进程方式驱动 Codex CLI(见 🛠️ Codex 桥接) |
+| `/shell` | 通过 Codex 提议或执行 Shell 命令 |
+| `/screenshot` | 捕获当前终端窗口 |
 
 命令不区分大小写,可以在对话任意位置输入。
 

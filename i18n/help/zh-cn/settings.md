@@ -1,6 +1,6 @@
 ---
 title: "⚙️ 设置"
-order: 7
+order: 8
 ---
 
 # 设置
@@ -14,7 +14,7 @@ order: 7
 
 | 项目 | 功能 |
 |---|---|
-| 🤖 切换 AI 服务商 | 在 OpenAI、Anthropic、Google、自定义间选择 |
+| 🤖 切换 AI 服务商 | 在 OpenAI、Anthropic、Google、DeepSeek、自定义间选择 |
 | 🎯 选择模型 | 为当前服务商挑选模型 |
 | 🌡️ 调节温度 | 在 0.2 到 1.3 之间调节创造性 |
 | 权限 | 在权限模式间循环切换 |
