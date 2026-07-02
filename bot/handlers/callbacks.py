@@ -13,6 +13,7 @@ from bot.keyboards import (
     get_model_selector,
     get_provider_selector,
     get_settings_menu,
+    get_temperature_selector,
 )
 from core.orchestrator.chat_tools import next_permission_mode, permission_mode_label
 from i18n import list_available_locales, resolve_locale, tr
@@ -56,6 +57,14 @@ async def handle_settings_callback(callback: CallbackQuery, context_manager: Con
             reply_markup=get_settings_menu(user_obj.tool_permission_mode, locale),
         )
 
+    elif action == "temperature":
+        keyboard = get_temperature_selector(user_obj.temperature, locale)
+        value = _format_temperature_label(user_obj.temperature)
+        await callback.message.edit_text(
+            tr("bot.settings.temperature_title", locale, value=value),
+            reply_markup=keyboard,
+        )
+
     elif action == "permission":
         user_obj.tool_permission_mode = next_permission_mode(user_obj.tool_permission_mode)
         await context_manager.session.commit()
@@ -77,6 +86,42 @@ async def handle_settings_callback(callback: CallbackQuery, context_manager: Con
         await callback.message.delete()
 
     await callback.answer()
+
+
+def _format_temperature_label(value: str | float | int | None) -> str:
+    if value is None:
+        return "0.7"
+    try:
+        return f"{float(str(value).strip()):.1f}"
+    except (TypeError, ValueError):
+        return str(value)
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith("temperature:set:"))
+async def handle_temperature_change(callback: CallbackQuery, context_manager: ContextManager):
+    """Handle user temperature selection."""
+    value = callback.data.split(":", 2)[2]
+
+    user = await context_manager.session.execute(select(User).where(User.id == callback.from_user.id))
+    user_obj = user.scalar_one()
+    locale = resolve_locale(user_obj.ui_language, user_obj.language_code)
+
+    try:
+        float(value)
+    except ValueError:
+        await callback.answer(tr("bot.errors.invalid_callback", locale), show_alert=True)
+        return
+
+    user_obj.temperature = value
+    await context_manager.session.commit()
+
+    label = _format_temperature_label(value)
+    keyboard = get_temperature_selector(value, locale)
+    await callback.message.edit_text(
+        tr("bot.settings.temperature_title", locale, value=label),
+        reply_markup=keyboard,
+    )
+    await callback.answer(tr("bot.callbacks.temperature_changed", locale, value=label), show_alert=False)
 
 
 @router.callback_query(lambda c: c.data and c.data.startswith("provider:"))

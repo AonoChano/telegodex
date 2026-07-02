@@ -12,14 +12,19 @@
     },
     "commands": {
       "start": {
-        "welcome": "👋 欢迎使用 **Telegodex**\\!\n\n你好，{name}\\!\n\n我是一个多 AI 服务商的智能助手，支持：\n{providers}\n\n发送任何消息开始对话，或使用菜单按钮\\!\n\n📌 快速命令：\n/new \\- 开始新对话\n/settings \\- 设置\n/help \\- 帮助",
-        "no_providers": "• ⚠️ 无可用服务商",
+        "welcome": "# Telegodex\n\n你好，{name}。\n\n{providers}\n\n{commands}",
+        "no_providers": "| - | 未配置 |",
         "providers_prefix": {
           "openai": "• ✅ OpenAI \\(GPT\\)",
           "anthropic": "• ✅ Anthropic \\(Claude\\)",
           "google": "• ✅ Google \\(Gemini\\)",
           "custom": "• ✅ {provider}"
-        }
+        },
+        "default_name": "用户",
+        "provider_ready": "可用",
+        "provider_row": "| `{provider}` | {status} |",
+        "providers_section": "## 服务商\n\n| 服务商 | 状态 |\n|---|---|\n{rows}",
+        "commands_section": "## 快速操作\n\n| 指令 | 操作 |\n|---|---|\n| `/new` | 新对话 |\n| `/settings` | 设置 |\n| `/history` | 历史记录 |\n| `/help` | 帮助 |"
       },
       "help": {
         "text": "📖 **帮助文档**\n\n**基本命令：**\n/start \\- 启动机器人\n/new \\- 开始新对话\n/clear \\- 清空当前对话\n/settings \\- 打开设置\n/help \\- 显示帮助\n\n**功能说明：**\n• 直接发送消息即可与 AI 对话\n• 支持多轮对话，自动保存上下文\n• 可在设置中切换不同的 AI 服务商\n• 支持完整的 Markdown 格式\n\n**Markdown 示例：**\n\\*斜体\\* \\- *斜体*\n\\*\\*粗体\\*\\* \\- **粗体**\n\\[链接\\]\\(url\\) \\- [链接](https://example.com)\n\\`代码\\` \\- `代码`"
@@ -51,7 +56,8 @@
       "close": "« 关闭",
       "back": "« 返回",
       "select_provider_title": "🤖 选择 AI 服务商：",
-      "select_model_title": "🎯 选择模型 ({provider})："
+      "select_model_title": "🎯 选择模型 ({provider})：",
+      "temperature_title": "🌡️ 温度参数：{value}"
     },
     "callbacks": {
       "provider_switched": "✅ 已切换到 {provider}",
@@ -62,7 +68,8 @@
       "wip": "功能开发中...",
       "language_title": "🌐 选择语言：",
       "approval_handled": "Codex 审批已处理：{decision}",
-      "language_changed": "✅ 已切换到 {language}"
+      "language_changed": "✅ 已切换到 {language}",
+      "temperature_changed": "温度参数已设为 {value}"
     },
     "errors": {
       "empty_input": "⚠️ 消息内容为空或过长",
@@ -91,12 +98,14 @@
       "help_contact": "👨‍💻 联系开发者"
     },
     "history": {
-      "prev_page": "⬅️ 上一页",
-      "next_page": "下一页 ➡️",
+      "prev_page": "⏪",
+      "next_page": "⏩",
       "page_indicator": "{page}/{total_pages}",
       "empty_page": "📭 本页无消息。",
       "empty_conversation": "📭 当前对话没有历史消息。",
-      "invalid_callback": "无效的回调"
+      "invalid_callback": "无效的回调",
+      "first_page": "⏮️",
+      "last_page": "⏭️"
     },
     "chat_tool": {
       "permission_denied": "权限当前为 `仅对话`。我不会运行命令或调用本地工具。\n\n需要我查看本地环境、执行命令或使用工具时，请在设置里把权限切到 `用户确认` 或 `⚠️ 完全访问` 后再继续。",

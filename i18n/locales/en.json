@@ -12,14 +12,19 @@
     },
     "commands": {
       "start": {
-        "welcome": "👋 Welcome to **Telegodex**\\!\n\nHello, {name}\\!\n\nI'm an intelligent assistant with multi\\-provider AI support, supporting:\n{providers}\n\nSend any message to start a conversation, or use the menu buttons\\!\n\n📌 Quick commands:\n/new \\- Start a new conversation\n/settings \\- Settings\n/help \\- Help",
-        "no_providers": "• ⚠️ No providers available",
+        "welcome": "# Telegodex\n\nHello, {name}.\n\n{providers}\n\n{commands}",
+        "no_providers": "| - | Not configured |",
         "providers_prefix": {
           "openai": "• ✅ OpenAI \\(GPT\\)",
           "anthropic": "• ✅ Anthropic \\(Claude\\)",
           "google": "• ✅ Google \\(Gemini\\)",
           "custom": "• ✅ {provider}"
-        }
+        },
+        "default_name": "User",
+        "provider_ready": "Ready",
+        "provider_row": "| `{provider}` | {status} |",
+        "providers_section": "## Providers\n\n| Provider | Status |\n|---|---|\n{rows}",
+        "commands_section": "## Quick actions\n\n| Command | Action |\n|---|---|\n| `/new` | New conversation |\n| `/settings` | Settings |\n| `/history` | History |\n| `/help` | Help |"
       },
       "help": {
         "text": "📖 **Help**\n\n**Basic commands:**\n/start \\- Start the bot\n/new \\- Start a new conversation\n/clear \\- Clear current conversation\n/settings \\- Open settings\n/help \\- Show help\n\n**Features:**\n• Send a message to chat with AI directly\n• Multi\\-turn conversation with automatic context saving\n• Switch between AI providers in settings\n• Full Markdown support\n\n**Markdown examples:**\n\\*italic\\* \\- *italic*\n\\*\\*bold\\*\\* \\- **bold**\n\\[link\\]\\(url\\) \\- [link](https://example.com)\n\\`code\\` \\- `code`"
@@ -51,7 +56,8 @@
       "close": "« Close",
       "back": "« Back",
       "select_provider_title": "🤖 Select AI provider:",
-      "select_model_title": "🎯 Select model ({provider}):"
+      "select_model_title": "🎯 Select model ({provider}):",
+      "temperature_title": "🌡️ Temperature: {value}"
     },
     "callbacks": {
       "provider_switched": "✅ Switched to {provider}",
@@ -62,7 +68,8 @@
       "wip": "Feature in development...",
       "language_title": "🌐 Select Language:",
       "approval_handled": "Codex approval handled: {decision}",
-      "language_changed": "✅ Language switched to {language}"
+      "language_changed": "✅ Language switched to {language}",
+      "temperature_changed": "Temperature set to {value}"
     },
     "errors": {
       "empty_input": "⚠️ Message is empty or too long",
@@ -91,12 +98,14 @@
       "help_contact": "👨‍💻 Contact developer"
     },
     "history": {
-      "prev_page": "⬅️ Previous",
-      "next_page": "Next ➡️",
+      "prev_page": "⏪",
+      "next_page": "⏩",
       "page_indicator": "{page}/{total_pages}",
       "empty_page": "📭 No messages on this page.",
       "empty_conversation": "📭 No history messages in this conversation.",
-      "invalid_callback": "Invalid callback"
+      "invalid_callback": "Invalid callback",
+      "first_page": "⏮️",
+      "last_page": "⏭️"
     },
     "chat_tool": {
       "permission_denied": "Permission is currently `Chat only`. I will not run commands or invoke local tools.\n\nTo inspect the local environment, execute commands, or use tools, switch the permission to `User confirm` or `⚠️ Full access` in settings before continuing.",

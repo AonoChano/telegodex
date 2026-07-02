@@ -21,27 +21,21 @@ def _history_keyboard(
     page: int, total_pages: int, conversation_id: int, locale: str | None = None
 ) -> InlineKeyboardMarkup:
     """Build pagination keyboard for history."""
-    nav: list[InlineKeyboardButton] = []
-    if page > 1:
-        nav.append(
-            InlineKeyboardButton(
-                text=tr("bot.history.prev_page", locale),
-                callback_data=f"history:{conversation_id}:{page - 1}",
-            )
-        )
-    nav.append(
+    first_callback = f"history:{conversation_id}:1" if page > 1 else "history:ignore"
+    prev_callback = f"history:{conversation_id}:{page - 1}" if page > 1 else "history:ignore"
+    next_callback = f"history:{conversation_id}:{page + 1}" if page < total_pages else "history:ignore"
+    last_callback = f"history:{conversation_id}:{total_pages}" if page < total_pages else "history:ignore"
+
+    nav = [
+        InlineKeyboardButton(text=tr("bot.history.first_page", locale), callback_data=first_callback),
+        InlineKeyboardButton(text=tr("bot.history.prev_page", locale), callback_data=prev_callback),
         InlineKeyboardButton(
             text=tr("bot.history.page_indicator", locale, page=page, total_pages=total_pages),
             callback_data="history:ignore",
-        )
-    )
-    if page < total_pages:
-        nav.append(
-            InlineKeyboardButton(
-                text=tr("bot.history.next_page", locale),
-                callback_data=f"history:{conversation_id}:{page + 1}",
-            )
-        )
+        ),
+        InlineKeyboardButton(text=tr("bot.history.next_page", locale), callback_data=next_callback),
+        InlineKeyboardButton(text=tr("bot.history.last_page", locale), callback_data=last_callback),
+    ]
     return InlineKeyboardMarkup(inline_keyboard=[nav])
 
 
@@ -171,15 +165,16 @@ async def handle_history_callback(
         await callback_query.answer(tr("bot.history.invalid_callback", locale))
         return
 
+    if data == "history:ignore":
+        await callback_query.answer()
+        return
+
     parts = data.split(":")
     if len(parts) != 3:
         await callback_query.answer(tr("bot.history.invalid_callback", locale))
         return
 
     _, conv_id_str, page_str = parts
-    if conv_id_str == "ignore":
-        await callback_query.answer()
-        return
 
     try:
         conversation_id = int(conv_id_str)

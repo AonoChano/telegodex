@@ -115,6 +115,7 @@ def build_rich_markdown_payload(
     message_thread_id: int | None = None,
     direct_messages_topic_id: int | None = None,
     business_connection_id: str | None = None,
+    reply_markup: Any | None = None,
 ) -> dict[str, Any]:
     """Build a sendRichMessage payload using InputRichMessage.markdown."""
     rich_message: dict[str, Any] = {"markdown": markdown_text}
@@ -134,7 +135,18 @@ def build_rich_markdown_payload(
         payload["message_thread_id"] = message_thread_id
     if direct_messages_topic_id is not None:
         payload["direct_messages_topic_id"] = direct_messages_topic_id
+    if reply_markup is not None:
+        payload["reply_markup"] = _serialize_reply_markup(reply_markup)
     return payload
+
+
+def _serialize_reply_markup(reply_markup: Any) -> Any:
+    """Serialize aiogram / pydantic reply markup for raw Bot API calls."""
+    if hasattr(reply_markup, "model_dump"):
+        return reply_markup.model_dump(mode="json", exclude_none=True)
+    if hasattr(reply_markup, "dict"):
+        return reply_markup.dict(exclude_none=True)
+    return reply_markup
 
 
 async def send_rich_message(
@@ -147,6 +159,7 @@ async def send_rich_message(
     message_thread_id: int | None = None,
     direct_messages_topic_id: int | None = None,
     business_connection_id: str | None = None,
+    reply_markup: Any | None = None,
 ) -> bool:
     """
     Send Markdown through Telegram's Rich Messages API.
@@ -162,6 +175,7 @@ async def send_rich_message(
         message_thread_id=message_thread_id,
         direct_messages_topic_id=direct_messages_topic_id,
         business_connection_id=business_connection_id,
+        reply_markup=reply_markup,
     )
     ok, desc, _ = await _post_bot_method(bot_token, "sendRichMessage", payload)
     if ok:

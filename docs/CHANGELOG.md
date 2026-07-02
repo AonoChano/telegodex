@@ -13,6 +13,11 @@ related: [PRODUCT_EXPERIENCE.md, RICH_MESSAGES.md, STARTUP.md]
 
 - Improved Telegram inline keyboard layout so settings and action menus use compact rows with full-width footer buttons.
 - Added i18n system.
+- Added temperature selector with callback handler so the settings button is now functional.
+- Enhanced history pagination with first/prev/next/last buttons (⏮️⏪⏩⏭️).
+- Reworked /start welcome message to use Rich Markdown tables for compact provider and command listing.
+- Extended send_rich_message to accept reply_markup so Rich Message payloads can carry inline keyboards.
+- Model selector now uses compact 2-column layout with footer links to provider selector and settings.
 - Extracted normal-chat response delivery fallbacks from the message handler into a focused module.
 - Extracted normal-chat provider response generation from the message handler while preserving draft streaming fallback behavior.
 - Extracted normal-chat provider session helpers from the message handler into a focused module.

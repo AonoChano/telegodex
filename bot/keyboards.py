@@ -134,11 +134,52 @@ def get_model_selector(
         if model == current_model:
             label = f"✅ {label}"
 
-        buttons.append([InlineKeyboardButton(text=label, callback_data=f"model:{provider}:{model}")])
+        buttons.append(InlineKeyboardButton(text=label, callback_data=f"model:{provider}:{model}"))
 
-    buttons.append([InlineKeyboardButton(text=tr("bot.settings.back", locale), callback_data="settings:provider")])
+    return smart_inline_keyboard(
+        buttons,
+        footer_buttons=[
+            InlineKeyboardButton(text=tr("bot.settings.switch_provider", locale), callback_data="settings:provider"),
+            InlineKeyboardButton(text=tr("bot.settings.back", locale), callback_data="settings:back"),
+        ],
+        max_columns=2,
+        wide_button_width=30,
+    )
 
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+def _normalize_temperature_value(value: str | float | int | None) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def get_temperature_selector(current_temperature: str | float | int | None, locale: str | None = None) -> InlineKeyboardMarkup:
+    """Temperature selector keyboard."""
+    current = _normalize_temperature_value(current_temperature)
+    options = [
+        ("0.2", "0.2"),
+        ("0.5", "0.5"),
+        ("0.7", "0.70"),
+        ("1.0", "1.0"),
+        ("1.3", "1.3"),
+    ]
+    buttons = []
+    for label_value, stored_value in options:
+        label = label_value
+        option_value = _normalize_temperature_value(stored_value)
+        if current is not None and option_value is not None and abs(current - option_value) < 0.001:
+            label = f"✅ {label}"
+        buttons.append(InlineKeyboardButton(text=label, callback_data=f"temperature:set:{stored_value}"))
+
+    return smart_inline_keyboard(
+        buttons,
+        footer_buttons=[InlineKeyboardButton(text=tr("bot.settings.back", locale), callback_data="settings:back")],
+        max_columns=3,
+        wide_button_width=12,
+    )
 
 
 def get_settings_menu(permission_mode: str | None = None, locale: str | None = None) -> InlineKeyboardMarkup:

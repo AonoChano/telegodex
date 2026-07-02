@@ -19,6 +19,7 @@ from bot.handlers.chat_tool_requests import (
 )
 from bot.keyboards import get_language_selector, get_main_menu, get_settings_menu
 from bot.telegram_draft import DraftStream
+from bot.utils.rich_messages import send_rich_message
 from bot.utils.routing import TelegramRoute
 from config import settings
 from core.orchestrator.chat_tools import build_telegodex_capability_prompt
@@ -38,6 +39,41 @@ def escape_markdown(text: str) -> str:
     return text
 
 
+def _rich_inline_text(text: str) -> str:
+    """Escape user/provider text for simple Rich Markdown inline contexts."""
+    return text.replace("\\", "\\\\").replace("*", "\\*").replace("_", "\\_").replace("`", "\\`")
+
+
+def _rich_table_cell(text: str) -> str:
+    return _rich_inline_text(text).replace("|", "\\|").replace("\r", " ").replace("\n", " ")
+
+
+def _build_start_message(locale: str | None, user_name: str, provider_names: list[str]) -> str:
+    provider_ready = tr("bot.commands.start.provider_ready", locale)
+    if provider_names:
+        rows = "\n".join(
+            tr(
+                "bot.commands.start.provider_row",
+                locale,
+                provider=_rich_table_cell(provider),
+                status=provider_ready,
+            )
+            for provider in provider_names
+        )
+    else:
+        rows = tr("bot.commands.start.no_providers", locale)
+
+    providers_section = tr("bot.commands.start.providers_section", locale, rows=rows)
+    commands_section = tr("bot.commands.start.commands_section", locale)
+    return tr(
+        "bot.commands.start.welcome",
+        locale,
+        name=_rich_inline_text(user_name),
+        providers=providers_section,
+        commands=commands_section,
+    )
+
+
 @router.message(Command("start"))
 async def cmd_start(message: Message, context_manager: ContextManager, ai_router: AIRouter):
     """处理 /start 命令"""
@@ -54,33 +90,30 @@ async def cmd_start(message: Message, context_manager: ContextManager, ai_router
     )
     locale = resolve_locale(db_user.ui_language, db_user.language_code)
 
-    user_name = escape_markdown(user.first_name or "User")
-    providers = []
-    if ai_router.is_provider_available("openai"):
-        providers.append(tr("bot.commands.start.providers_prefix.openai", locale))
-    if ai_router.is_provider_available("anthropic"):
-        providers.append(tr("bot.commands.start.providers_prefix.anthropic", locale))
-    if ai_router.is_provider_available("google"):
-        providers.append(tr("bot.commands.start.providers_prefix.google", locale))
-    for provider_name in ai_router.list_available_providers():
-        if provider_name.lower() not in {"openai", "anthropic", "google"}:
-            providers.append(
-                tr("bot.commands.start.providers_prefix.custom", locale, provider=escape_markdown(provider_name))
-            )
+    user_name = user.first_name or tr("bot.commands.start.default_name", locale)
+    provider_names = ai_router.list_available_providers()
+    welcome_text = _build_start_message(locale, user_name, provider_names)
+    main_menu = get_main_menu(locale)
 
-    providers_text = "\n".join(providers) if providers else tr("bot.commands.start.no_providers", locale)
+    bot_token = settings.telegram_bot_token
+    if hasattr(bot_token, "get_secret_value"):
+        bot_token = bot_token.get_secret_value()
 
-    welcome_text = tr(
-        "bot.commands.start.welcome",
-        locale,
-        name=user_name,
-        providers=providers_text,
+    sent = await send_rich_message(
+        bot_token=bot_token,
+        chat_id=route.chat_id,
+        markdown_text=welcome_text,
+        message_thread_id=route.message_thread_id,
+        direct_messages_topic_id=route.direct_messages_topic_id,
+        business_connection_id=route.business_connection_id,
+        reply_markup=main_menu,
     )
+    if sent:
+        return
 
     await message.answer(
         welcome_text,
-        parse_mode="MarkdownV2",
-        reply_markup=get_main_menu(locale),
+        reply_markup=main_menu,
         **route.send_kwargs(),
     )
 
