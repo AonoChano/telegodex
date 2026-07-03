@@ -47,6 +47,20 @@ def test_format_shell_execution_markdown_mentions_no_output() -> None:
     assert "_No output._" in text
 
 
+def test_format_shell_execution_text_uses_plain_transcript() -> None:
+    text = fmt.format_shell_execution_text(
+        "Get-ChildItem",
+        {"stdout": "file.txt", "stderr": "warning", "returncode": 0},
+    )
+
+    assert text.startswith("Shell command completed")
+    assert "Command:\nGet-ChildItem" in text
+    assert "Exit code: 0" in text
+    assert "stdout:\nfile.txt" in text
+    assert "stderr:\nwarning" in text
+    assert "<details>" not in text
+    assert "```" not in text
+
 def test_format_collected_stderr_deduplicates_in_order() -> None:
     assert fmt.format_collected_stderr(
         [

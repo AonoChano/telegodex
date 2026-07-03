@@ -140,6 +140,9 @@
       "next_chapter": "Next ➡️",
       "prev_chapter_with_title": "⬅️ Previous: {title}",
       "next_chapter_with_title": "Next: {title} ➡️"
+    },
+    "shell": {
+      "output_file_caption": "Shell output for: `{command}`"
     }
   },
   "core": {

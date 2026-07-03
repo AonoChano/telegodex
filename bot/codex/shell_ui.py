@@ -22,6 +22,7 @@ from core.orchestrator.shell_pipeline import (
     parse_shell_request,
 )
 from core.session import SessionKey
+from i18n import resolve_locale, tr
 from storage.context_manager import ContextManager
 
 ShellExecutor = Callable[[Message, TelegramRoute, Orchestrator, str, SessionKey], Awaitable[None]]
@@ -36,6 +37,7 @@ SHELL_USAGE = (
 )
 
 SHORT_SHELL_USAGE = "Usage:\n/shell <natural language task>\n/shell !<command>\n/shell -- <command>"
+TELEGRAM_TEXT_LIMIT = 4096
 
 
 def shell_prompt_from_message(text: str) -> str:
@@ -211,15 +213,8 @@ async def execute_shell_telegram(
         result = await orchestrator.shell_provider.execute(command, session_id=session_key.to_string())
         rendered = fmt.format_shell_execution_markdown(command, result)
         toolbar_handler.set_last_reply(session_key, rendered)
-        if len(rendered) > 12000:
-            file_bytes = rendered.encode("utf-8")
-            await status_msg.delete()
-            await message.answer_document(
-                document=BufferedInputFile(file_bytes, filename="shell_output.md"),
-                caption=f"Shell output for: `{command}`",
-                parse_mode="Markdown",
-                **route.send_kwargs(),
-            )
+        if len(rendered) > TELEGRAM_TEXT_LIMIT:
+            await _send_shell_output_file(message, route, status_msg, command, result)
             return
 
         with contextlib.suppress(Exception):
@@ -233,7 +228,10 @@ async def execute_shell_telegram(
             business_connection_id=route.business_connection_id,
         )
         if not sent:
-            await message.answer(rendered, parse_mode="Markdown", **route.send_kwargs())
+            if len(rendered) > TELEGRAM_TEXT_LIMIT:
+                await _send_shell_output_file(message, route, status_msg, command, result)
+            else:
+                await message.answer(rendered, parse_mode="Markdown", **route.send_kwargs())
     except TimeoutError:
         await status_msg.edit_text(
             f"Command timed out after 30 seconds:\n```\n{command}\n```",
@@ -246,6 +244,24 @@ async def execute_shell_telegram(
             parse_mode="Markdown",
         )
 
+
+async def _send_shell_output_file(
+    message: Message,
+    route: TelegramRoute,
+    status_msg: Message,
+    command: str,
+    result: dict[str, object],
+) -> None:
+    locale = resolve_locale(None, message.from_user.language_code if message.from_user else None)
+    transcript = fmt.format_shell_execution_text(command, result)
+    with contextlib.suppress(Exception):
+        await status_msg.delete()
+    await message.answer_document(
+        document=BufferedInputFile(transcript.encode("utf-8"), filename="shell_output.txt"),
+        caption=tr("bot.shell.output_file_caption", locale, command=command),
+        parse_mode=None,
+        **route.send_kwargs(),
+    )
 
 async def handle_shell_ai_callback(
     callback_query: CallbackQuery,

@@ -143,6 +143,34 @@ async def test_handle_shell_command_raw_prefix_executes_directly() -> None:
 
 
 @pytest.mark.asyncio
+async def test_execute_shell_telegram_sends_long_output_as_text_file(monkeypatch: pytest.MonkeyPatch) -> None:
+    bot = AsyncMock()
+    status_msg = SimpleNamespace(delete=AsyncMock())
+    bot.return_value = status_msg
+    message = _message("/shell !long", bot=bot)
+    route = TelegramRoute.from_message(message)
+    session_key = SessionKey.from_telegram_message(100, None)
+    result = {"stdout": "x" * 5000, "stderr": "", "returncode": 0}
+    orchestrator = SimpleNamespace(
+        shell_provider=SimpleNamespace(execute=AsyncMock(return_value=result)),
+    )
+    send_rich = AsyncMock(return_value=True)
+    monkeypatch.setattr(shell_ui, "send_rich_message", send_rich)
+
+    await shell_ui.execute_shell_telegram(message, route, orchestrator, "long", session_key)
+
+    send_rich.assert_not_awaited()
+    status_msg.delete.assert_awaited_once()
+    assert bot.await_count == 2
+    method = bot.await_args.args[0]
+    assert method.__class__.__name__ == "SendDocument"
+    assert method.document.filename == "shell_output.txt"
+    assert method.document.data.decode("utf-8").startswith("Shell command completed")
+    assert "stdout:\n" in method.document.data.decode("utf-8")
+    assert method.caption == "Shell output for: `long`"
+    assert method.parse_mode is None
+
+@pytest.mark.asyncio
 async def test_shell_ai_run_callback_executes_safe_command() -> None:
     bot = AsyncMock()
     message = _message("proposal", bot=bot)

@@ -165,6 +165,27 @@ def format_shell_execution_markdown(command: str, result: dict[str, Any]) -> str
     return "\n".join(lines).strip()
 
 
+def format_shell_execution_text(command: str, result: dict[str, Any]) -> str:
+    """Return a plain-text shell execution transcript for file delivery."""
+    stdout = str(result.get("stdout") or "").strip()
+    stderr = str(result.get("stderr") or "").strip()
+    returncode = result.get("returncode")
+    sections = [
+        "Shell command completed" if returncode == 0 else "Shell command failed",
+        "",
+        "Command:",
+        command,
+        "",
+        f"Exit code: {returncode}",
+    ]
+    if stdout:
+        sections.extend(["", "stdout:", stdout])
+    if stderr:
+        sections.extend(["", "stderr:", stderr])
+    if not stdout and not stderr:
+        sections.extend(["", "No output."])
+    return "\n".join(sections).strip() + "\n"
+
 def format_collected_stderr(lines: list[str]) -> str:
     """Join collected daemon stderr lines into a single user-facing block.
 

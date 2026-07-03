@@ -58,7 +58,7 @@ Use raw mode when you already know the exact command:
 
 Dangerous raw commands and dangerous AI-generated proposals still require an inline confirmation before execution. `/shell`, `/shell -h`, `/shell help`, and `/shell --help` show the usage summary. For ordinary tasks, prefer normal chat plus the permission mode that matches how much autonomy you want to grant.
 
-On Windows, Telegodex runs shell commands through PowerShell. Command results are sent as Rich Message summaries with the command, exit code, and folded stdout/stderr blocks.
+On Windows, Telegodex runs shell commands through PowerShell. Command results are sent as Rich Message summaries with the command, exit code, and folded stdout/stderr blocks. If the rendered output exceeds Telegram text limits, Telegodex sends `shell_output.txt` instead.
 
 ## Provider Selection
 

@@ -140,6 +140,9 @@
       "next_chapter": "下一章 ➡️",
       "prev_chapter_with_title": "⬅️ 上一章：{title}",
       "next_chapter_with_title": "下一章：{title} ➡️"
+    },
+    "shell": {
+      "output_file_caption": "Shell 输出：`{command}`"
     }
   },
   "core": {
