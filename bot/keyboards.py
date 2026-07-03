@@ -219,22 +219,33 @@ def get_temperature_selector(current_temperature: str | float | int | None, loca
 def get_settings_menu(permission_mode: str | None = None, locale: str | None = None) -> InlineKeyboardMarkup:
     """设置菜单"""
     permission_label = permission_mode_label(permission_mode, locale)
-    buttons = [
-        InlineKeyboardButton(text=tr("bot.settings.switch_provider", locale), callback_data="settings:provider"),
-        InlineKeyboardButton(text=tr("bot.settings.select_model", locale), callback_data="settings:model"),
-        InlineKeyboardButton(text=tr("bot.settings.adjust_temperature", locale), callback_data="settings:temperature"),
-        InlineKeyboardButton(
-            text=tr("bot.settings.permission", locale, label=permission_label),
-            callback_data="settings:permission",
-        ),
-        InlineKeyboardButton(text=tr("bot.settings.language", locale), callback_data="settings:language"),
-        InlineKeyboardButton(text=tr("bot.settings.stats", locale), callback_data="settings:stats"),
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=tr("bot.settings.switch_provider", locale),
+                callback_data="settings:provider",
+            )
+        ],
+        [
+            InlineKeyboardButton(text=tr("bot.settings.select_model", locale), callback_data="settings:model"),
+            InlineKeyboardButton(text=tr("bot.settings.language", locale), callback_data="settings:language"),
+        ],
+        [
+            InlineKeyboardButton(
+                text=tr("bot.settings.adjust_temperature", locale),
+                callback_data="settings:temperature",
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text=tr("bot.settings.permission", locale, label=permission_label),
+                callback_data="settings:permission",
+            )
+        ],
+        [InlineKeyboardButton(text=tr("bot.settings.stats", locale), callback_data="settings:stats")],
+        [InlineKeyboardButton(text=tr("bot.settings.close", locale), callback_data="settings:close")],
     ]
-    return smart_inline_keyboard(
-        buttons,
-        footer_buttons=[InlineKeyboardButton(text=tr("bot.settings.close", locale), callback_data="settings:close")],
-        max_columns=2,
-    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def get_conversation_list_keyboard(conversations: list, locale: str | None = None) -> InlineKeyboardMarkup:

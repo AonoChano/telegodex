@@ -36,10 +36,16 @@ def test_arrange_inline_buttons_keeps_wide_labels_single_column() -> None:
     assert [len(row) for row in rows] == [1, 1]
 
 
-def test_settings_menu_uses_compact_pairs_with_full_width_close() -> None:
+def test_settings_menu_uses_mobile_friendly_mixed_rows() -> None:
     markup = get_settings_menu("confirm", "zh-cn")
 
-    assert _row_lengths(markup) == [2, 2, 2, 1]
+    assert _row_lengths(markup) == [1, 2, 1, 1, 1, 1]
+    assert markup.inline_keyboard[0][0].callback_data == "settings:provider"
+    assert [button.callback_data for button in markup.inline_keyboard[1]] == [
+        "settings:model",
+        "settings:language",
+    ]
+    assert markup.inline_keyboard[3][0].callback_data == "settings:permission"
     assert markup.inline_keyboard[-1][0].callback_data == "settings:close"
 
 

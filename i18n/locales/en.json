@@ -54,7 +54,13 @@
       "back": "« Back",
       "select_provider_title": "🤖 Select AI provider:",
       "select_model_title": "🎯 Select model ({provider}):",
-      "temperature_title": "🌡️ Temperature: {value}"
+      "temperature_title": "🌡️ Temperature: {value}",
+      "usage_unknown": "unknown",
+      "usage_no_breakdown": "No AI Chat token usage recorded yet.",
+      "usage_breakdown_row": "- {provider}/{model}: {tokens} ({messages} messages)",
+      "usage_stats_text": "📊 Usage statistics\n\nCurrent context\n{context_tokens} tokens · {tokenizer}\n\nCurrent conversation\n{conversation_tokens} tokens\n\nAI Chat total\n{total_tokens} tokens\n{split_line}\nEstimated {estimated_messages} of {counted_messages} messages\n\nTop models\n{breakdown}",
+      "usage_split_line": "Prompt {prompt_tokens} · Completion {completion_tokens}",
+      "usage_split_unavailable": "Prompt/completion split is not available for older records."
     },
     "callbacks": {
       "provider_switched": "✅ Switched to {provider}",

@@ -1,11 +1,14 @@
 from typing import Any
 
 from aiogram import Router
-from aiogram.types import CallbackQuery
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 from loguru import logger
 from sqlalchemy import select
 
-from ai import AIRouter
+from ai import AIRouter, Message as AIMessage, MessageRole
+from ai.token_usage import estimate_messages_tokens
+from bot.handlers.chat_runtime import select_chat_runtime
+from bot.handlers.chat_sessions import load_session_data
 from bot.keyboards import (
     get_confirmation_keyboard,
     get_language_selector,
@@ -15,9 +18,13 @@ from bot.keyboards import (
     get_settings_menu,
     get_temperature_selector,
 )
-from core.orchestrator.chat_tools import next_permission_mode, permission_mode_label
+from bot.utils.routing import TelegramRoute
+from core.orchestrator.chat_tools import build_telegodex_capability_prompt, next_permission_mode, permission_mode_label
+from core.session import SessionKey
 from i18n import list_available_locales, resolve_locale, tr
+from prompts import get_prompt_manager
 from storage import ContextManager, User
+from storage.models import Conversation
 
 router = Router()
 
@@ -49,6 +56,9 @@ async def handle_settings_callback(callback: CallbackQuery, context_manager: Con
                 tr("bot.settings.select_model_title", locale, provider=provider.provider_name),
                 reply_markup=keyboard,
             )
+
+    elif action == "stats":
+        await _show_usage_stats(callback, context_manager, ai_router, user_obj, locale)
 
     elif action == "back":
         # 返回设置主菜单
@@ -86,6 +96,129 @@ async def handle_settings_callback(callback: CallbackQuery, context_manager: Con
         await callback.message.delete()
 
     await callback.answer()
+
+
+async def _show_usage_stats(
+    callback: CallbackQuery,
+    context_manager: ContextManager,
+    ai_router: AIRouter,
+    user_obj: User,
+    locale: str | None,
+) -> None:
+    if callback.message is None:
+        await callback.answer(tr("bot.errors.invalid_callback", locale), show_alert=True)
+        return
+
+    route = TelegramRoute.from_message(callback.message)
+    conversation = await _get_usage_conversation(context_manager, ai_router, user_obj, route)
+    runtime = select_chat_runtime(user_obj, ai_router)
+
+    context_tokens = 0
+    tokenizer = tr("bot.settings.usage_unknown", locale)
+    if conversation is not None and runtime is not None:
+        history = await context_manager.get_conversation_history(conversation.id)
+        system_prompt = get_prompt_manager().get_system_prompt(
+            provider=runtime.provider_name
+        ) + build_telegodex_capability_prompt(getattr(user_obj, "tool_permission_mode", None))
+        context_usage = estimate_messages_tokens(
+            [AIMessage(role=MessageRole.SYSTEM, content=system_prompt)] + history,
+            model=runtime.model_name,
+        )
+        context_tokens = context_usage.total_tokens
+        tokenizer = context_usage.tokenizer_name
+
+    if conversation is None:
+        conversation_usage = await context_manager.get_conversation_token_usage(-1)
+    else:
+        conversation_usage = await context_manager.get_conversation_token_usage(conversation.id)
+    user_usage = await context_manager.get_user_token_usage(user_obj.id)
+    breakdown = await context_manager.get_user_token_usage_by_model(user_obj.id)
+
+    breakdown_rows = []
+    for item in breakdown:
+        provider = item.provider or tr("bot.settings.usage_unknown", locale)
+        model = item.model or tr("bot.settings.usage_unknown", locale)
+        breakdown_rows.append(
+            tr(
+                "bot.settings.usage_breakdown_row",
+                locale,
+                provider=provider,
+                model=model,
+                tokens=_format_count(item.total_tokens),
+                messages=_format_count(item.counted_messages),
+            )
+        )
+    breakdown_text = "\n".join(breakdown_rows) or tr("bot.settings.usage_no_breakdown", locale)
+    if user_usage.counted_messages and not (user_usage.prompt_tokens or user_usage.completion_tokens):
+        split_line = tr("bot.settings.usage_split_unavailable", locale)
+    else:
+        split_line = tr(
+            "bot.settings.usage_split_line",
+            locale,
+            prompt_tokens=_format_count(user_usage.prompt_tokens),
+            completion_tokens=_format_count(user_usage.completion_tokens),
+        )
+
+    text = tr(
+        "bot.settings.usage_stats_text",
+        locale,
+        context_tokens=_format_count(context_tokens),
+        tokenizer=tokenizer,
+        conversation_tokens=_format_count(conversation_usage.total_tokens),
+        total_tokens=_format_count(user_usage.total_tokens),
+        split_line=split_line,
+        estimated_messages=_format_count(user_usage.estimated_messages),
+        counted_messages=_format_count(user_usage.counted_messages),
+        breakdown=breakdown_text,
+    )
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=tr("bot.settings.back", locale), callback_data="settings:back")]
+        ]
+    )
+    await callback.message.edit_text(text, reply_markup=keyboard)
+
+
+async def _get_usage_conversation(
+    context_manager: ContextManager,
+    ai_router: AIRouter,
+    user_obj: User,
+    route: TelegramRoute,
+) -> Conversation | None:
+    base_conversation = await context_manager.get_active_conversation(
+        user_obj.id,
+        thread_id=route.storage_thread_id,
+        chat_id=route.chat_id,
+    )
+    if base_conversation is None:
+        return None
+
+    runtime = select_chat_runtime(user_obj, ai_router)
+    if runtime is None:
+        return base_conversation
+
+    session_key = SessionKey.from_telegram_message(route.chat_id, route.message_thread_id)
+    session_data = await load_session_data(base_conversation, session_key)
+    bucket = session_data.provider_sessions.get(runtime.provider_name)
+    if bucket is None or not bucket.session_id:
+        return base_conversation
+
+    try:
+        conversation_id = int(bucket.session_id)
+    except (TypeError, ValueError):
+        return base_conversation
+
+    result = await context_manager.session.execute(
+        select(Conversation).where(
+            Conversation.id == conversation_id,
+            Conversation.user_id == user_obj.id,
+        )
+    )
+    return result.scalar_one_or_none() or base_conversation
+
+
+def _format_count(value: int | None) -> str:
+    return f"{int(value or 0):,}"
 
 
 def _format_temperature_label(value: str | float | int | None) -> str:

@@ -9,6 +9,7 @@ from sqlalchemy import select
 
 from ai import AIRouter, MessageRole
 from ai import Message as AIMessage
+from ai.token_usage import combine_token_usages
 from bot.handlers.chat_delivery import deliver_chat_response
 from bot.handlers.chat_response import DRAFT_MAX_CALLS_PER_ID, generate_chat_provider_response
 from bot.handlers.chat_runtime import select_chat_runtime
@@ -399,7 +400,7 @@ async def handle_message(
             return
         response_text = provider_response.text
         response_model = provider_response.model
-        response_tokens = provider_response.tokens
+        response_usage = provider_response.usage
 
         tool_outcome = await handle_chat_tool_request(
             tool_response_text=response_text,
@@ -420,7 +421,9 @@ async def handle_message(
         if has_chat_tool_request(response_text):
             if tool_outcome is None:
                 return
-            response_text, response_model, response_tokens = tool_outcome
+            response_text = tool_outcome.text
+            response_model = tool_outcome.model
+            response_usage = combine_token_usages(response_usage, tool_outcome.usage)
 
         if not response_text.strip():
             await message.answer(
@@ -436,7 +439,11 @@ async def handle_message(
             content=response_text,
             provider=provider_name,
             model=response_model,
-            tokens_used=response_tokens,
+            tokens_used=response_usage.total_tokens if response_usage else None,
+            prompt_tokens=response_usage.prompt_tokens if response_usage else None,
+            completion_tokens=response_usage.completion_tokens if response_usage else None,
+            token_count_estimated=response_usage.estimated if response_usage else None,
+            tokenizer_name=response_usage.tokenizer_name if response_usage else None,
         )
 
         # Update provider bucket stats.
@@ -444,7 +451,7 @@ async def handle_message(
             session_key,
             provider_name,
             message_count=1,
-            tokens=response_tokens or 0,
+            tokens=response_usage.total_tokens if response_usage else 0,
         )
         await save_session_data(conversation, session_key)
         await context_manager.session.commit()

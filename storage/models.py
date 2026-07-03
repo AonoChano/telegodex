@@ -99,7 +99,11 @@ class ConversationMessage(Base):
     # AI 响应元数据
     provider = Column(String(50), nullable=True)  # 使用的 AI 服务商
     model = Column(String(100), nullable=True)  # 使用的模型
-    tokens_used = Column(Integer, nullable=True)  # token 使用量
+    tokens_used = Column(Integer, nullable=True)  # total token usage
+    prompt_tokens = Column(Integer, nullable=True)
+    completion_tokens = Column(Integer, nullable=True)
+    token_count_estimated = Column(Boolean, nullable=True)
+    tokenizer_name = Column(String(100), nullable=True)
 
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -128,6 +132,10 @@ class Database:
             await self._ensure_column(conn, "conversations", "provider_sessions", "JSON")
             await self._ensure_column(conn, "users", "tool_permission_mode", "VARCHAR(20)")
             await self._ensure_column(conn, "users", "ui_language", "VARCHAR(10)")
+            await self._ensure_column(conn, "conversation_messages", "prompt_tokens", "INTEGER")
+            await self._ensure_column(conn, "conversation_messages", "completion_tokens", "INTEGER")
+            await self._ensure_column(conn, "conversation_messages", "token_count_estimated", "BOOLEAN")
+            await self._ensure_column(conn, "conversation_messages", "tokenizer_name", "VARCHAR(100)")
             await self._ensure_index(conn, "conversations", "ix_conversations_user_chat_thread_active")
         logger.info("✓ 数据库初始化完成")
 

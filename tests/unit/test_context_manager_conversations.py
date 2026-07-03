@@ -4,8 +4,9 @@ import pytest
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from ai import MessageRole
 from storage.context_manager import ContextManager
-from storage.models import Base, Conversation, Database
+from storage.models import Base, Conversation, ConversationMessage, Database
 
 
 @pytest.mark.asyncio
@@ -73,6 +74,8 @@ async def test_get_or_create_conversation_prefers_chat_scoped_rows() -> None:
         assert conversation.chat_id == 200
 
     await engine.dispose()
+
+
 @pytest.mark.asyncio
 async def test_init_db_creates_chat_thread_active_index(tmp_path) -> None:
     db_path = tmp_path / "telegodex-test.db"
@@ -84,6 +87,88 @@ async def test_init_db_creates_chat_thread_active_index(tmp_path) -> None:
             result = await conn.execute(text("PRAGMA index_list(conversations)"))
             index_names = {row[1] for row in result.fetchall()}
 
+            result = await conn.execute(text("PRAGMA table_info(conversation_messages)"))
+            column_names = {row[1] for row in result.fetchall()}
+
         assert "ix_conversations_user_chat_thread_active" in index_names
+        assert {
+            "prompt_tokens",
+            "completion_tokens",
+            "token_count_estimated",
+            "tokenizer_name",
+        }.issubset(column_names)
     finally:
         await database.close()
+
+
+@pytest.mark.asyncio
+async def test_token_usage_aggregates_by_conversation_user_and_model() -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    async with session_factory() as session:
+        conversation = Conversation(user_id=7, chat_id=200, thread_id=222, topic_id=222, title="current")
+        other_conversation = Conversation(user_id=8, chat_id=300, thread_id=None, topic_id=None, title="other")
+        session.add_all([conversation, other_conversation])
+        await session.commit()
+
+        manager = ContextManager(session)
+        await manager.add_message(
+            conversation.id,
+            MessageRole.ASSISTANT,
+            "exact response",
+            provider="openai",
+            model="gpt-test",
+            tokens_used=15,
+            prompt_tokens=10,
+            completion_tokens=5,
+            token_count_estimated=False,
+            tokenizer_name="provider_usage",
+        )
+        await manager.add_message(
+            conversation.id,
+            MessageRole.ASSISTANT,
+            "estimated response",
+            provider="openai",
+            model="gpt-test",
+            tokens_used=20,
+            prompt_tokens=12,
+            completion_tokens=8,
+            token_count_estimated=True,
+            tokenizer_name="heuristic",
+        )
+        session.add(
+            ConversationMessage(
+                conversation_id=other_conversation.id,
+                role="assistant",
+                content="other user",
+                provider="openai",
+                model="gpt-test",
+                tokens_used=100,
+                prompt_tokens=60,
+                completion_tokens=40,
+                token_count_estimated=True,
+            )
+        )
+        await session.commit()
+
+        conversation_usage = await manager.get_conversation_token_usage(conversation.id)
+        user_usage = await manager.get_user_token_usage(7)
+        breakdown = await manager.get_user_token_usage_by_model(7)
+
+        assert conversation_usage.total_tokens == 35
+        assert conversation_usage.prompt_tokens == 22
+        assert conversation_usage.completion_tokens == 13
+        assert conversation_usage.counted_messages == 2
+        assert conversation_usage.estimated_messages == 1
+        assert user_usage == conversation_usage
+        assert len(breakdown) == 1
+        assert breakdown[0].provider == "openai"
+        assert breakdown[0].model == "gpt-test"
+        assert breakdown[0].total_tokens == 35
+        assert breakdown[0].counted_messages == 2
+
+    await engine.dispose()

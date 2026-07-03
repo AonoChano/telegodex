@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 from uuid import uuid4
 
@@ -9,6 +10,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from ai import Message as AIMessage
 from ai import MessageRole
+from ai.token_usage import TokenUsage, combine_token_usages, estimate_chat_usage, token_usage_from_provider_usage
 from bot.utils.latex import normalize_rich_markdown_latex
 from bot.utils.routing import TelegramRoute
 from core.orchestrator.chat_tools import (
@@ -22,6 +24,13 @@ from core.session import SessionKey
 from i18n import tr
 from storage import ContextManager
 from storage.models import Conversation
+
+
+@dataclass(frozen=True)
+class ChatToolOutcome:
+    text: str
+    model: str | None
+    usage: TokenUsage | None
 
 
 def looks_like_chat_tool_request_prefix(text: str) -> bool:
@@ -53,10 +62,10 @@ async def handle_chat_tool_request(
     temperature: float,
     max_output_tokens: int,
     locale: str | None = None,
-) -> tuple[str, str | None, int | None] | None:
+) -> ChatToolOutcome | None:
     """Handle a normal-chat tool request.
 
-    Returns replacement assistant text/model/tokens for full-access execution.
+    Returns replacement assistant text/model/usage for full-access execution.
     Returns ``None`` when the request was blocked or deferred to an inline button.
     """
     request = parse_chat_tool_request(tool_response_text)
@@ -142,11 +151,11 @@ async def handle_chat_tool_request(
     current_text = tool_response_text
     current_messages = list(messages_with_system)
     response_model = model_name
-    response_tokens: int | None = None
+    response_usage: TokenUsage | None = None
     for _ in range(3):
         request = parse_chat_tool_request(current_text)
         if request is None:
-            return current_text, response_model, response_tokens
+            return ChatToolOutcome(current_text, response_model, response_usage)
         result = await shell_provider.execute(request.command, session_id=session_key.to_string())
         current_messages.extend(
             [
@@ -162,8 +171,13 @@ async def handle_chat_tool_request(
         )
         current_text = normalize_rich_markdown_latex(response.content)
         response_model = response.model
-        response_tokens = response.usage.get("total_tokens") if response.usage else None
+        usage = token_usage_from_provider_usage(response.usage) or estimate_chat_usage(
+            current_messages,
+            response.content,
+            model=response_model,
+        )
+        response_usage = combine_token_usages(response_usage, usage)
 
     if parse_chat_tool_request(current_text) is not None:
         current_text = tr("bot.chat_tool.tool_loop_stopped", locale)
-    return current_text, response_model, response_tokens
+    return ChatToolOutcome(current_text, response_model, response_usage)

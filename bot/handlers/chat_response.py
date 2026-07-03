@@ -9,13 +9,13 @@ from aiogram.types import Message
 from loguru import logger
 
 from ai import Message as AIMessage
+from ai.token_usage import TokenUsage, estimate_chat_usage, token_usage_from_provider_usage
 from bot.handlers.chat_runtime import ChatRuntimeSelection
 from bot.handlers.chat_tool_requests import looks_like_chat_tool_request_prefix
 from bot.handlers.provider_errors import format_provider_error, is_terminal_provider_error
 from bot.telegram_draft import DraftStream
 from bot.utils.latex import normalize_rich_markdown_latex
 from bot.utils.routing import TelegramRoute
-from i18n import tr
 
 # 流式 draft 触发字符阈值：积攒 N 字符再推送一次。Telegram 官方文档没有公开
 # draft 的更新频率上限，参考 telegramify-markdown 的 DraftStream 实践，64 字符
@@ -39,6 +39,7 @@ class ChatProviderResponse:
     text: str
     model: str | None
     tokens: int | None
+    usage: TokenUsage | None = None
 
 
 async def push_draft(stream: DraftStream | None, text: str) -> None:
@@ -66,7 +67,7 @@ async def generate_chat_provider_response(
 
     response_text = ""
     response_model = model_name
-    response_tokens = None
+    usage: TokenUsage | None = None
     stream_used = False
 
     if runtime.streaming:
@@ -99,6 +100,8 @@ async def generate_chat_provider_response(
                     buffer = ""
                     last_flush = now
 
+            if stream_used:
+                usage = estimate_chat_usage(messages_with_system, response_text, model=response_model)
             if (
                 stream_used
                 and stream is not None
@@ -123,6 +126,7 @@ async def generate_chat_provider_response(
             logger.warning(f"流式 chat_stream 失败，回退非流式: {type(stream_err).__name__}: {stream_err}")
             stream_used = False
             response_text = ""
+            usage = None
 
     if not stream_used:
         try:
@@ -141,7 +145,11 @@ async def generate_chat_provider_response(
             return None
         response_text = response.content
         response_model = response.model
-        response_tokens = response.usage.get("total_tokens") if response.usage else None
+        usage = token_usage_from_provider_usage(response.usage) or estimate_chat_usage(
+            messages_with_system,
+            response_text,
+            model=response_model,
+        )
         if (
             stream is not None
             and response_text
@@ -156,5 +164,6 @@ async def generate_chat_provider_response(
     return ChatProviderResponse(
         text=normalize_rich_markdown_latex(response_text),
         model=response_model,
-        tokens=response_tokens,
+        tokens=usage.total_tokens if usage else None,
+        usage=usage,
     )

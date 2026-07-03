@@ -54,7 +54,13 @@
       "back": "« 返回",
       "select_provider_title": "🤖 选择 AI 服务商：",
       "select_model_title": "🎯 选择模型 ({provider})：",
-      "temperature_title": "🌡️ 温度参数：{value}"
+      "temperature_title": "🌡️ 温度参数：{value}",
+      "usage_unknown": "未知",
+      "usage_no_breakdown": "还没有记录 AI Chat Token 用量。",
+      "usage_breakdown_row": "- {provider}/{model}: {tokens}（{messages} 条消息）",
+      "usage_stats_text": "📊 使用统计\n\n当前上下文\n{context_tokens} tokens · {tokenizer}\n\n当前对话\n{conversation_tokens} tokens\n\nAI Chat 总量\n{total_tokens} tokens\n{split_line}\n估算 {estimated_messages}/{counted_messages} 条消息\n\n主要模型\n{breakdown}",
+      "usage_split_line": "Prompt {prompt_tokens} · Completion {completion_tokens}",
+      "usage_split_unavailable": "旧记录没有 prompt/completion 明细。"
     },
     "callbacks": {
       "provider_switched": "✅ 已切换到 {provider}",

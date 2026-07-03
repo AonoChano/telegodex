@@ -57,6 +57,9 @@ async def test_generate_chat_provider_response_falls_back_after_stream_error():
     assert result.text == "fallback response"
     assert result.model == "fallback-model"
     assert result.tokens == 7
+    assert result.usage is not None
+    assert result.usage.total_tokens == 7
+    assert result.usage.estimated is False
     assert provider.chat_calls == 1
     message.answer.assert_not_awaited()
 

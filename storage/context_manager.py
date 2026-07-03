@@ -1,10 +1,29 @@
+from dataclasses import dataclass
+
 from loguru import logger
-from sqlalchemy import desc, select
+from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai.base import Message, MessageRole
 
 from .models import Conversation, ConversationMessage, User
+
+
+@dataclass(frozen=True)
+class TokenUsageSummary:
+    total_tokens: int
+    prompt_tokens: int
+    completion_tokens: int
+    counted_messages: int
+    estimated_messages: int
+
+
+@dataclass(frozen=True)
+class TokenUsageBreakdown:
+    provider: str | None
+    model: str | None
+    total_tokens: int
+    counted_messages: int
 
 
 class ContextManager:
@@ -102,6 +121,33 @@ class ContextManager:
 
         return conversation
 
+    async def get_active_conversation(
+        self,
+        user_id: int,
+        thread_id: int | None = None,
+        chat_id: int | None = None,
+    ) -> Conversation | None:
+        """Return the current active conversation without creating one."""
+        thread_clause = (
+            Conversation.thread_id.is_(None)
+            if thread_id is None
+            else Conversation.thread_id == thread_id
+        )
+        scope = [
+            Conversation.user_id == user_id,
+            thread_clause,
+            Conversation.is_active.is_(True),
+        ]
+        if chat_id is not None:
+            scope.append(Conversation.chat_id == chat_id)
+
+        result = await self.session.execute(
+            select(Conversation)
+            .where(*scope)
+            .order_by(desc(Conversation.updated_at), desc(Conversation.id))
+        )
+        return result.scalars().first()
+
     async def add_message(
         self,
         conversation_id: int,
@@ -110,6 +156,10 @@ class ContextManager:
         provider: str | None = None,
         model: str | None = None,
         tokens_used: int | None = None,
+        prompt_tokens: int | None = None,
+        completion_tokens: int | None = None,
+        token_count_estimated: bool | None = None,
+        tokenizer_name: str | None = None,
     ) -> ConversationMessage:
         """添加消息到对话"""
         message = ConversationMessage(
@@ -119,6 +169,10 @@ class ContextManager:
             provider=provider,
             model=model,
             tokens_used=tokens_used,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            token_count_estimated=token_count_estimated,
+            tokenizer_name=tokenizer_name,
         )
         self.session.add(message)
         await self.session.commit()
@@ -224,3 +278,98 @@ class ContextManager:
             .limit(limit)
         )
         return list(result.scalars().all())
+
+    async def get_conversation_token_usage(self, conversation_id: int) -> TokenUsageSummary:
+        """Aggregate recorded AI Chat token usage for one conversation."""
+        result = await self.session.execute(
+            select(
+                func.coalesce(func.sum(ConversationMessage.tokens_used), 0),
+                func.coalesce(func.sum(ConversationMessage.prompt_tokens), 0),
+                func.coalesce(func.sum(ConversationMessage.completion_tokens), 0),
+                func.count(ConversationMessage.id),
+            ).where(
+                ConversationMessage.conversation_id == conversation_id,
+                ConversationMessage.tokens_used.is_not(None),
+            )
+        )
+        total_tokens, prompt_tokens, completion_tokens, counted_messages = result.one()
+        estimated_messages = await self._count_estimated_messages(
+            ConversationMessage.conversation_id == conversation_id
+        )
+        return TokenUsageSummary(
+            total_tokens=int(total_tokens or 0),
+            prompt_tokens=int(prompt_tokens or 0),
+            completion_tokens=int(completion_tokens or 0),
+            counted_messages=int(counted_messages or 0),
+            estimated_messages=estimated_messages,
+        )
+
+    async def get_user_token_usage(self, user_id: int) -> TokenUsageSummary:
+        """Aggregate recorded AI Chat token usage since the user first used the bot."""
+        result = await self.session.execute(
+            select(
+                func.coalesce(func.sum(ConversationMessage.tokens_used), 0),
+                func.coalesce(func.sum(ConversationMessage.prompt_tokens), 0),
+                func.coalesce(func.sum(ConversationMessage.completion_tokens), 0),
+                func.count(ConversationMessage.id),
+            )
+            .join(Conversation, Conversation.id == ConversationMessage.conversation_id)
+            .where(
+                Conversation.user_id == user_id,
+                ConversationMessage.tokens_used.is_not(None),
+            )
+        )
+        total_tokens, prompt_tokens, completion_tokens, counted_messages = result.one()
+        estimated_messages = await self._count_estimated_messages(Conversation.user_id == user_id)
+        return TokenUsageSummary(
+            total_tokens=int(total_tokens or 0),
+            prompt_tokens=int(prompt_tokens or 0),
+            completion_tokens=int(completion_tokens or 0),
+            counted_messages=int(counted_messages or 0),
+            estimated_messages=estimated_messages,
+        )
+
+    async def get_user_token_usage_by_model(
+        self,
+        user_id: int,
+        limit: int = 5,
+    ) -> list[TokenUsageBreakdown]:
+        """Return the user's largest AI Chat token buckets by provider/model."""
+        total_expr = func.coalesce(func.sum(ConversationMessage.tokens_used), 0).label("total_tokens")
+        result = await self.session.execute(
+            select(
+                ConversationMessage.provider,
+                ConversationMessage.model,
+                total_expr,
+                func.count(ConversationMessage.id),
+            )
+            .join(Conversation, Conversation.id == ConversationMessage.conversation_id)
+            .where(
+                Conversation.user_id == user_id,
+                ConversationMessage.tokens_used.is_not(None),
+            )
+            .group_by(ConversationMessage.provider, ConversationMessage.model)
+            .order_by(total_expr.desc())
+            .limit(limit)
+        )
+        return [
+            TokenUsageBreakdown(
+                provider=provider,
+                model=model,
+                total_tokens=int(total_tokens or 0),
+                counted_messages=int(counted_messages or 0),
+            )
+            for provider, model, total_tokens, counted_messages in result.all()
+        ]
+
+    async def _count_estimated_messages(self, *where_clauses) -> int:
+        result = await self.session.execute(
+            select(func.count(ConversationMessage.id))
+            .join(Conversation, Conversation.id == ConversationMessage.conversation_id)
+            .where(
+                *where_clauses,
+                ConversationMessage.tokens_used.is_not(None),
+                ConversationMessage.token_count_estimated.is_(True),
+            )
+        )
+        return int(result.scalar_one() or 0)
