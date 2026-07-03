@@ -119,10 +119,20 @@ The handler normalizes common model output from `\(...\)` to `$...$` and from
 `\[...\]` to `$$...$$`. It does not replace LaTeX commands with Unicode on the
 Rich Message path because Telegram treats formula source as raw LaTeX.
 
-## Fallback
+## Editing And Fallback
 
-If `sendRichMessage` fails, the bot falls back to the existing MarkdownV2
-formatter and sends the response with `parse_mode="MarkdownV2"`.
+Telegram edits Rich Messages through `editMessageText` with the `rich_message`
+field. Paginated help/document surfaces should therefore prefer this order:
+
+1. edit the current message in place with `editMessageText.rich_message`;
+2. if rich editing fails, send a replacement with `sendRichMessage` and then
+   delete the old page;
+3. only if rich replacement also fails, degrade to ordinary text editing or
+   sending.
+
+If `sendRichMessage` fails for ordinary assistant replies, the bot falls back to
+the existing MarkdownV2 formatter and sends the response with
+`parse_mode="MarkdownV2"`.
 
 Streaming previews have one extra fallback layer. When draft APIs are unavailable,
 the bot sends one real preview message and edits it with `editMessageText` using

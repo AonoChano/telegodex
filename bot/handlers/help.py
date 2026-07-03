@@ -9,7 +9,7 @@ from loguru import logger
 from sqlalchemy import select
 
 from bot.help import HelpRenderer, get_help_renderer
-from bot.utils.rich_messages import send_rich_message
+from bot.utils.rich_messages import edit_rich_message, send_rich_message
 from bot.utils.routing import TelegramRoute
 from i18n import resolve_locale, tr
 from storage import ContextManager
@@ -29,6 +29,73 @@ def _bot_send_kwargs(route: TelegramRoute) -> dict:
         kwargs["direct_messages_topic_id"] = route.direct_messages_topic_id
     return kwargs
 
+
+async def _delete_help_message(message: Message) -> None:
+    """Best-effort deletion for replaced help pages."""
+    try:
+        await message.delete()
+    except Exception as exc:
+        logger.debug(f"Failed to delete old help message: {exc}")
+
+
+async def _replace_help_message_content(
+    callback: CallbackQuery,
+    text: str,
+    keyboard: InlineKeyboardMarkup,
+) -> bool:
+    """Replace a help page while preserving Rich Message output when possible."""
+    if callback.message is None:
+        return False
+
+    route = TelegramRoute.from_message(callback.message)
+    bot_token = callback.bot.token if callback.bot else None
+    message_id = getattr(callback.message, "message_id", None)
+
+    if bot_token and message_id is not None:
+        edited = await edit_rich_message(
+            bot_token=bot_token,
+            chat_id=route.chat_id,
+            message_id=message_id,
+            markdown_text=text,
+            business_connection_id=route.business_connection_id,
+            reply_markup=keyboard,
+        )
+        if edited:
+            return True
+
+    if bot_token:
+        sent = await send_rich_message(
+            bot_token=bot_token,
+            chat_id=route.chat_id,
+            markdown_text=text,
+            reply_markup=keyboard,
+            message_thread_id=route.message_thread_id,
+            direct_messages_topic_id=route.direct_messages_topic_id,
+            business_connection_id=route.business_connection_id,
+        )
+        if sent:
+            await _delete_help_message(callback.message)
+            return True
+
+    try:
+        await callback.message.edit_text(text, reply_markup=keyboard)
+        return True
+    except Exception as exc:
+        logger.debug(f"Help plain edit fallback failed: {exc}")
+
+    try:
+        await callback.bot.send_message(
+            chat_id=route.chat_id,
+            text=text,
+            parse_mode="Markdown",
+            reply_markup=keyboard,
+            **_bot_send_kwargs(route),
+        )
+        await _delete_help_message(callback.message)
+        return True
+    except Exception as exc:
+        logger.debug(f"Help plain send fallback failed: {exc}")
+        return False
 
 async def _resolve_locale_from_db(
     context_manager: ContextManager | None, user_id: int, fallback_code: str | None
@@ -143,38 +210,14 @@ async def _handle_toc_navigation(
         return
     text, keyboard = renderer.render_toc_page(locale, page)
     if callback.message is not None:
-        try:
-            await callback.message.edit_text(text, reply_markup=keyboard)
-        except Exception as exc:
-            # edit_text fails when the current message is a Rich Message
-            # (Telegram Bot API has no editMessageRichMessage). Fall back to
-            # sending the new page FIRST, then deleting the old one — this
-            # keeps content visible at all times instead of flashing blank.
-            logger.debug(f"TOC edit_text failed, falling back to send + delete: {exc}")
-            route = TelegramRoute.from_message(callback.message)
-            try:
-                await callback.bot.send_message(
-                    chat_id=route.chat_id,
-                    text=text,
-                    reply_markup=keyboard,
-                    **_bot_send_kwargs(route),
-                )
-                await callback.message.delete()
-            except Exception as fallback_exc:
-                logger.debug(f"TOC fallback send+delete failed: {fallback_exc}")
+        await _replace_help_message_content(callback, text, keyboard)
     await callback.answer()
 
 
 async def _handle_chapter_navigation(
     callback: CallbackQuery, renderer: HelpRenderer, locale: str
 ) -> None:
-    """Handle chapter page navigation: send new rich message, then delete old.
-
-    Rich Messages cannot be edited in place (Telegram Bot API has no
-    ``editMessageRichMessage``), so we must resend. To avoid the "disappear
-    then reappear" flash, the new page is sent FIRST and the old message is
-    deleted only after the new one is visible.
-    """
+    """Handle chapter page navigation with rich in-place editing first."""
     data = callback.data or ""
     parts = data.split(":")
     if len(parts) != 4:
@@ -191,41 +234,6 @@ async def _handle_chapter_navigation(
         await callback.answer(tr("bot.help.chapter_not_found", locale), show_alert=True)
         return
     text, keyboard = rendered
-    if callback.message is None:
-        await callback.answer()
-        return
-    route = TelegramRoute.from_message(callback.message)
-    bot_token = callback.bot.token if callback.bot else None
-
-    # Send the new page FIRST so content is always visible (no blank gap),
-    # then delete the old message. Only delete after a successful send —
-    # if sending fails, leave the old page intact so the user can retry.
-    sent = False
-    if bot_token:
-        sent = await send_rich_message(
-            bot_token=bot_token,
-            chat_id=route.chat_id,
-            markdown_text=text,
-            reply_markup=keyboard,
-            message_thread_id=route.message_thread_id,
-        )
-    if not sent:
-        try:
-            await callback.bot.send_message(
-                chat_id=route.chat_id,
-                text=text,
-                parse_mode="Markdown",
-                reply_markup=keyboard,
-                **_bot_send_kwargs(route),
-            )
-            sent = True
-        except Exception as exc:
-            logger.debug(f"Help chapter fallback send_message failed: {exc}")
-
-    if sent:
-        try:
-            await callback.message.delete()
-        except Exception as exc:
-            logger.debug(f"Failed to delete old help message: {exc}")
-
+    if callback.message is not None:
+        await _replace_help_message_content(callback, text, keyboard)
     await callback.answer()

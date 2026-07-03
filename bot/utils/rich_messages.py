@@ -140,6 +140,27 @@ def build_rich_markdown_payload(
     return payload
 
 
+def build_edit_rich_markdown_payload(
+    chat_id: int | str,
+    message_id: int,
+    markdown_text: str,
+    *,
+    business_connection_id: str | None = None,
+    reply_markup: Any | None = None,
+) -> dict[str, Any]:
+    """Build an editMessageText payload using InputRichMessage.markdown."""
+    payload: dict[str, Any] = {
+        "chat_id": chat_id,
+        "message_id": message_id,
+        "rich_message": {"markdown": markdown_text},
+    }
+    if business_connection_id is not None:
+        payload["business_connection_id"] = business_connection_id
+    if reply_markup is not None:
+        payload["reply_markup"] = _serialize_reply_markup(reply_markup)
+    return payload
+
+
 def _serialize_reply_markup(reply_markup: Any) -> Any:
     """Serialize aiogram / pydantic reply markup for raw Bot API calls."""
     if hasattr(reply_markup, "model_dump"):
@@ -182,6 +203,39 @@ async def send_rich_message(
         logger.info(f"Rich Message sent successfully: chat_id={chat_id}")
         return True
     logger.warning(f"Rich Message send failed: {desc}")
+    return False
+
+# ---------------------------------------------------------------------------
+
+async def edit_rich_message(
+    bot_token: str,
+    chat_id: int | str,
+    message_id: int,
+    markdown_text: str,
+    *,
+    business_connection_id: str | None = None,
+    reply_markup: Any | None = None,
+) -> bool:
+    """
+    Edit an existing message in place using ``editMessageText.rich_message``.
+
+    Returns True on success. Callers should prefer rich resend fallback before
+    degrading to ordinary text messages.
+    """
+    payload = build_edit_rich_markdown_payload(
+        chat_id,
+        message_id,
+        markdown_text,
+        business_connection_id=business_connection_id,
+        reply_markup=reply_markup,
+    )
+    ok, desc, _ = await _post_bot_method(bot_token, "editMessageText", payload)
+    if ok:
+        logger.debug(
+            f"Rich Message edited successfully: chat_id={chat_id} message_id={message_id}"
+        )
+        return True
+    logger.debug(f"Rich Message edit failed: {desc}")
     return False
 
 # ---------------------------------------------------------------------------
