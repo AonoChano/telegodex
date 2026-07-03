@@ -143,6 +143,8 @@ class HelpRenderer:
         Layout:
             - Pagination row (only if ``total_pages > 1``).
             - Bottom row: [Contents] [Close].
+            - Cross-chapter navigation row (optional, see
+              ``_build_chapter_nav_row``).
 
         Args:
             chapter_id: The chapter being viewed.
@@ -166,7 +168,121 @@ class HelpRenderer:
                 InlineKeyboardButton(text=tr("bot.help.close", locale), callback_data="help:close"),
             ]
         )
+
+        prev_chapter, next_chapter = self._get_adjacent_chapters(locale, chapter_id)
+        nav_row = self._build_chapter_nav_row(
+            locale, current_page, total_pages, prev_chapter, next_chapter
+        )
+        if nav_row:
+            rows.append(nav_row)
+
         return InlineKeyboardMarkup(inline_keyboard=rows)
+
+    def _get_adjacent_chapters(
+        self, locale: str, chapter_id: str
+    ) -> tuple[HelpChapter | None, HelpChapter | None]:
+        """Return ``(prev, next)`` chapters relative to *chapter_id*.
+
+        Chapters are ordered by their ``order`` field. The first chapter has
+        no previous; the last has no next.
+
+        Args:
+            locale: Locale code.
+            chapter_id: Chapter filename stem to locate.
+
+        Returns:
+            ``(prev_chapter, next_chapter)`` tuple. Either element is
+            ``None`` when no neighbor exists or when *chapter_id* is not
+            found.
+        """
+        chapters = self.get_chapters(locale)
+        for i, chapter in enumerate(chapters):
+            if chapter.chapter_id == chapter_id:
+                prev = chapters[i - 1] if i > 0 else None
+                nxt = chapters[i + 1] if i < len(chapters) - 1 else None
+                return prev, nxt
+        return None, None
+
+    def _build_chapter_nav_row(
+        self,
+        locale: str,
+        current_page: int,
+        total_pages: int,
+        prev_chapter: HelpChapter | None,
+        next_chapter: HelpChapter | None,
+    ) -> list[InlineKeyboardButton] | None:
+        """Build the cross-chapter navigation row for a chapter page.
+
+        Rules (per spec):
+            - Multi-page chapter:
+                * Page 1 appends a single-button row "⬅️ Previous: <title>"
+                  if *prev_chapter* exists.
+                * Last page appends a single-button row "Next: <title> ➡️"
+                  if *next_chapter* exists.
+                * Middle pages append nothing.
+            - Single-page chapter (``total_pages == 1``):
+                * Append one row with both "⬅️ Previous" and "Next ➡️"
+                  buttons (no titles) when both neighbors exist.
+                * Append a single button when only one neighbor exists.
+                * Append nothing when neither neighbor exists.
+
+        Callback targets always open page 1 of the neighbor chapter.
+
+        Args:
+            locale: Locale code for button labels.
+            current_page: Current chapter page (1-indexed).
+            total_pages: Total pages in the current chapter.
+            prev_chapter: Previous chapter in reading order, or ``None``.
+            next_chapter: Next chapter in reading order, or ``None``.
+
+        Returns:
+            List of ``InlineKeyboardButton`` for the nav row, or ``None``
+            when no row should be appended.
+        """
+        is_first_page = current_page == 1
+        is_last_page = current_page == total_pages
+
+        if total_pages > 1:
+            if is_first_page and prev_chapter is not None:
+                return [
+                    InlineKeyboardButton(
+                        text=tr(
+                            "bot.help.prev_chapter_with_title",
+                            locale,
+                            title=prev_chapter.title,
+                        ),
+                        callback_data=f"help:ch:{prev_chapter.chapter_id}:1",
+                    )
+                ]
+            if is_last_page and next_chapter is not None:
+                return [
+                    InlineKeyboardButton(
+                        text=tr(
+                            "bot.help.next_chapter_with_title",
+                            locale,
+                            title=next_chapter.title,
+                        ),
+                        callback_data=f"help:ch:{next_chapter.chapter_id}:1",
+                    )
+                ]
+            return None
+
+        buttons: list[InlineKeyboardButton] = []
+        if prev_chapter is not None:
+            buttons.append(
+                InlineKeyboardButton(
+                    text=tr("bot.help.prev_chapter", locale),
+                    callback_data=f"help:ch:{prev_chapter.chapter_id}:1",
+                )
+            )
+        if next_chapter is not None:
+            buttons.append(
+                InlineKeyboardButton(
+                    text=tr("bot.help.next_chapter", locale),
+                    callback_data=f"help:ch:{next_chapter.chapter_id}:1",
+                )
+            )
+        return buttons if buttons else None
 
     def _build_pagination_row(
         self,

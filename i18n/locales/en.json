@@ -129,7 +129,11 @@
       "next": "➡️",
       "page_indicator": "{page}/{total}",
       "empty": "No help content available.",
-      "chapter_not_found": "Chapter not found."
+      "chapter_not_found": "Chapter not found.",
+      "prev_chapter": "⬅️ Previous",
+      "next_chapter": "Next ➡️",
+      "prev_chapter_with_title": "⬅️ Previous: {title}",
+      "next_chapter_with_title": "Next: {title} ➡️"
     }
   },
   "core": {

@@ -129,7 +129,11 @@
       "next": "➡️",
       "page_indicator": "{page}/{total}",
       "empty": "暂无帮助内容。",
-      "chapter_not_found": "未找到该章节。"
+      "chapter_not_found": "未找到该章节。",
+      "prev_chapter": "⬅️ 上一章",
+      "next_chapter": "下一章 ➡️",
+      "prev_chapter_with_title": "⬅️ 上一章：{title}",
+      "next_chapter_with_title": "下一章：{title} ➡️"
     }
   },
   "core": {
