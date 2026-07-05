@@ -92,6 +92,7 @@ async def test_help_replacement_resends_rich_before_plain_fallback(
     callback.bot.send_message.assert_not_awaited()
 
 
+
 @pytest.mark.asyncio
 async def test_help_replacement_uses_plain_edit_only_after_rich_fails(
     monkeypatch: pytest.MonkeyPatch,
