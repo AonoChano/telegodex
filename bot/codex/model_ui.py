@@ -15,7 +15,7 @@ from storage.context_manager import ContextManager
 LoadSessionData = Callable[[Any, SessionKey], Awaitable[Any]]
 ResolveProviderConversation = Callable[[ContextManager, SessionKey, Any, int, str | None, str], Awaitable[Any]]
 SaveSessionData = Callable[[Any, SessionKey], Awaitable[None]]
-
+# 处理 /model 命令
 
 def model_prompt_from_message(text: str) -> str:
     prompt = text or ""
