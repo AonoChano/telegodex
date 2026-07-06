@@ -87,7 +87,8 @@ class ClaudeCodeExtension:
             raise RuntimeError("Claude Code 扩展未启用")
 
         # TODO: 实现代码重构
-        logger.info(f"Claude Code 重构代码: {requirements}")
+        # TODO: 使用 Claude 进行代码重构
+        logger.info(f"Claude Code refactoring code: {requirements}")
 
         return "代码重构功能开发中..."
 
@@ -104,10 +105,10 @@ class ClaudeCodeExtension:
             调试建议
         """
         if not self.enabled:
-            raise RuntimeError("Claude Code 扩展未启用")
+            raise RuntimeError("Claude Code extension not enabled")
 
-        # TODO: 实现智能调试
-        logger.info(f"Claude Code 调试: {error}")
+        # TODO: Implement intelligent debugging
+        logger.info(f"Claude Code debugging: {error}")
 
         return "调试功能开发中..."
 
