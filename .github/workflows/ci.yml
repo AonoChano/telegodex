@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Python 3.11
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pytest pytest-asyncio pillow
+
+      - name: Prepare example provider config
+        run: cp provider.toml.example provider.toml
+
+      - name: Compile Python modules
+        run: python -m compileall main.py run.py ai bot storage security
+
+      - name: Run tests
+        run: python -m pytest
+
+      - name: Validate configuration
+        env:
+          TELEGRAM_BOT_TOKEN: "123456:ci-placeholder-token"
+          OPENAI_API_KEY: "sk-ci-placeholder"
+          DATABASE_URL: "sqlite+aiosqlite:///telegodex_ci.db"
+          ADMIN_USER_IDS: "123456"
+        run: python run.py --check-config
