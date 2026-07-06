@@ -23,22 +23,24 @@
 
 ## このプロジェクトについて
 
-Telegodex は Telegram 上で動く AI ワークベンチです。
+Telegodex は、スマートフォンからローカル CLI AI ワークフローを操作するための Telegram ワークベンチです。
+
+主目的は、PC 上で動く Codex CLI セッションのモバイル操作面として Telegram を使うことです。Codex は Telegodex 内部の Agent ではありません。独立した外部 CLI/runtime プロセスであり、Telegodex は対応する machine-readable interface を通じて起動、接続、表示、操作します。
 
 目的は三つあります。
 
-- **Codex / CLI Agent のリモート操作。** ターミナルで行う AI 作業を Telegram に持ち込み、スマートフォンから操作できるようにします。
-- **複数 AI Provider への接続。** OpenAI、Anthropic、Google、DeepSeek、Qwen、Kimi、GLM、ERNIE を一つの UI で切り替えます。
+- **Codex / CLI Agent のリモート操作。** Telegram topic から、ターミナル級の AI 作業を resume、bind、operate、approve、inspect できます。
+- **補助的な複数 AI Provider チャット。** Telegram を離れずに、OpenAI、Anthropic、Google、DeepSeek、Qwen、Kimi、GLM、ERNIE へ軽い質問ができます。
 - **TOML Provider registry。** `provider.toml` で OpenAI-compatible endpoint を追加、無効化、切り替えできます。
 
 Telegodex は単なるチャット Bot ではありません。  
-AI 作業のための操作面です。
+Telegram とローカル AI コマンドライン作業をつなぐ bridge です。
 
 ---
 
 ## できること
 
-- **Telegram から Codex ワークフローを操作する。** プロンプトを送り、ストリーム出力を受け取り、操作を確認し、モバイル上で作業を続けます。
+- **Telegram から Codex ワークフローを操作する。** プロンプト送信、thread resume、ストリーム出力、approval 処理をモバイル上で行います。
 - **AI 出力を Telegram ネイティブに表示する。** コードブロック、テーブル、リスト、引用、折りたたみ領域、数式、構造化サマリーを扱います。
 - **Provider をまたいで同じ体験を保つ。** handler と UX は同じまま、バックエンドだけを差し替えます。
 - **ローカル / セルフホストの endpoint を使う。** Ollama、vLLM、LiteLLM、Azure、LM Studio、その他 OpenAI-compatible サービスに接続できます。
@@ -49,24 +51,24 @@ AI 作業のための操作面です。
 
 ## 現在の焦点
 
-プロジェクトは汎用 AI Bot から Telegram Workbench へ移行中です。
+プロジェクトは、汎用 AI Bot ではなく Telegram-to-Codex Workbench へ方向修正しています。
 
 ### Stage 1
-- 複数 Provider のチャット基盤
+- 補助的な複数 Provider チャット基盤
 - TOML Provider registry
 - Telegram ネイティブ表示
 - ストレージ、ユーザー設定、セキュリティ
 
 ### Stage 2
-- Codex CLI bridge foundation
-- セッション同期と出力ストリーミング
+- `codex app-server` による Codex CLI bridge foundation
+- Codex thread resume、Telegram topic binding、出力ストリーミング
 - インライン承認プロンプト
 - ツール呼び出しの可視化とローカル shell 権限制御
 
 ### Stage 3
-- Claude Code bridge
-- Telegram 内の Agent ワークフロー
-- 長時間タスクの編成
+- 完全な Codex topic workbench UX
+- Codex が公開する場合は、Codex 自身の background/sub-agent activity を表示する
+- Claude Code / other CLI bridges
 - Dashboard とデプロイ支援
 
 ---
@@ -176,9 +178,10 @@ Python 3.11+ · aiogram 3.x · SQLAlchemy 2.x async · Pydantic Settings · Alem
 - [x] Context windowing and user preferences
 - [x] Codex bridge foundation
 - [ ] Hot reload model mechanism
+- [ ] Codex thread resume と Telegram topic binding の polish
 - [ ] 完全な Codex Workbench UX
 - [ ] Claude Code bridge
-- [ ] Agent/task execution layer
+- [ ] Codex の task engine を重複実装せず、Codex-owned long-running work を表示する
 - [ ] Web admin dashboard
 - [ ] Voice and image input
 - [ ] Docker compose & Helm chart

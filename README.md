@@ -23,22 +23,24 @@ Multi-AI provider support, TOML provider registry, Codex bridge foundation, and 
 
 ## What this project is
 
-Telegodex is a Telegram-based workbench for AI-assisted workflows.
+Telegodex is a Telegram-based workbench for controlling local CLI AI workflows from a phone.
+
+Its primary product goal is to make Telegram a mobile control surface for Codex CLI sessions running on your computer. Codex is not an internal Telegodex agent. It is an external CLI/runtime process that Telegodex launches or attaches to through supported machine-readable interfaces, then renders and controls through Telegram.
 
 It is designed for three things:
 
-- **Remote control for Codex / CLI agents.** Bring terminal-grade AI workflows into Telegram so you can operate them from your phone.
-- **Multi-provider AI access.** Switch between OpenAI, Anthropic, Google, DeepSeek, Qwen, Kimi, GLM, and ERNIE with one interface.
+- **Remote control for Codex / CLI agents.** Resume, bind, operate, approve, and inspect terminal-grade AI work from Telegram topics.
+- **Auxiliary multi-provider AI chat.** Ask quick side questions through OpenAI, Anthropic, Google, DeepSeek, Qwen, Kimi, GLM, and ERNIE without leaving Telegram.
 - **TOML provider registry.** Add, disable, or switch OpenAI-compatible endpoints through `provider.toml`.
 
 This is not just a chat bot.  
-It is a control surface for AI work.
+It is a bridge between Telegram and local AI command-line work.
 
 ---
 
 ## What it can do
 
-- **Control your Codex workflow from Telegram.** Send prompts, receive streamed output, review actions, and keep the interaction on mobile.
+- **Control your Codex workflow from Telegram.** Send prompts, resume threads, receive streamed output, review approvals, and keep the interaction on mobile.
 - **Render AI output in a Telegram-native way.** Code blocks, tables, lists, quotes, expandable sections, formulas, and structured summaries.
 - **Keep one interface across providers.** Same handler, same UX, different backends.
 - **Support local and self-hosted endpoints.** Ollama, vLLM, LiteLLM, Azure, LM Studio, and other OpenAI-compatible services.
@@ -49,24 +51,24 @@ It is a control surface for AI work.
 
 ## Current focus
 
-The project is being shaped from a generic AI bot into a real Telegram workbench.
+The project is being corrected from a generic AI bot shape into a real Telegram-to-Codex workbench.
 
 ### Stage 1
-- Multi-provider chat foundation
+- Auxiliary multi-provider chat foundation
 - TOML provider registry
 - Telegram-native rendering
 - Storage, preferences, and security
 
 ### Stage 2
-- Codex CLI bridge foundation
-- Session sync and output streaming
+- Codex CLI bridge foundation through `codex app-server`
+- Codex thread resume, Telegram topic binding, and output streaming
 - Inline approval prompts
 - Tool-call visibility and local shell gating
 
 ### Stage 3
-- Claude Code bridge
-- Agent-style workflows inside Telegram
-- Better task orchestration and long-running jobs
+- Full Codex topic workbench UX
+- Surface Codex-owned background/sub-agent activity when Codex exposes it
+- Claude Code / other CLI bridges
 - Dashboard and deployment tooling
 
 ---
@@ -176,9 +178,10 @@ Python 3.11+ · aiogram 3.x · SQLAlchemy 2.x async · Pydantic Settings · Alem
 - [x] Context windowing and user preferences
 - [x] Codex bridge foundation
 - [ ] Hot reload model mechanism
+- [ ] Codex thread resume and Telegram topic binding polish
 - [ ] Full Codex workbench UX
 - [ ] Claude Code bridge
-- [ ] Agent/task execution layer
+- [ ] Surface Codex-owned long-running work without duplicating Codex's task engine
 - [ ] Web admin dashboard
 - [ ] Voice and image input
 - [ ] Docker compose & Helm chart

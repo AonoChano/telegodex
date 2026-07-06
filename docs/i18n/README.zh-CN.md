@@ -23,22 +23,24 @@
 
 ## 项目定位
 
-Telegodex 是一个基于 Telegram 的 AI 工作台。
+Telegodex 是一个基于 Telegram 的本地 CLI AI 工作台，用来让你从手机控制电脑上的 AI 命令行工作流。
+
+它的首要目标，是把 Telegram 变成电脑上 Codex CLI 会话的移动控制界面。Codex 不是 Telegodex 内部的 Agent；它是一个独立的外部 CLI/runtime 进程。Telegodex 只通过受支持的机器可读接口启动、连接、渲染和控制它。
 
 它面向三件事：
 
-- **远程控制 Codex / CLI Agent。** 把终端级 AI 工作流带到 Telegram，让你可以在手机上操作。
-- **多服务商 AI 接入。** 用一个界面切换 OpenAI、Anthropic、Google、DeepSeek、Qwen、Kimi、GLM 和 ERNIE。
+- **远程控制 Codex / CLI Agent。** 在 Telegram topic 中恢复、绑定、操作、审批和查看终端级 AI 工作。
+- **辅助多服务商 AI Chat。** 不离开 Telegram，就能用 OpenAI、Anthropic、Google、DeepSeek、Qwen、Kimi、GLM 和 ERNIE 问一些旁路问题。
 - **TOML Provider 注册表。** 通过 `provider.toml` 接入、停用或切换 OpenAI-compatible endpoint。
 
 Telegodex 不是普通聊天 Bot。  
-它是 AI 工作的控制界面。
+它是 Telegram 和本地 AI 命令行工作之间的桥梁。
 
 ---
 
 ## 当前能力
 
-- **从 Telegram 控制 Codex 工作流。** 发送提示词、接收流式输出、审阅操作，并把交互留在移动端。
+- **从 Telegram 控制 Codex 工作流。** 发送提示词、恢复 thread、接收流式输出、处理审批，并把交互留在移动端。
 - **用 Telegram 原生方式渲染 AI 输出。** 代码块、表格、列表、引用、可折叠区域、公式和结构化摘要。
 - **统一多服务商体验。** 同一套 handler，同一套 UX，不同后端。
 - **支持本地和自托管端点。** Ollama、vLLM、LiteLLM、Azure、LM Studio，以及其它 OpenAI-compatible 服务。
@@ -49,24 +51,24 @@ Telegodex 不是普通聊天 Bot。
 
 ## 当前重点
 
-项目正在从通用 AI Bot 变成真正的 Telegram Workbench。
+项目正在从通用 AI Bot 的形态校正为真正的 Telegram-to-Codex Workbench。
 
 ### Stage 1
-- 多服务商聊天基础
+- 辅助多服务商聊天基础
 - TOML Provider 注册表
 - Telegram 原生渲染
 - 存储、偏好和安全
 
 ### Stage 2
-- Codex CLI bridge 基础
-- 会话同步和输出流式传输
+- 基于 `codex app-server` 的 Codex CLI bridge 基础
+- Codex thread 恢复、Telegram topic 绑定和输出流式传输
 - 内联审批提示
 - 工具调用可见性和本地 shell 权限控制
 
 ### Stage 3
-- Claude Code bridge
-- Telegram 内的 Agent 工作流
-- 更好的任务编排和长任务支持
+- 完整 Codex topic workbench UX
+- 在 Codex 暴露相关能力时呈现 Codex 自身的后台/子代理活动
+- Claude Code / 其它 CLI bridge
 - Dashboard 和部署工具
 
 ---
@@ -176,9 +178,10 @@ Python 3.11+ · aiogram 3.x · SQLAlchemy 2.x async · Pydantic Settings · Alem
 - [x] 上下文窗口和用户偏好
 - [x] Codex bridge 基础
 - [ ] 热重载模型机制
+- [ ] Codex thread 恢复和 Telegram topic 绑定打磨
 - [ ] 完整 Codex Workbench UX
 - [ ] Claude Code bridge
-- [ ] Agent/task execution layer
+- [ ] 呈现 Codex 自身的长任务能力，而不是重复实现 Codex 的任务引擎
 - [ ] Web admin dashboard
 - [ ] Voice and image input
 - [ ] Docker compose & Helm chart

@@ -23,13 +23,21 @@ The warning must be precise. Private-chat Threaded Mode is not the same thing as
 
 ## 概述
 
-Telegodex 是 Telegram Workbench。用户不是只想找一个会聊天的 Bot，也不是只想把几个 API key 拼在一起。用户希望把手机上的 Telegram 变成一个可以远程控制 AI 工作流的界面。普通 AI 对话、Codex 项目会话、Shell 命令、文件传输、审批、状态面板、长任务通知，都应该像在一个工作台里自然发生，而不是像一堆散落的 slash command。
+Telegodex 是 Telegram Workbench。用户不是只想找一个会聊天的 Bot，也不是只想把几个 API key 拼在一起。用户希望把手机上的 Telegram 变成一个可以远程控制电脑上 Codex CLI 和其它 CLI AI 工作流的界面。普通 AI 对话、Codex 项目会话、Shell 命令、文件传输、审批、状态面板、Codex 自身的长期运行状态，都应该像在一个工作台里自然发生，而不是像一堆散落的 slash command。
 
 用户启动 Telegodex 后，最基础的体验是：在 Telegram 里和不同 AI 服务商聊天，切换模型，保留上下文，收到富文本回复。更完整的体验是：用户在论坛群聊里给每个项目或每个任务开 topic，把 Codex 会话绑定到 topic 上，然后在这个 topic 里像使用一个远程开发工作间一样发消息、看输出、点审批按钮、接收运行结果、停止长任务、查看状态。
 
 普通 Bot 私聊要一直可用。它适合问答、翻译、总结、轻量代码解释、模型切换、配置检查、查看运行状态。完整 Workbench 建议放在 Telegram forum group 里使用，因为 Telegram 的 topic 能天然承载多个项目、多个任务和多个上下文。用户把一个 topic 理解成一个工作间。AI chat topic 是 AI chat 的工作间，Codex topic 是 Codex 的工作间，未来 Claude Code、Gemini CLI 或 Shell session 也应该按同样的直觉放进各自的工作间。
 
 用户不应该需要知道很多内部术语。用户应该能靠眼前的提示判断当前在哪里、正在和谁说话、这个话题绑定了什么、是否有任务在跑、下一步能点哪个按钮。命令可以存在，因为命令适合高级用户和应急场景。但常见动作应该通过按钮、面板、提示消息和自动识别来完成。
+
+## 产品边界
+
+Codex 不是 Telegodex 内部实现的 Agent，也不是普通 AI Provider 的一种。Codex 是独立的外部 CLI/runtime 进程。Telegodex 的职责是把 Telegram 变成 Codex 的移动控制界面：创建或绑定 topic、恢复 thread、显示历史和输出、转发审批、展示状态、处理停止和重试。
+
+普通多 Provider AI chat 是辅助能力。它适合在同一个 Telegram 环境里快速问问题、翻译、总结、解释代码片段，避免用户为了一个小问题切换 App。但它不能抢占产品主轴，也不能伪装成 Codex。普通 AI chat 的上下文和 Codex thread 必须隔离。
+
+当 Codex 自身支持后台运行、子代理、任务派发或 thread resume 时，Telegodex 应该呈现这些 Codex-owned 能力，而不是自己实现一个竞争性的 TaskHub、Cron/Webhook/Heartbeat 自动化系统或 `/tasks` 任务引擎。Telegram 端只负责让用户看见、审批、停止、恢复和定位这些 Codex 状态。
 
 ## 第一次配置和启动
 
@@ -145,21 +153,21 @@ Live 视图应该让用户知道长任务还活着。用户点 `Live` 后，Bot 
 
 ## 会话管理
 
-用户需要能查看当前有哪些会话。普通 AI 会话、Codex 会话、未来的 Claude Code 会话、后台任务，都应该有一个清楚的管理入口。用户点 `管理会话` 后，看到活跃会话列表、最近更新时间、所在 chat/topic、当前 Provider 或 Agent、是否正在运行。
+用户需要能查看当前有哪些会话。普通 AI 会话、Codex 会话、未来的 Claude Code 会话，以及 Codex/CLI runtime 自身暴露的运行状态，都应该有一个清楚的管理入口。用户点 `管理会话` 后，看到活跃会话列表、最近更新时间、所在 chat/topic、当前 Provider 或外部 runtime、是否正在运行。
 
 用户可以开启新普通对话，也可以开启新 Codex topic。两者不是同一个动作。`开启新对话` 对普通 AI 有意义，`新建 Codex Topic` 对 Codex 有意义。界面文案要让用户知道自己正在创建哪一种上下文。
 
 用户可以归档或结束会话。归档后，旧会话不再接收新消息，但历史仍可查看。用户在旧 Codex topic 里继续发消息时，Bot 应该提示这个 topic 已归档，并提供创建新 Codex 会话或取消，而不是自动恢复一个用户以为已经结束的工作。
 
-未来 Named Sessions 进入产品后，用户可以在同一个 chat 里创建命名会话。比如用户发 `/session 修复 CSV 导出`，Bot 创建一个短名会话。之后用户可以用 `@短名` 继续它。这个能力不能破坏 forum topic 的直觉。topic 仍然是 Telegram 里最直观的工作间，Named Sessions 是在同一个工作间里临时分支任务的补充。
+未来如果出现命名会话能力，它应该服务于 Telegram topic 和外部 Codex thread 的绑定、别名和恢复，而不是在 Bot 内部创建一套与 Codex 无关的 Agent 上下文。topic 仍然是 Telegram 里最直观的工作间；命名只应该帮助用户找到、恢复或重命名工作间。
 
-## 后台任务
+## 长时间运行的 Codex 工作
 
-用户会希望把长任务交给 Bot 后继续聊天。比如“去研究这五个库的差异，完成后给我结论”，或“跑完整测试，失败时总结原因”。最终体验里，用户可以把这类工作委派为后台任务。Bot 告诉用户任务已创建，显示任务名、状态和取消按钮。
+用户会希望把长时间工作留给 Codex 执行，同时继续在 Telegram 里观察状态。比如“跑完整测试，失败时总结原因”或“继续这个重构，等需要审批时提醒我”。这类工作应该优先由 Codex 或对应外部 CLI runtime 自己管理。Telegodex 不应该另起一个 Bot-owned TaskHub 来冒充 Codex 的后台任务系统。
 
-后台任务完成后，结果应该回到发起任务的地方。如果用户在某个 Codex topic 里创建任务，结果就回到这个 topic。如果结果需要注入当前 AI 会话，Bot 应该说明已经注入。注入失败时，Bot 至少要把结果作为消息发回来，不能静默丢失。
+当 Codex 暴露长期运行、后台工作、子代理或任务派发状态时，结果应该回到发起它的 Codex topic。Telegram 端需要显示任务是否还活着、最近输出、是否等待审批、是否失败、能否停止或恢复。用户不需要关心这些状态来自 Codex app-server、Codex CLI 还是未来某个官方接口；但用户必须知道这仍然是 Codex 的工作，不是普通 AI chat 的工作。
 
-用户可以点 `/tasks` 或面板里的 `任务列表` 查看正在运行的任务。列表里显示任务状态、开始时间、最近输出、取消按钮。用户取消任务后，Bot 更新状态。任务失败时，Bot 显示失败原因和可重试入口。
+如果 Codex 暂时没有提供某种后台能力，Telegodex 应该诚实地呈现当前 turn 的运行状态，而不是自己发明 `/tasks`、Cron、Webhook、Heartbeat 或子代理系统来绕过它。未来若增加相关入口，命名也应该指向 Codex-owned 状态，例如“Codex 活动”或“当前 Codex 运行”，而不是暗示 Bot 有独立任务引擎。
 
 ## 多人协作
 
@@ -185,7 +193,7 @@ Telegodex 要支持多人在同一个 forum group 里协作。用户 A 创建 Co
 
 文案要短，但不能含糊。`失败了` 不够。`Provider 请求失败，请检查 API key、base URL 或模型名` 更有用。`没有绑定` 不够。`这个 topic 曾经是 Codex topic，但当前没有活动 Codex 会话。要在这里创建新的 Codex 会话吗？` 更符合用户理解。
 
-界面里不要用内部实现词吓用户。用户不需要知道某个 handler、bucket、transport、JSON-RPC queue 的细节。可以说“当前 Codex 会话”“当前工作目录”“当前 topic”“后台任务”。只有在调试面板、日志或开发者文档里才展示内部标识。
+界面里不要用内部实现词吓用户。用户不需要知道某个 handler、bucket、transport、JSON-RPC queue 的细节。可以说“当前 Codex 会话”“当前工作目录”“当前 topic”“当前 Codex 运行”。只有在调试面板、日志或开发者文档里才展示内部标识。
 
 ## 开发时不能偏离的直觉
 
@@ -195,8 +203,8 @@ Codex topic 应该只进入 Codex。找不到当前 thread 时，问用户创建
 
 普通 AI topic 应该进入普通 AI。它没有绑定 Codex，也不是历史 Codex topic，就不要被 Codex 拦住。
 
-普通 AI、Codex、Shell、未来的 Claude Code 都应该有各自上下文。跨 Provider 或跨 Agent 的切换可以在同一个 Workbench 里发生，但不能偷偷共享彼此的历史。
+普通 AI、Codex、Shell、未来的 Claude Code 都应该有各自上下文。跨 Provider 或跨外部 runtime 的切换可以在同一个 Workbench 里发生，但不能偷偷共享彼此的历史。
 
 主菜单、状态面板、审批消息、控制条、错误提示，都要帮助用户判断当前状态。用户能从 Telegram 里看懂发生了什么，就不会去猜日志，也不会把一个上下文误当成另一个上下文。
 
-开发者改代码时，如果某个改动会让 Codex topic 回落普通 AI，会让普通 AI topic 被 Codex 吃掉，会让审批消息跑出当前 topic，会让启动版本和项目版本不一致，会让用户看不到长任务状态，就应该先停下来重新设计。产品体验以本文为准。
+开发者改代码时，如果某个改动会让 Codex topic 回落普通 AI，会让普通 AI topic 被 Codex 吃掉，会让审批消息跑出当前 topic，会让启动版本和项目版本不一致，会让用户看不到 Codex 长时间运行状态，就应该先停下来重新设计。产品体验以本文为准。

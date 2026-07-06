@@ -9,7 +9,13 @@ related: [PRODUCT_EXPERIENCE.md, CUSTOM_PROVIDERS.md, RICH_MESSAGES.md, STARTUP.
 
 # Architecture
 
-Telegodex is a Telegram workbench. The current code ships the multi-provider chat foundation and the CodexBridge v2 foundation: provider routing, rich Telegram output, conversation storage, topic-aware session keys, approval routing, and a persistent Codex app-server bridge.
+Telegodex is a Telegram workbench for controlling local CLI AI workflows from mobile. The current code ships an auxiliary multi-provider chat foundation and the CodexBridge v2 foundation: provider routing, rich Telegram output, conversation storage, topic-aware session keys, approval routing, and a persistent Codex app-server bridge.
+
+## Product Boundary
+
+Codex is not an internal Telegodex agent. It is an independent external CLI/runtime process. Telegodex owns the Telegram control surface around it: routing, topic binding, thread resume metadata, rich rendering, approvals, status messages, and mobile interaction.
+
+The multi-provider `ai/` path is an auxiliary normal-chat lane for quick questions and side conversations. It must stay isolated from Codex threads. Work that belongs to Codex itself, such as Codex-native background work, sub-agents, or resume semantics, should be surfaced through the bridge when Codex exposes it rather than reimplemented as a competing Telegodex task engine.
 
 ## Runtime Layout
 
@@ -106,7 +112,7 @@ Telegram User
 - **ApprovalHandler**: Converts `item/commandExecution/requestApproval`, `item/fileChange/requestApproval`, and `item/permissions/requestApproval` server requests into Telegram inline button messages with Approve/Deny options. Command/file approvals return Codex decisions; permissions approvals return granted permission subsets plus turn/session scope. Auto-denies after configurable timeout.
 - **Instruction Support**: `/codex /skill` lists available skills, `/codex !command` executes shell commands, `/codex @path` reads directory listings.
 - **Telegram Controls**: `bot/handlers/toolbar.py` owns temporary ReplyKeyboard controls while a Codex turn or Shell process is active. Slash commands such as `/stop`, `/live`, `/last`, and `/status` remain available without the keyboard.
-- **MessageBus**: `core/bus/` carries background results through explicit delivery modes and can inject eligible updates back into an active session.
+- **MessageBus**: `core/bus/` is a routing and delivery utility for Telegram-bound results. It should not become a Bot-owned background-task runtime that duplicates Codex capabilities.
 - **Topic Routing Guard**: Codex topic messages stay on the Codex path. Active Codex-bound topics route directly to Codex; historical Codex topics without an active binding ask the user to create a fresh Codex session or cancel. Ignored or canceled recovery prompts do not fall back to ordinary AI chat. Ordinary non-Codex forum topics fall through to the normal AI chat handler.
 
 ### Streaming Output
@@ -130,6 +136,7 @@ Codex app-server stderr is process-global, so the Telegram handler only shows st
 `README.md` defines the public product story. Keep docs aligned with it:
 
 - Telegodex is a Telegram Workbench project.
-- The current release has the multi-provider Telegram bot foundation and CodexBridge foundation.
+- The current release has an auxiliary multi-provider Telegram chat foundation and CodexBridge foundation.
 - The long-term product is mobile control for Codex and CLI agents through Telegram.
+- Codex-owned capabilities should be bridged and rendered, not rebuilt inside the Bot.
 - Product-experience decisions live in [PRODUCT_EXPERIENCE.md](PRODUCT_EXPERIENCE.md).
