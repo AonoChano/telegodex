@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     )
 
     # Telegram Bot
-    telegram_bot_token: str
+    telegram_bot_token: str = ""
 
     # Database
     database_url: str = "sqlite+aiosqlite:///telegodex.db"
