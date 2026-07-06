@@ -191,6 +191,12 @@ Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) before opening changes.
 
 ---
 
+## Star History
+
+[![Star History Chart](https://star-history.com)](https://star-history.com)
+
+---
+
 ## License
 
 MIT. See [LICENSE](LICENSE).

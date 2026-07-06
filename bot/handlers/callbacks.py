@@ -39,14 +39,14 @@ async def handle_settings_callback(callback: CallbackQuery, context_manager: Con
     locale = resolve_locale(user_obj.ui_language, user_obj.language_code)
 
     if action == "provider":
-        # 显示 AI 服务商选择器
+        # Show AI provider selector keyboard
         available_providers = ai_router.list_available_providers()
         keyboard = get_provider_selector(available_providers, user_obj.preferred_provider, locale)
 
         await callback.message.edit_text(tr("bot.settings.select_provider_title", locale), reply_markup=keyboard)
 
     elif action == "model":
-        # 显示模型选择器
+        # Show model selector keyboard
         provider = ai_router.get_provider(user_obj.preferred_provider)
         if provider:
             models = provider.get_available_models()
@@ -61,7 +61,7 @@ async def handle_settings_callback(callback: CallbackQuery, context_manager: Con
         await _show_usage_stats(callback, context_manager, ai_router, user_obj, locale)
 
     elif action == "back":
-        # 返回设置主菜单
+        # Return to settings main menu
         await callback.message.edit_text(
             tr("bot.settings.title", locale),
             reply_markup=get_settings_menu(user_obj.tool_permission_mode, locale),
@@ -92,7 +92,7 @@ async def handle_settings_callback(callback: CallbackQuery, context_manager: Con
         await callback.message.edit_text(tr("bot.callbacks.language_title", locale), reply_markup=keyboard)
 
     elif action == "close":
-        # 关闭设置菜单
+        # Close settings menu
         await callback.message.delete()
 
     await callback.answer()
@@ -306,11 +306,11 @@ async def handle_conversation_callback(callback: CallbackQuery, context_manager:
     locale = resolve_locale(None, callback.from_user.language_code if callback.from_user else None)
 
     if action == "load":
-        # TODO: 加载特定对话
+        # TODO: load specific conversation
         await callback.answer(tr("bot.callbacks.wip", locale), show_alert=True)
 
     elif action == "clear_all":
-        # 显示确认对话框
+        # Display confirmation dialog for clearing all conversations
         await callback.message.edit_text(
             tr("bot.callbacks.confirm_clear", locale),
             reply_markup=get_confirmation_keyboard("clear_all_conversations", locale),
@@ -328,7 +328,7 @@ async def handle_confirmation(callback: CallbackQuery, context_manager: ContextM
     action = callback.data.split(":", 1)[1]
 
     if action == "clear_all_conversations":
-        # 清空所有对话
+        # Clear all conversations
         user_id = callback.from_user.id
         conversations = await context_manager.get_user_conversations(user_id, limit=999)
 
@@ -337,7 +337,7 @@ async def handle_confirmation(callback: CallbackQuery, context_manager: ContextM
 
         locale = resolve_locale(None, callback.from_user.language_code if callback.from_user else None)
         await callback.message.edit_text(tr("bot.callbacks.history_cleared", locale))
-        logger.info(f"用户 {user_id} 清空了所有对话历史")
+        logger.info(f"User {user_id} cleared all conversation histories")
 
     await callback.answer()
 

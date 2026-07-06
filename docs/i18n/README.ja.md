@@ -190,6 +190,11 @@ Python 3.11+ · aiogram 3.x · SQLAlchemy 2.x async · Pydantic Settings · Alem
 変更前に [docs/ARCHITECTURE.md](../ARCHITECTURE.md) を読んでください。
 
 ---
+## Star History
+
+[![Star History Chart](https://star-history.com)](https://star-history.com)
+
+---
 
 ## ライセンス
 

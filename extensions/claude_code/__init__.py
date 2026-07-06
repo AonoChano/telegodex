@@ -16,14 +16,14 @@ class ClaudeCodeExtension:
     def __init__(self, api_key: str | None = None):
         self.api_key = api_key
         self.enabled = False
-
+        # The log messages here may need to be compatible with i18n.
         if api_key:
-            # TODO: 初始化 Claude Code SDK
-            # 参考 Agent SDK: https://docs.anthropic.com/en/docs/claude-code/sdk/sdk-overview
-            logger.info("Claude Code 扩展已启用")
+            # TODO: Initialize Claude Code SDK
+            # Reference Agent SDK: https://docs.anthropic.com/en/docs/claude-code/sdk/sdk-overview
+            logger.info("Claude Code extension enabled")
             self.enabled = True
         else:
-            logger.info("Claude Code 扩展未配置")
+            logger.info("Claude Code extension not configured")
 
     async def execute_task(
         self,

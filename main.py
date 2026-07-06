@@ -1068,9 +1068,9 @@ def _release_polling_lock(lock_file) -> None:
 
 async def main():
     """主入口"""
-    # 初始化日志（双 sink：终端简 / 文件详）
+    # Initialize logging (dual sink: terminal concise / file detailed)
     _setup_logging()
-    logger.info("Telegodex 启动中...")
+    logger.info("Telegodex is starting up...")
 
     # 初始化数据库
     db = Database(settings.database_url)

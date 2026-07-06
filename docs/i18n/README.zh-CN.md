@@ -191,6 +191,12 @@ Python 3.11+ · aiogram 3.x · SQLAlchemy 2.x async · Pydantic Settings · Alem
 
 ---
 
+## Star History
+
+[![Star History Chart](https://star-history.com)](https://star-history.com)
+
+---
+
 ## 许可证
 
 MIT。见 [LICENSE](../../LICENSE)。
