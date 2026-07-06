@@ -1,4 +1,4 @@
-from security import detect_sensitive_content, sanitize_input
+from security import sanitize_input
 
 
 def test_sanitize_input_trims_and_limits_text():
@@ -12,8 +12,7 @@ def test_security_public_api_does_not_export_dead_auth_manager():
     assert not hasattr(security, "AuthManager")
 
 
-def test_detect_sensitive_content_reports_known_categories():
-    found, category = detect_sensitive_content("请检查这个身份证号码")
+def test_security_public_api_does_not_export_sensitive_content_filter():
+    import security
 
-    assert found is True
-    assert category == "个人信息"
+    assert not hasattr(security, "detect_sensitive_content")
