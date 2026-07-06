@@ -25,7 +25,9 @@ Multi-AI provider support, TOML provider registry, Codex bridge foundation, and 
 
 Telegodex is a Telegram-based workbench for controlling local CLI AI workflows from a phone.
 
-Its primary product goal is to make Telegram a mobile control surface for Codex CLI sessions running on your computer. Codex is not an internal Telegodex agent. It is an external CLI/runtime process that Telegodex launches or attaches to through supported machine-readable interfaces, then renders and controls through Telegram.
+Have you ever needed to keep an AI CLI agent running on your computer, then check, approve, or continue the work while you are away from the keyboard? Official mobile control often depends on a specific client, account session, or API path. Telegodex gives that workflow a Telegram surface.
+
+Its primary product goal is to let you connect to, render, and control CLI agents such as Codex CLI and Claude Code from Telegram, with an interaction style close to a native terminal session. It runs the controlled CLI as a local subprocess and syncs the command-line interaction into Telegram without injecting into or modifying the AI coding assistant itself.
 
 It is designed for three things:
 
@@ -33,8 +35,7 @@ It is designed for three things:
 - **Auxiliary multi-provider AI chat.** Ask quick side questions through OpenAI, Anthropic, Google, DeepSeek, Qwen, Kimi, GLM, and ERNIE without leaving Telegram.
 - **TOML provider registry.** Add, disable, or switch OpenAI-compatible endpoints through `provider.toml`.
 
-This is not just a chat bot.  
-It is a bridge between Telegram and local AI command-line work.
+Telegodex also keeps a native Bot chat lane for lightweight daily questions, so you can switch between quick AI chat and terminal-grade agent control without leaving the same Telegram space.
 
 ---
 
@@ -51,7 +52,7 @@ It is a bridge between Telegram and local AI command-line work.
 
 ## Current focus
 
-The project is being corrected from a generic AI bot shape into a real Telegram-to-Codex workbench.
+The current development focus is turning Telegram into a practical mobile workbench for local CLI agents while keeping the multi-provider chat foundation useful for quick side conversations.
 
 ### Stage 1
 - Auxiliary multi-provider chat foundation
@@ -181,7 +182,7 @@ Python 3.11+ · aiogram 3.x · SQLAlchemy 2.x async · Pydantic Settings · Alem
 - [ ] Codex thread resume and Telegram topic binding polish
 - [ ] Full Codex workbench UX
 - [ ] Claude Code bridge
-- [ ] Surface Codex-owned long-running work without duplicating Codex's task engine
+- [ ] Surface upstream CLI runtime activity such as long-running work, resume state, and sub-agent status when the runtime exposes it
 - [ ] Web admin dashboard
 - [ ] Voice and image input
 - [ ] Docker compose & Helm chart
