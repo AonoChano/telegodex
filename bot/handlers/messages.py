@@ -341,11 +341,19 @@ async def handle_message(
     # Ensure the base conversation also carries the latest session data.
     await save_session_data(conversation, session_key)
 
-    # 添加用户消息到历史
-    await context_manager.add_message(conversation_id=conversation.id, role=MessageRole.USER, content=user_text)
+    try:
+        # 添加用户消息到历史
+        await context_manager.add_message(conversation_id=conversation.id, role=MessageRole.USER, content=user_text)
 
-    # 获取对话历史
-    history = await context_manager.get_conversation_history(conversation.id)
+        # 获取对话历史
+        history = await context_manager.get_conversation_history(conversation.id)
+    except Exception as e:
+        logger.error(f"Failed to prepare chat context: {e}")
+        await message.answer(
+            tr("bot.errors.processing_failed", locale, error=str(e)),
+            **route.send_kwargs(),
+        )
+        return
 
     try:
         # 发送 "正在输入..." 状态

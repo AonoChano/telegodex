@@ -243,6 +243,46 @@ class TestTextMessageRouting:
         assert "Hello world" in kwargs["markdown_text"]
 
     @pytest.mark.asyncio
+    async def test_context_prepare_failure_is_reported_to_user(
+        self,
+        dp: Dispatcher,
+        mock_context_manager: AsyncMock,
+        mock_ai_provider: MagicMock,
+    ) -> None:
+        user = SimpleNamespace(
+            preferred_provider="openai",
+            preferred_model="test-model",
+            temperature="0.7",
+            tool_permission_mode="chat",
+            ui_language="en",
+            language_code="en",
+        )
+        mock_context_manager.get_or_create_user = AsyncMock(return_value=user)
+        mock_context_manager.add_message = AsyncMock(side_effect=TypeError("storage unavailable"))
+
+        ai_router = MagicMock()
+        ai_router.get_provider = MagicMock(return_value=mock_ai_provider)
+        ai_router.get_default_provider = MagicMock(return_value=mock_ai_provider)
+        ai_router.is_provider_available = MagicMock(return_value=True)
+
+        @dp.message.middleware()
+        async def inject_deps(handler, event, data):
+            data["context_manager"] = mock_context_manager
+            data["ai_router"] = ai_router
+            data["orchestrator"] = MagicMock()
+            return await handler(event, data)
+
+        bot = AsyncMock()
+        message = _make_mock_message(text="Hello bot", chat_type="group")
+        update = _make_update(message)
+
+        await dp.feed_update(bot, update)
+
+        mock_ai_provider.chat_stream.assert_not_called()
+        call_arg = bot.await_args[0][0]
+        assert "Processing failed" in call_arg.text
+        assert "storage unavailable" in call_arg.text
+    @pytest.mark.asyncio
     async def test_full_access_chat_tool_result_is_fed_back_to_ai(
         self,
         dp: Dispatcher,
@@ -413,8 +453,9 @@ class TestTextMessageRouting:
         provider.chat.assert_not_awaited()
 
         call_arg = bot.await_args[0][0]
-        assert "AI 服务商请求失败" in call_arg.text
-        assert "余额或额度不足" in call_arg.text
+        assert "AI provider request failed" in call_arg.text
+        assert "insufficient balance or quota" in call_arg.text
+        assert "HTTP status code: 402" in call_arg.text
         assert "Insufficient Balance" not in call_arg.text
 
 
