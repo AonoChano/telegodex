@@ -59,4 +59,7 @@ def test_is_streaming_prompt_identifies_instruction_prefixes() -> None:
 def test_usage_text_contains_core_commands() -> None:
     assert "/codex &lt;prompt&gt;" in command_ui.CODEX_USAGE_HTML
     assert "/codex new" in command_ui.CODEX_USAGE_HTML
-    assert "/screenshot" in command_ui.CODEX_USAGE_HTML
+
+
+def test_usage_text_keeps_screenshot_outside_codex_commands() -> None:
+    assert "/screenshot" not in command_ui.CODEX_USAGE_HTML

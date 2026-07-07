@@ -17,8 +17,7 @@ CODEX_USAGE_HTML = (
     "- <code>/codex switch &lt;id&gt;</code> — Switch session\n"
     "- <code>/codex !command</code> — Execute shell command\n"
     "- <code>/codex @path</code> — Read file at path\n"
-    "- <code>/codex new</code> — Start a fresh session\n"
-    "- <code>/screenshot</code> — Capture terminal screenshot\n\n"
+    "- <code>/codex new</code> — Start a fresh session\n\n"
     "<b>Example:</b> <code>/codex list all Python files</code>"
 )
 
