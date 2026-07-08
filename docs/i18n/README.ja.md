@@ -196,7 +196,7 @@ Python 3.11+ · aiogram 3.x · SQLAlchemy 2.x async · Pydantic Settings · Alem
 ---
 ## Star History
 
-[![Star History Chart](https://star-history.com)](https://star-history.com)
+[![Star History Chart](https://www.star-history.com/?repos=AonoChano%2Ftelegodex&type=date&legend=top-left)](https://star-history.com)
 
 ---
 

@@ -197,7 +197,7 @@ Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) before opening changes.
 
 ## Star History
 
-[![Star History Chart](https://star-history.com)](https://star-history.com)
+[![Star History Chart](https://www.star-history.com/?repos=AonoChano%2Ftelegodex&type=date&legend=top-left)](https://star-history.com)
 
 ---
 
