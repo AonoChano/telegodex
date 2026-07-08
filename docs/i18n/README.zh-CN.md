@@ -23,22 +23,25 @@
 
 ## 项目定位
 
-Telegodex 是一个基于 Telegram 的 AI 工作台。
+Telegodex 是一个基于 Telegram 的本地 CLI AI 工作台，用来让你从手机控制电脑上的 AI 命令行工作流。
+
+你是否需要在不带电脑时，查看、审批或继续终端里的 AI CLI Agent 工作？官方移动端控制通常会受到客户端类型、登录状态或 API 接入方式的限制。Telegodex 把这类工作流放到 Telegram 里。
+
+它的首要目标，是让你可以在 Telegram 中接近电脑原生终端交互地连接、渲染和控制 CLI Agent，例如 Codex CLI 和 Claude Code。受控的 CLI 作为本地子进程运行，项目只负责把命令行交互同步到 Telegram，不对 AI 编程助手本身做注入或篡改。
 
 它面向三件事：
 
-- **远程控制 Codex / CLI Agent。** 把终端级 AI 工作流带到 Telegram，让你可以在手机上操作。
-- **多服务商 AI 接入。** 用一个界面切换 OpenAI、Anthropic、Google、DeepSeek、Qwen、Kimi、GLM 和 ERNIE。
+- **远程控制 Codex / CLI Agent。** 在 Telegram topic 中恢复、绑定、操作、审批和查看终端级 AI 工作。
+- **辅助多服务商 AI Chat。** 不离开 Telegram，就能用 OpenAI、Anthropic、Google、DeepSeek、Qwen、Kimi、GLM 和 ERNIE 问一些旁路问题。
 - **TOML Provider 注册表。** 通过 `provider.toml` 接入、停用或切换 OpenAI-compatible endpoint。
 
-Telegodex 不是普通聊天 Bot。  
-它是 AI 工作的控制界面。
+Telegodex 同时保留原生 Bot 聊天通道，方便日常轻量提问。你可以在同一个 Telegram 空间里，在快速 AI Chat 和终端级 Agent 控制之间切换。
 
 ---
 
 ## 当前能力
 
-- **从 Telegram 控制 Codex 工作流。** 发送提示词、接收流式输出、审阅操作，并把交互留在移动端。
+- **从 Telegram 控制 Codex 工作流。** 发送提示词、恢复 thread、接收流式输出、处理审批，并把交互留在移动端。
 - **用 Telegram 原生方式渲染 AI 输出。** 代码块、表格、列表、引用、可折叠区域、公式和结构化摘要。
 - **统一多服务商体验。** 同一套 handler，同一套 UX，不同后端。
 - **支持本地和自托管端点。** Ollama、vLLM、LiteLLM、Azure、LM Studio，以及其它 OpenAI-compatible 服务。
@@ -49,24 +52,24 @@ Telegodex 不是普通聊天 Bot。
 
 ## 当前重点
 
-项目正在从通用 AI Bot 变成真正的 Telegram Workbench。
+当前开发重点，是把 Telegram 做成本地 CLI Agent 的移动工作台，同时保留多服务商聊天基础，便于快速旁路提问。
 
 ### Stage 1
-- 多服务商聊天基础
+- 辅助多服务商聊天基础
 - TOML Provider 注册表
 - Telegram 原生渲染
 - 存储、偏好和安全
 
 ### Stage 2
-- Codex CLI bridge 基础
-- 会话同步和输出流式传输
+- 基于 `codex app-server` 的 Codex CLI bridge 基础
+- Codex thread 恢复、Telegram topic 绑定和输出流式传输
 - 内联审批提示
 - 工具调用可见性和本地 shell 权限控制
 
 ### Stage 3
-- Claude Code bridge
-- Telegram 内的 Agent 工作流
-- 更好的任务编排和长任务支持
+- 完整 Codex topic workbench UX
+- 在 Codex 暴露相关能力时呈现 Codex 自身的后台/子代理活动
+- Claude Code / 其它 CLI bridge
 - Dashboard 和部署工具
 
 ---
@@ -176,9 +179,10 @@ Python 3.11+ · aiogram 3.x · SQLAlchemy 2.x async · Pydantic Settings · Alem
 - [x] 上下文窗口和用户偏好
 - [x] Codex bridge 基础
 - [ ] 热重载模型机制
+- [ ] Codex thread 恢复和 Telegram topic 绑定打磨
 - [ ] 完整 Codex Workbench UX
 - [ ] Claude Code bridge
-- [ ] Agent/task execution layer
+- [ ] 在上游 CLI runtime 暴露相关能力时，呈现长任务、resume 状态和子代理活动
 - [ ] Web admin dashboard
 - [ ] Voice and image input
 - [ ] Docker compose & Helm chart

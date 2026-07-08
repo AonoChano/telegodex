@@ -81,7 +81,9 @@
       "processing_failed": "❌ Processing failed: {error}",
       "unknown_provider": "❌ Unknown provider: `{provider}`",
       "invalid_callback": "Invalid callback data",
-      "approval_timeout": "Approval already timed out"
+      "approval_timeout": "Approval already timed out",
+      "codex_command_unhandled": "Codex commands open or control dedicated Codex topics. Use <code>/codex new</code> or <code>/codex resume &lt;thread-id&gt;</code> to open one.",
+      "codex_topic_command_unsupported": "This is a Codex topic. Use plain messages to continue the Codex thread, or use <code>/codex status</code> for Codex-specific controls. Open general Bot settings and AI chat commands from All or a non-Codex topic."
     },
     "common": {
       "back": "« Back",

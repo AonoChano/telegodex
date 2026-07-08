@@ -23,22 +23,25 @@
 
 ## このプロジェクトについて
 
-Telegodex は Telegram 上で動く AI ワークベンチです。
+Telegodex は、スマートフォンからローカル CLI AI ワークフローを操作するための Telegram ワークベンチです。
+
+PC のターミナルで動いている AI CLI Agent の作業を、外出中に確認、承認、継続したい場面があります。公式のモバイル操作は、クライアント種別、ログイン状態、API 経路に制限されることがあります。Telegodex は、その操作面を Telegram に置きます。
+
+主目的は、Telegram から Codex CLI や Claude Code などの CLI Agent へ接続し、出力を表示し、操作できるようにすることです。操作感はローカルのターミナルに近づけます。対象 CLI はローカル subprocess として動き、Telegodex はコマンドラインの対話を Telegram に同期します。AI coding assistant 自体へ注入や改変は行いません。
 
 目的は三つあります。
 
-- **Codex / CLI Agent のリモート操作。** ターミナルで行う AI 作業を Telegram に持ち込み、スマートフォンから操作できるようにします。
-- **複数 AI Provider への接続。** OpenAI、Anthropic、Google、DeepSeek、Qwen、Kimi、GLM、ERNIE を一つの UI で切り替えます。
+- **Codex / CLI Agent のリモート操作。** Telegram topic から、ターミナル級の AI 作業を resume、bind、operate、approve、inspect できます。
+- **補助的な複数 AI Provider チャット。** Telegram を離れずに、OpenAI、Anthropic、Google、DeepSeek、Qwen、Kimi、GLM、ERNIE へ軽い質問ができます。
 - **TOML Provider registry。** `provider.toml` で OpenAI-compatible endpoint を追加、無効化、切り替えできます。
 
-Telegodex は単なるチャット Bot ではありません。  
-AI 作業のための操作面です。
+Telegodex には軽い質問のための Bot チャット経路もあります。同じ Telegram 空間の中で、短い AI チャットとターミナル級の Agent 操作を切り替えられます。
 
 ---
 
 ## できること
 
-- **Telegram から Codex ワークフローを操作する。** プロンプトを送り、ストリーム出力を受け取り、操作を確認し、モバイル上で作業を続けます。
+- **Telegram から Codex ワークフローを操作する。** プロンプト送信、thread resume、ストリーム出力、approval 処理をモバイル上で行います。
 - **AI 出力を Telegram ネイティブに表示する。** コードブロック、テーブル、リスト、引用、折りたたみ領域、数式、構造化サマリーを扱います。
 - **Provider をまたいで同じ体験を保つ。** handler と UX は同じまま、バックエンドだけを差し替えます。
 - **ローカル / セルフホストの endpoint を使う。** Ollama、vLLM、LiteLLM、Azure、LM Studio、その他 OpenAI-compatible サービスに接続できます。
@@ -49,24 +52,24 @@ AI 作業のための操作面です。
 
 ## 現在の焦点
 
-プロジェクトは汎用 AI Bot から Telegram Workbench へ移行中です。
+現在の開発焦点は、Telegram をローカル CLI Agent のモバイルワークベンチにすることです。複数 Provider チャット基盤は、軽い横道の質問に使える機能として維持します。
 
 ### Stage 1
-- 複数 Provider のチャット基盤
+- 補助的な複数 Provider チャット基盤
 - TOML Provider registry
 - Telegram ネイティブ表示
 - ストレージ、ユーザー設定、セキュリティ
 
 ### Stage 2
-- Codex CLI bridge foundation
-- セッション同期と出力ストリーミング
+- `codex app-server` による Codex CLI bridge foundation
+- Codex thread resume、Telegram topic binding、出力ストリーミング
 - インライン承認プロンプト
 - ツール呼び出しの可視化とローカル shell 権限制御
 
 ### Stage 3
-- Claude Code bridge
-- Telegram 内の Agent ワークフロー
-- 長時間タスクの編成
+- 完全な Codex topic workbench UX
+- Codex が公開する場合は、Codex 自身の background/sub-agent activity を表示する
+- Claude Code / other CLI bridges
 - Dashboard とデプロイ支援
 
 ---
@@ -176,9 +179,10 @@ Python 3.11+ · aiogram 3.x · SQLAlchemy 2.x async · Pydantic Settings · Alem
 - [x] Context windowing and user preferences
 - [x] Codex bridge foundation
 - [ ] Hot reload model mechanism
+- [ ] Codex thread resume と Telegram topic binding の polish
 - [ ] 完全な Codex Workbench UX
 - [ ] Claude Code bridge
-- [ ] Agent/task execution layer
+- [ ] Upstream CLI runtime が公開する long-running work、resume state、sub-agent status を表示する
 - [ ] Web admin dashboard
 - [ ] Voice and image input
 - [ ] Docker compose & Helm chart

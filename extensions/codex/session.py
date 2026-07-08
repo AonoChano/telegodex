@@ -310,6 +310,92 @@ class CodexSessionManager(SessionManager):
             self._sessions[session_key] = session
             return session
 
+    async def resume_session(
+        self,
+        db: AsyncSession,
+        session_key: SessionKey,
+        user_id: int,
+        thread_id: str,
+    ) -> tuple[_SessionState, dict[str, Any]]:
+        """Resume an existing Codex thread by id for *session_key*.
+
+        This mirrors ``codex resume <thread-id>`` through app-server without
+        passing a cwd override, so Codex keeps the thread's recorded session
+        directory unless the user chooses another path in a future flow.
+        """
+        requested_thread_id = thread_id.strip()
+        if not requested_thread_id:
+            raise ValueError("thread_id is required")
+
+        async with self._lock:
+            old = self._sessions.pop(session_key, None)
+            if old is not None:
+                self._thread_to_session_key.pop(old.thread_id, None)
+                self._thread_to_topic.pop(old.thread_id, None)
+                self._resume_info.pop(session_key, None)
+                if old.active_turn_id:
+                    with contextlib.suppress(Exception):
+                        await self._transport().send_request(
+                            "turn/interrupt",
+                            {"threadId": old.thread_id, "turnId": old.active_turn_id},
+                        )
+
+            resp = await self._transport().send_request(
+                "thread/resume",
+                {"threadId": requested_thread_id},
+            )
+            thread = resp["thread"]
+            resolved_thread_id = thread["id"]
+            cwd = str(resp.get("cwd") or thread.get("cwd") or "") or None
+            thread_path = thread.get("path")
+
+            stmt = select(Conversation).where(
+                Conversation.chat_id == session_key.chat_id,
+                Conversation.codex_thread_id == resolved_thread_id,
+            )
+            result = await db.execute(stmt)
+            conv = result.scalars().first()
+
+            if conv is None:
+                conv = Conversation(
+                    user_id=user_id,
+                    chat_id=session_key.chat_id,
+                    transport=session_key.transport,
+                    topic_id=session_key.topic_id,
+                    thread_id=session_key.topic_id,
+                    codex_thread_id=resolved_thread_id,
+                    codex_thread_path=str(thread_path) if thread_path else None,
+                    cwd=cwd,
+                    is_active=True,
+                )
+                db.add(conv)
+            else:
+                conv.user_id = user_id
+                conv.chat_id = session_key.chat_id
+                conv.transport = session_key.transport
+                conv.topic_id = session_key.topic_id
+                conv.thread_id = session_key.topic_id
+                conv.codex_thread_id = resolved_thread_id
+                conv.codex_thread_path = str(thread_path) if thread_path else conv.codex_thread_path
+                conv.cwd = cwd or conv.cwd
+                conv.is_active = True
+
+            _set_codex_bucket(conv, ProviderSessionData(session_id=resolved_thread_id))
+            await db.commit()
+
+            session = _SessionState(
+                thread_id=resolved_thread_id,
+                cwd=cwd,
+                was_resumed=True,
+            )
+            self._sessions[session_key] = session
+            self._thread_to_session_key[resolved_thread_id] = session_key
+            self._resume_info[session_key] = {
+                "thread_id": resolved_thread_id,
+                "resumed_at": conv.updated_at.isoformat() if conv.updated_at else None,
+            }
+            return session, thread
+
     def get_session(self, session_key: SessionKey) -> _SessionState | None:  # type: ignore[override]
         """Return the session for *session_key* if one exists, or ``None``."""
         return self._sessions.get(session_key)

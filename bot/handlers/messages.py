@@ -49,6 +49,11 @@ def _rich_table_cell(text: str) -> str:
     return _rich_inline_text(text).replace("|", "\\|").replace("\r", " ").replace("\n", " ")
 
 
+def _is_codex_command_text(text: str) -> bool:
+    first = text.strip().split(maxsplit=1)[0].lower()
+    return first == "/codex" or first.startswith("/codex@")
+
+
 def _build_start_message(locale: str | None, user_name: str, provider_names: list[str]) -> str:
     provider_ready = tr("bot.commands.start.provider_ready", locale)
     if provider_names:
@@ -280,6 +285,15 @@ async def handle_message(
     if not user_text:
         locale = resolve_locale(None, message.from_user.language_code if message.from_user else None)
         await message.answer(tr("bot.errors.empty_input", locale), **route.send_kwargs())
+        return
+
+    if _is_codex_command_text(user_text):
+        locale = resolve_locale(None, message.from_user.language_code if message.from_user else None)
+        await message.answer(
+            tr("bot.errors.codex_command_unhandled", locale),
+            parse_mode="HTML",
+            **route.send_kwargs(),
+        )
         return
 
     # 获取用户和对话（按 topic + provider 隔离）

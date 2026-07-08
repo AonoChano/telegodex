@@ -14,6 +14,7 @@ from typing import Any
 from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
+from aiogram.dispatcher.event.bases import SkipHandler
 
 from bot.codex import (
     command_flow,
@@ -48,6 +49,7 @@ from core.orchestrator import Orchestrator
 from core.session import SessionKey
 from extensions.codex.daemon import codex_daemon
 from storage.context_manager import ContextManager
+from i18n import resolve_locale, tr
 
 router = Router(name="codex")
 
@@ -112,6 +114,27 @@ async def _handle_codex_new(
         orchestrator,
         session_key,
         user_id,
+        bind_codex_thread_to_topic=_bind_codex_thread_to_topic,
+    )
+
+
+async def _handle_codex_resume(
+    message: Message,
+    route: TelegramRoute,
+    context_manager: Any,
+    orchestrator: Orchestrator,
+    session_key: SessionKey,
+    user_id: int,
+    thread_id: str,
+) -> None:
+    await session_ui.handle_codex_resume(
+        message,
+        route,
+        context_manager,
+        orchestrator,
+        session_key,
+        user_id,
+        thread_id,
         bind_codex_thread_to_topic=_bind_codex_thread_to_topic,
     )
 
@@ -214,12 +237,34 @@ async def cmd_codex_v2(
         ensure_global_orch=_ensure_global_orch,
         execute_codex_prompt=_execute_codex_prompt,
         handle_codex_new=_handle_codex_new,
+        handle_codex_resume=_handle_codex_resume,
         codex_topic_bound=_CODEX_TOPIC_BOUND,
         codex_topic_recoverable=_CODEX_TOPIC_RECOVERABLE,
     )
 # ---------------------------------------------------------------------------
 # Codex-bound topic message handler
 # ---------------------------------------------------------------------------
+
+
+@router.message(lambda message: bool(message.text and message.text.strip().startswith("/")))
+async def guard_codex_topic_bot_command(
+    message: Message,
+    context_manager: Any,
+) -> None:
+    """Keep generic Bot commands out of Codex-owned topics."""
+    route = TelegramRoute.from_message(message)
+    if route.message_thread_id is None:
+        raise SkipHandler
+    state = await _codex_topic_state(route.message_thread_id, context_manager, chat_id=route.chat_id)
+    if state == _CODEX_TOPIC_NOT_CODEX:
+        raise SkipHandler
+
+    locale = resolve_locale(None, message.from_user.language_code if message.from_user else None)
+    await message.answer(
+        tr("bot.errors.codex_topic_command_unsupported", locale),
+        parse_mode="HTML",
+        **route.send_kwargs(),
+    )
 
 
 @router.message(F.text, IsCodexBoundTopic())

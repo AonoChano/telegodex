@@ -7,10 +7,7 @@ CodexBridge connects Telegram to the local Codex CLI through a persistent
 with newline-delimited JSON-RPC, streams turn notifications into Telegram draft
 messages, and persists final output with `sendRichMessage`.
 
-**Command:** `/codex <prompt>` in private chats or Codex-bound forum topics.
-Use `/codex new` in a forum supergroup to create and bind a fresh Codex topic.
-Messages inside an active Codex-bound topic continue that Codex session without
-the `/codex` prefix.
+**Command:** `/codex new` creates a fresh dedicated Codex forum topic. `/codex resume <thread-id>` resumes an existing Codex app-server thread and binds it to a newly created Codex topic. Plain prompts are accepted inside active Codex-bound topics without the `/codex` prefix; All and ordinary topics do not run Codex turns directly.
 
 **Architecture:**
 

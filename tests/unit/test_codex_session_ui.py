@@ -106,3 +106,66 @@ async def test_handle_codex_new_creates_topic_and_rebinds_session() -> None:
     assert method.__class__.__name__ == "SendMessage"
     assert "Codex: thread-a" in method.text
 
+@pytest.mark.asyncio
+async def test_handle_codex_resume_creates_topic_and_rebinds_session() -> None:
+    bot = AsyncMock()
+    bot.create_forum_topic.return_value = SimpleNamespace(message_thread_id=333)
+    message = _message("/codex resume thread-resumed", bot=bot)
+    route = TelegramRoute.from_message(message)
+    context = SimpleNamespace(session=AsyncMock())
+    session_manager = _SessionManager()
+    orchestrator = SimpleNamespace(
+        session_manager=session_manager,
+        codex_resume_session=AsyncMock(
+            return_value={
+                "thread_id": "thread-resumed",
+                "cwd": "C:/repo",
+                "preview": "Fix Telegram topic routing",
+            }
+        ),
+    )
+    session_key = SessionKey.from_telegram_message(route.chat_id, None)
+    bind = AsyncMock()
+
+    await session_ui.handle_codex_resume(
+        message,
+        route,
+        context,
+        orchestrator,
+        session_key,
+        user_id=7,
+        thread_id="thread-resumed",
+        bind_codex_thread_to_topic=bind,
+    )
+
+    orchestrator.codex_resume_session.assert_awaited_once_with(
+        session_key,
+        context.session,
+        7,
+        "thread-resumed",
+    )
+    bot.create_forum_topic.assert_awaited_once_with(chat_id=100, name="Codex: Fix Telegram topic routing")
+    bot.send_message.assert_awaited_once()
+    _, welcome_kwargs = bot.send_message.await_args
+    assert welcome_kwargs["chat_id"] == 100
+    assert welcome_kwargs["message_thread_id"] == 333
+    assert "thread-resumed" in welcome_kwargs["text"]
+    assert session_manager.set_topic_id_calls == [("thread-resumed", 333)]
+    assert session_manager.update_session_key_calls == [
+        (
+            SessionKey.from_telegram_message(100, None),
+            SessionKey.from_telegram_message(100, 333),
+        )
+    ]
+    bind.assert_awaited_once_with(
+        context_manager=context,
+        chat_id=100,
+        topic_id=333,
+        thread_id="thread-resumed",
+        user_id=7,
+        cwd="C:/repo",
+    )
+
+    method = bot.await_args.args[0]
+    assert method.__class__.__name__ == "SendMessage"
+    assert "Codex: Fix Telegram topic routing" in method.text

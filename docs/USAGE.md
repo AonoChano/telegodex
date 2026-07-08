@@ -9,7 +9,7 @@ related: [QUICKSTART.md, PRODUCT_EXPERIENCE.md, CUSTOM_PROVIDERS.md, RICH_MESSAG
 
 # Usage
 
-Telegodex runs as a Telegram Workbench. You can chat with configured providers, use Telegram Rich Messages for structured output, and run Codex CLI sessions through the CodexBridge. Ordinary AI chat and Codex sessions keep separate context.
+Telegodex runs as a Telegram Workbench for local CLI AI workflows. Its primary role is to make Telegram a mobile control surface for Codex CLI sessions running on your computer. You can also chat with configured providers as an auxiliary lane, use Telegram Rich Messages for structured output, and run Codex CLI sessions through the CodexBridge. Ordinary AI chat and Codex sessions keep separate context.
 
 ## Commands
 
@@ -92,7 +92,7 @@ When a provider supports `chat_stream()`, Telegodex streams temporary Rich Messa
 
 ## CodexBridge
 
-Use `/codex <prompt>` to run Codex CLI tasks from Telegram. The bot runs a persistent `codex app-server` subprocess and communicates via JSON-RPC 2.0 over stdio. Each Telegram route is keyed by `SessionKey` (`chat_id` plus topic when present), so private chats and Codex-bound forum topics keep separate Codex sessions.
+Use `/codex <prompt>` to control Codex CLI from Telegram. The bot runs a persistent `codex app-server` subprocess and communicates via JSON-RPC 2.0 over stdio. Codex remains an external runtime; Telegodex binds Telegram routes to Codex threads, renders output, and forwards approvals. Each Telegram route is keyed by `SessionKey` (`chat_id` plus topic when present), so private chats and Codex-bound forum topics keep separate Codex sessions.
 
 **Commands:**
 
@@ -120,6 +120,8 @@ Use `/codex <prompt>` to run Codex CLI tasks from Telegram. The bot runs a persi
 **Forum topics:** In a forum supergroup, `/codex new` creates a fresh Codex session and binds it to a forum topic. Messages sent inside that Codex-bound topic continue the session without repeating the `/codex` prefix.
 
 Codex topic ownership is strict. Active Codex-bound topics route directly to Codex. If a historical Codex topic has no active thread binding, Telegodex asks whether to create a fresh Codex session in that topic or cancel. Canceling, ignoring, or letting the prompt expire leaves the user message unhandled; it does not fall back to ordinary AI chat. Ordinary non-Codex forum topics still fall through to the normal AI chat handler.
+
+**Codex-owned work:** If Codex exposes background work, sub-agent activity, or richer resume semantics, Telegodex should surface those states inside the bound Telegram topic. It should not create a separate Bot task system that pretends to be Codex.
 
 **Controls:** While a Codex turn or Shell process is active, Telegodex can show a temporary ReplyKeyboard with controls such as Stop, Live, Last Reply, and Status. Equivalent slash commands are always available: `/stop`, `/live`, `/last`, and `/status`.
 
