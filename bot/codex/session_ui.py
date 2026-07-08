@@ -15,6 +15,24 @@ from core.session import SessionKey
 
 BindCodexThreadToTopic = Callable[..., Awaitable[None]]
 
+_MAX_TOPIC_NAME_CHARS = 128
+
+
+def _clean_topic_fragment(value: Any) -> str:
+    text = " ".join(str(value or "").split())
+    return text.strip()
+
+
+def _topic_name(info: dict[str, Any]) -> str:
+    thread_id = str(info.get("thread_id") or "")
+    title = _clean_topic_fragment(info.get("name")) or _clean_topic_fragment(info.get("preview"))
+    if not title:
+        title = thread_id[:8] or "session"
+    name = f"Codex: {title}"
+    if len(name) <= _MAX_TOPIC_NAME_CHARS:
+        return name
+    return name[: _MAX_TOPIC_NAME_CHARS - 1].rstrip() + "…"
+
 
 async def handle_codex_new(
     message: Message,
@@ -40,8 +58,7 @@ async def handle_codex_new(
         thread_id = info["thread_id"]
         cwd = info.get("cwd", "default")
 
-        short_thread = thread_id[:8]
-        topic_name = f"Codex: {short_thread}"
+        topic_name = _topic_name(info)
         forum_topic = await bot.create_forum_topic(
             chat_id=route.chat_id,
             name=topic_name,
@@ -51,7 +68,7 @@ async def handle_codex_new(
         session_manager = orchestrator.session_manager
         if session_manager is not None:
             session_manager.set_topic_id(thread_id, topic_id)
-            old_key = SessionKey.from_telegram_message(route.chat_id, None)
+            old_key = session_key
             new_key = SessionKey.from_telegram_message(route.chat_id, topic_id)
             updated = session_manager.update_session_key(old_key, new_key)
             logger.info(
@@ -88,5 +105,84 @@ async def handle_codex_new(
         logger.exception("Failed to create Codex session with forum topic")
         await message.answer(
             f"❌ Failed to create new session: {exc}",
+            **route.send_kwargs(),
+        )
+
+
+async def handle_codex_resume(
+    message: Message,
+    route: TelegramRoute,
+    context_manager: Any,
+    orchestrator: Orchestrator,
+    session_key: SessionKey,
+    user_id: int,
+    thread_id: str,
+    *,
+    bind_codex_thread_to_topic: BindCodexThreadToTopic = default_bind_codex_thread_to_topic,
+) -> None:
+    """Resume a Codex thread and bind it to a new forum topic."""
+    bot = message.bot
+    if bot is None:
+        await message.answer(
+            "Bot instance unavailable.",
+            **route.send_kwargs(),
+        )
+        return
+
+    try:
+        info = await orchestrator.codex_resume_session(
+            session_key,
+            context_manager.session,
+            user_id,
+            thread_id,
+        )
+        resolved_thread_id = info["thread_id"]
+        cwd = info.get("cwd", "default")
+        topic_name = _topic_name(info)
+        forum_topic = await bot.create_forum_topic(
+            chat_id=route.chat_id,
+            name=topic_name,
+        )
+        topic_id = forum_topic.message_thread_id
+
+        session_manager = orchestrator.session_manager
+        if session_manager is not None:
+            session_manager.set_topic_id(resolved_thread_id, topic_id)
+            new_key = SessionKey.from_telegram_message(route.chat_id, topic_id)
+            updated = session_manager.update_session_key(session_key, new_key)
+            logger.info(
+                f"handle_codex_resume: updated session key mapping: old={session_key}, new={new_key}, success={updated}"
+            )
+
+        await bind_codex_thread_to_topic(
+            context_manager=context_manager,
+            chat_id=route.chat_id,
+            topic_id=topic_id,
+            thread_id=resolved_thread_id,
+            user_id=user_id,
+            cwd=cwd,
+        )
+
+        await bot.send_message(
+            chat_id=route.chat_id,
+            message_thread_id=topic_id,
+            text=(
+                "**Resumed Codex Session**\n\n"
+                f"Thread: `{resolved_thread_id}`\n"
+                f"CWD: `{cwd}`\n\n"
+                "Send your prompts here directly (no `/codex` prefix needed)."
+            ),
+            parse_mode="Markdown",
+        )
+
+        await message.answer(
+            f"✅ Resumed Codex session in topic **{topic_name}**.",
+            parse_mode="Markdown",
+            **route.send_kwargs(),
+        )
+    except Exception as exc:
+        logger.exception("Failed to resume Codex session with forum topic")
+        await message.answer(
+            f"❌ Failed to resume session: {exc}",
             **route.send_kwargs(),
         )

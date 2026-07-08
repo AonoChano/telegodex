@@ -17,8 +17,9 @@ CODEX_USAGE_HTML = (
     "- <code>/codex switch &lt;id&gt;</code> — Switch session\n"
     "- <code>/codex !command</code> — Execute shell command\n"
     "- <code>/codex @path</code> — Read file at path\n"
-    "- <code>/codex new</code> — Start a fresh session\n\n"
-    "<b>Example:</b> <code>/codex list all Python files</code>"
+    "- <code>/codex new</code> — Start a fresh session\n"
+    "- <code>/codex resume &lt;thread-id&gt;</code> — Resume a Codex thread in a topic\n\n"
+    "<b>Example:</b> <code>/codex new</code>"
 )
 
 _NON_STREAMING_COMMANDS = {
@@ -49,6 +50,15 @@ def topic_prompt_text(message: Message) -> str:
     return command_args(message.text or "", "codex")
 
 
+def resume_thread_id(prompt: str) -> str | None:
+    """Return the requested Codex thread id for ``resume <thread-id>``."""
+    stripped = prompt.strip()
+    if not stripped.lower().startswith("resume "):
+        return None
+    thread_id = stripped.split(None, 1)[1].strip()
+    return thread_id or None
+
+
 def is_streaming_prompt(prompt: str) -> bool:
     """Return whether a Codex command should run through streaming prompt flow."""
     prefix, _ = parse_instruction_prefix(prompt)
@@ -56,6 +66,7 @@ def is_streaming_prompt(prompt: str) -> bool:
     return (
         stripped not in _NON_STREAMING_COMMANDS
         and not stripped.startswith("cd ")
+        and not stripped.startswith("resume ")
         and not stripped.startswith("switch ")
         and prefix not in {"slash", "file"}
     )

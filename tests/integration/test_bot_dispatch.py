@@ -587,3 +587,50 @@ class TestCodexTopicFallthrough:
 
         codex_router._parent_router = None
         messages_router._parent_router = None
+    @pytest.mark.asyncio
+    async def test_codex_resume_opens_topic_not_ai_chat(
+        self,
+        mock_context_manager: AsyncMock,
+        mock_ai_provider: MagicMock,
+    ) -> None:
+        dispatcher = Dispatcher()
+        dispatcher.include_router(codex_router)
+        dispatcher.include_router(messages_router)
+
+        orchestrator = MagicMock()
+        orchestrator.ensure_transport_handlers = MagicMock()
+
+        @dispatcher.message.middleware()
+        async def inject_deps(handler, event, data):
+            data["context_manager"] = mock_context_manager
+            data["ai_router"] = ai_router
+            data["orchestrator"] = orchestrator
+            return await handler(event, data)
+
+        ai_router = MagicMock()
+        ai_router.get_provider = MagicMock(return_value=mock_ai_provider)
+        ai_router.get_default_provider = MagicMock(return_value=mock_ai_provider)
+        ai_router.is_provider_available = MagicMock(return_value=True)
+
+        bot = AsyncMock()
+        message = _make_mock_message(
+            text="/codex resume 019f3f2b-fa28-7042-8d44-36f69db443f0",
+            chat_type="supergroup",
+            entities=[{"type": "bot_command", "offset": 0, "length": 6}],
+        )
+        update = _make_update(message)
+
+        with (
+            patch("bot.handlers.codex.codex_daemon.is_alive", return_value=True),
+            patch("bot.handlers.codex._ensure_global_orch", MagicMock()),
+            patch("bot.handlers.codex._handle_codex_resume", AsyncMock()) as resume,
+        ):
+            await dispatcher.feed_update(bot, update)
+
+        resume.assert_awaited_once()
+        args = resume.await_args.args
+        assert args[6] == "019f3f2b-fa28-7042-8d44-36f69db443f0"
+        mock_ai_provider.chat_stream.assert_not_called()
+
+        codex_router._parent_router = None
+        messages_router._parent_router = None

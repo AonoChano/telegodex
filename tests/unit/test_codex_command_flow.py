@@ -10,6 +10,7 @@ import pytest
 from aiogram.types import Message
 
 from bot.codex import command_flow
+from core.session import SessionKey
 
 
 def _message(
@@ -39,15 +40,16 @@ def _message(
     return message.as_(bot or AsyncMock())
 
 
-def _deps(*, alive: bool = True) -> dict[str, object]:
+def _deps(*, alive: bool = True, topic_state: str = "bound") -> dict[str, object]:
     return {
         "approval_ui_bridge": SimpleNamespace(set_bot=MagicMock()),
         "codex_daemon": SimpleNamespace(is_alive=MagicMock(return_value=alive)),
-        "codex_topic_state": AsyncMock(return_value="bound"),
+        "codex_topic_state": AsyncMock(return_value=topic_state),
         "send_topic_recovery_prompt": AsyncMock(),
         "ensure_global_orch": MagicMock(),
         "execute_codex_prompt": AsyncMock(),
         "handle_codex_new": AsyncMock(),
+        "handle_codex_resume": AsyncMock(),
         "codex_topic_bound": "bound",
         "codex_topic_recoverable": "recoverable",
     }
@@ -71,7 +73,7 @@ async def test_handle_codex_command_shows_usage_without_prompt() -> None:
 
 
 @pytest.mark.asyncio
-async def test_handle_codex_command_routes_streaming_prompt() -> None:
+async def test_handle_codex_command_rejects_streaming_prompt_in_all() -> None:
     bot = AsyncMock()
     message = _message("/codex list files", bot=bot)
     context = SimpleNamespace(session=AsyncMock())
@@ -81,12 +83,75 @@ async def test_handle_codex_command_routes_streaming_prompt() -> None:
     await command_flow.handle_codex_command(message, context, orchestrator, **deps)
 
     deps["approval_ui_bridge"].set_bot.assert_called_once_with(bot)
-    deps["codex_daemon"].is_alive.assert_called_once()
-    orchestrator.ensure_transport_handlers.assert_called_once()
-    deps["ensure_global_orch"].assert_called_once_with(orchestrator)
-    deps["execute_codex_prompt"].assert_awaited_once()
-    args = deps["execute_codex_prompt"].await_args.args
-    assert args[0] is message
-    assert args[2] is context
-    assert args[3] is orchestrator
-    assert args[4] == "list files"
+    deps["codex_daemon"].is_alive.assert_not_called()
+    orchestrator.ensure_transport_handlers.assert_not_called()
+    deps["ensure_global_orch"].assert_not_called()
+    deps["execute_codex_prompt"].assert_not_awaited()
+    bot.assert_awaited_once()
+    method = bot.await_args.args[0]
+    assert "Open a Codex topic first" in method.text
+
+
+@pytest.mark.asyncio
+async def test_handle_codex_command_routes_new_to_topic_creation() -> None:
+    bot = AsyncMock()
+    message = _message("/codex new", bot=bot)
+    context = SimpleNamespace(session=AsyncMock())
+    orchestrator = SimpleNamespace(ensure_transport_handlers=MagicMock())
+    deps = _deps()
+
+    await command_flow.handle_codex_command(message, context, orchestrator, **deps)
+
+    deps["handle_codex_new"].assert_awaited_once()
+    args = deps["handle_codex_new"].await_args.args
+    assert args[4] == SessionKey.from_telegram_message(100, None)
+    deps["execute_codex_prompt"].assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_handle_codex_command_routes_resume_to_topic_creation() -> None:
+    bot = AsyncMock()
+    message = _message("/codex resume 019f3f2b-fa28-7042-8d44-36f69db443f0", bot=bot)
+    context = SimpleNamespace(session=AsyncMock())
+    orchestrator = SimpleNamespace(ensure_transport_handlers=MagicMock())
+    deps = _deps()
+
+    await command_flow.handle_codex_command(message, context, orchestrator, **deps)
+
+    deps["handle_codex_resume"].assert_awaited_once()
+    args = deps["handle_codex_resume"].await_args.args
+    assert args[4] == SessionKey.from_telegram_message(100, None)
+    assert args[6] == "019f3f2b-fa28-7042-8d44-36f69db443f0"
+    deps["execute_codex_prompt"].assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_handle_codex_command_new_from_topic_does_not_reuse_topic_key() -> None:
+    bot = AsyncMock()
+    message = _message("/codex new", bot=bot, message_thread_id=222)
+    context = SimpleNamespace(session=AsyncMock())
+    orchestrator = SimpleNamespace(ensure_transport_handlers=MagicMock())
+    deps = _deps(topic_state="bound")
+
+    await command_flow.handle_codex_command(message, context, orchestrator, **deps)
+
+    deps["handle_codex_new"].assert_awaited_once()
+    args = deps["handle_codex_new"].await_args.args
+    assert args[4] == SessionKey.from_telegram_message(100, None)
+
+
+@pytest.mark.asyncio
+async def test_handle_codex_command_resume_from_unbound_topic_opens_new_topic() -> None:
+    bot = AsyncMock()
+    message = _message("/codex resume thread-abc", bot=bot, message_thread_id=222)
+    context = SimpleNamespace(session=AsyncMock())
+    orchestrator = SimpleNamespace(ensure_transport_handlers=MagicMock())
+    deps = _deps(topic_state="not_codex")
+
+    await command_flow.handle_codex_command(message, context, orchestrator, **deps)
+
+    deps["handle_codex_resume"].assert_awaited_once()
+    args = deps["handle_codex_resume"].await_args.args
+    assert args[4] == SessionKey.from_telegram_message(100, None)
+    assert args[6] == "thread-abc"
+    deps["send_topic_recovery_prompt"].assert_not_awaited()

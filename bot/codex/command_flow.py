@@ -29,6 +29,7 @@ async def handle_codex_command(
     ensure_global_orch: EnsureGlobalOrchestrator,
     execute_codex_prompt: AsyncCallable,
     handle_codex_new: AsyncCallable,
+    handle_codex_resume: AsyncCallable,
     codex_topic_bound: str,
     codex_topic_recoverable: str,
 ) -> None:
@@ -44,25 +45,38 @@ async def handle_codex_command(
     session_key = SessionKey.from_telegram_message(chat_id, route.message_thread_id)
 
     if route.message_thread_id is not None:
-        state = await codex_topic_state(route.message_thread_id, context_manager, chat_id=route.chat_id)
         prompt = command_ui.topic_prompt_text(message)
-        if state == codex_topic_recoverable:
-            await send_topic_recovery_prompt(message, route, prompt)
-            return
-        if state != codex_topic_bound:
-            await message.answer(
-                "Codex is only available from the main chat screen.\n\n"
-                "Switch to <b>All</b> and send <code>/codex &lt;prompt&gt;</code> there.",
-                parse_mode="HTML",
-                **route.send_kwargs(),
-            )
-            return
     else:
         prompt = command_ui.command_args(message.text or "", "codex")
 
     if not prompt:
         await message.answer(
             command_ui.CODEX_USAGE_HTML,
+            parse_mode="HTML",
+            **route.send_kwargs(),
+        )
+        return
+
+    stripped = prompt.strip().lower()
+    resume_thread_id = command_ui.resume_thread_id(prompt)
+    starts_topic = stripped == "new" or resume_thread_id is not None
+
+    if route.message_thread_id is not None:
+        state = await codex_topic_state(route.message_thread_id, context_manager, chat_id=route.chat_id)
+        if state == codex_topic_recoverable and not starts_topic:
+            await send_topic_recovery_prompt(message, route, prompt)
+            return
+        if state != codex_topic_bound and not starts_topic:
+            await message.answer(
+                "Codex is only available from a dedicated Codex topic.\n\n"
+                "Send <code>/codex new</code> or <code>/codex resume &lt;thread-id&gt;</code> to open one.",
+                parse_mode="HTML",
+                **route.send_kwargs(),
+            )
+            return
+    elif command_ui.is_streaming_prompt(prompt):
+        await message.answer(
+            "Open a Codex topic first with <code>/codex new</code> or <code>/codex resume &lt;thread-id&gt;</code>.",
             parse_mode="HTML",
             **route.send_kwargs(),
         )
@@ -78,13 +92,18 @@ async def handle_codex_command(
     orchestrator.ensure_transport_handlers()
     ensure_global_orch(orchestrator)
 
-    stripped = prompt.strip().lower()
-    if command_ui.is_streaming_prompt(prompt):
-        await execute_codex_prompt(message, route, context_manager, orchestrator, prompt)
+    if stripped == "new":
+        topic_open_key = SessionKey.from_telegram_message(chat_id, None)
+        await handle_codex_new(message, route, context_manager, orchestrator, topic_open_key, user_id)
         return
 
-    if stripped == "new":
-        await handle_codex_new(message, route, context_manager, orchestrator, session_key, user_id)
+    if resume_thread_id is not None:
+        topic_open_key = SessionKey.from_telegram_message(chat_id, None)
+        await handle_codex_resume(message, route, context_manager, orchestrator, topic_open_key, user_id, resume_thread_id)
+        return
+
+    if command_ui.is_streaming_prompt(prompt):
+        await execute_codex_prompt(message, route, context_manager, orchestrator, prompt)
         return
 
     try:

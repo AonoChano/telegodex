@@ -720,6 +720,8 @@ class Orchestrator:
 
         if stripped == "new":
             return _RoutedAction(action="codex_new", payload={})
+        if stripped.startswith("resume "):
+            return _RoutedAction(action="codex_resume", payload={"thread_id": rest.split(None, 1)[1].strip()})
         if stripped == "status":
             return _RoutedAction(action="codex_status", payload={})
         if stripped.startswith("cd "):
@@ -775,6 +777,9 @@ class Orchestrator:
         if action == "codex_new":
             info = await self.codex_new_session(key, db, user_id)
             return f"Started a new Codex session.\nThread: `{info['thread_id']}`\nCWD: `{info['cwd']}`"
+        if action == "codex_resume":
+            info = await self.codex_resume_session(key, db, user_id, payload.get("thread_id", ""))
+            return f"Resumed Codex session.\nThread: `{info['thread_id']}`\nCWD: `{info['cwd']}`"
         if action == "codex_status":
             info = await self.codex_get_status(key)
             if info is None:
@@ -864,6 +869,28 @@ class Orchestrator:
             "cwd": session.cwd or "default",
         }
 
+    async def codex_resume_session(
+        self,
+        key: SessionKey,
+        db: AsyncSession,
+        user_id: int,
+        thread_id: str,
+    ) -> dict[str, Any]:
+        if self._session_manager is None:
+            raise RuntimeError("Codex session manager is not available")
+        session, thread = await self._session_manager.resume_session(
+            db=db,
+            session_key=key,
+            user_id=user_id,
+            thread_id=thread_id,
+        )
+        return {
+            "thread_id": session.thread_id,
+            "cwd": session.cwd or str(thread.get("cwd") or "default"),
+            "name": thread.get("name"),
+            "preview": thread.get("preview"),
+            "path": thread.get("path"),
+        }
     async def codex_get_status(self, key: SessionKey) -> dict[str, Any] | None:
         if self._session_manager is None:
             return None

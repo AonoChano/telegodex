@@ -81,7 +81,9 @@
       "processing_failed": "❌ 处理失败: {error}",
       "unknown_provider": "❌ 未知服务商: `{provider}`",
       "invalid_callback": "无效的回调数据",
-      "approval_timeout": "审批已超时"
+      "approval_timeout": "审批已超时",
+      "codex_command_unhandled": "Codex 指令用于打开或控制专属 Codex Topic。请使用 <code>/codex new</code> 或 <code>/codex resume &lt;thread-id&gt;</code> 打开一个 Codex Topic。",
+      "codex_topic_command_unsupported": "这里是 Codex Topic。请直接发送普通消息继续当前 Codex thread，或使用 <code>/codex status</code> 等 Codex 专属控制。通用 Bot 设置和普通 AI Chat 指令请在 All 或非 Codex Topic 中使用。"
     },
     "common": {
       "back": "« 返回",

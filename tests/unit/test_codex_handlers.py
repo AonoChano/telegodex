@@ -129,6 +129,27 @@ async def test_codex_bound_topic_filter_skips_codex_commands() -> None:
 
 
 @pytest.mark.asyncio
+async def test_codex_topic_guard_blocks_generic_bot_commands() -> None:
+    bot = AsyncMock()
+    message = _message("/settings", bot=bot, message_thread_id=222)
+    context = _Context(bound=True)
+
+    await codex.guard_codex_topic_bot_command(message, context)
+
+    bot.assert_awaited_once()
+    method = bot.await_args.args[0]
+    assert "Codex topic" in method.text
+
+
+@pytest.mark.asyncio
+async def test_codex_topic_guard_skips_non_codex_topics() -> None:
+    message = _message("/settings", message_thread_id=222)
+    context = _Context(bound=False)
+
+    with pytest.raises(SkipHandler):
+        await codex.guard_codex_topic_bot_command(message, context)
+
+@pytest.mark.asyncio
 async def test_handle_codex_new_delegates_to_session_ui(monkeypatch: pytest.MonkeyPatch) -> None:
     message = _message("/codex new")
     route = TelegramRoute.from_message(message)

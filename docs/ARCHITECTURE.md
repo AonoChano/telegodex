@@ -113,7 +113,7 @@ Telegram User
 - **Instruction Support**: `/codex /skill` lists available skills, `/codex !command` executes shell commands, `/codex @path` reads directory listings.
 - **Telegram Controls**: `bot/handlers/toolbar.py` owns temporary ReplyKeyboard controls while a Codex turn or Shell process is active. Slash commands such as `/stop`, `/live`, `/last`, and `/status` remain available without the keyboard.
 - **MessageBus**: `core/bus/` is a routing and delivery utility for Telegram-bound results. It should not become a Bot-owned background-task runtime that duplicates Codex capabilities.
-- **Topic Routing Guard**: Codex topic messages stay on the Codex path. Active Codex-bound topics route directly to Codex; historical Codex topics without an active binding ask the user to create a fresh Codex session or cancel. Ignored or canceled recovery prompts do not fall back to ordinary AI chat. Ordinary non-Codex forum topics fall through to the normal AI chat handler.
+- **Topic Routing Guard**: `/codex new` and `/codex resume <thread-id>` open dedicated Codex topics instead of running turns in All or ordinary topics. Codex topic messages stay on the Codex path. Active Codex-bound topics route directly to Codex; historical Codex topics without an active binding ask the user to create a fresh Codex session or cancel. Ignored or canceled recovery prompts do not fall back to ordinary AI chat. Ordinary non-Codex forum topics fall through to the normal AI chat handler, but leaked `/codex ...` commands are not consumed as ordinary AI prompts.
 
 ### Streaming Output
 
