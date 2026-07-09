@@ -178,3 +178,53 @@ def test_select_chat_runtime_falls_back_to_default_for_missing_preferred_provide
     assert selection is not None
     assert selection.provider_name == "deepseek"
     assert selection.provider is router.get_provider("deepseek")
+
+def test_router_reload_replaces_provider_models() -> None:
+    FakeProvider.instances.clear()
+    original_registry = AIRouter.TRANSPORT_REGISTRY.copy()
+    AIRouter.TRANSPORT_REGISTRY = {**original_registry, "fake": FakeProvider}
+    try:
+        router = AIRouter(
+            [_config("deepseek")],
+            GlobalConfig(default_provider="deepseek", available_providers=["deepseek"]),
+        )
+
+        reloaded = router.reload(
+            [_config("zhipu")],
+            GlobalConfig(
+                default_provider="zhipu",
+                default_model="glm-hot",
+                available_providers=["zhipu"],
+            ),
+        )
+
+        assert reloaded is True
+        assert router.list_available_providers() == ["zhipu"]
+        assert router.default_provider_name == "zhipu"
+        assert router.default_model == "glm-hot"
+        assert router.get_provider("deepseek") is None
+        assert router.get_provider("zhipu") is not None
+    finally:
+        AIRouter.TRANSPORT_REGISTRY = original_registry
+
+
+def test_router_reload_preserves_old_config_when_default_unavailable() -> None:
+    FakeProvider.instances.clear()
+    original_registry = AIRouter.TRANSPORT_REGISTRY.copy()
+    AIRouter.TRANSPORT_REGISTRY = {**original_registry, "fake": FakeProvider}
+    try:
+        router = AIRouter(
+            [_config("deepseek")],
+            GlobalConfig(default_provider="deepseek", available_providers=["deepseek"]),
+        )
+
+        reloaded = router.reload(
+            [_config("zhipu")],
+            GlobalConfig(default_provider="missing", available_providers=["zhipu"]),
+        )
+
+        assert reloaded is False
+        assert router.list_available_providers() == ["deepseek"]
+        assert router.default_provider_name == "deepseek"
+    finally:
+        AIRouter.TRANSPORT_REGISTRY = original_registry

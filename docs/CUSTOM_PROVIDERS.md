@@ -164,7 +164,9 @@ The legacy JSON-based custom provider system (`custom_providers.json` + `CUSTOM_
 3. List every active provider id under `[global].available_providers`.
 4. Set `[global].default_provider` to the id you want as the default.
 5. Remove the deprecated env vars from `.env`: `DEFAULT_AI_PROVIDER`, `DEFAULT_MODEL`, `MAX_TOKENS`, `TEMPERATURE`, `CUSTOM_PROVIDERS_CONFIG`.
-6. Run `python run.py --check-config` to verify.
+6. Run python run.py --check-config to verify.
+
+When the bot is already running, changes to provider.toml are hot-reloaded automatically. Provider additions, removals, default provider changes, and model list changes take effect without restarting. Restart only when the process environment itself must change, such as replacing an already-loaded secret value.
 
 The old `custom_providers.example.json` / `custom_providers.schema.json` / `configure_provider.py` files are kept as migration references and marked as deprecated at the top of each file.
 

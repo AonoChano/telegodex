@@ -62,7 +62,7 @@ On Windows, Telegodex runs shell commands through PowerShell. Command results ar
 
 ## Provider Selection
 
-Telegodex reads provider routing from `provider.toml`. Configure API keys in `.env`, list active provider IDs in `[global].available_providers`, and set `[global].default_provider` to the default provider for normal chat. `python run.py --check-config` validates the TOML structure and fails closed if the configured default provider cannot be instantiated.
+Telegodex reads provider routing from `provider.toml`. Configure API keys in `.env`, list active provider IDs in `[global].available_providers`, and set `[global].default_provider` to the default provider for normal chat. `python run.py --check-config` validates the TOML structure and fails closed if the configured default provider cannot be instantiated. While the bot is running, provider and model list changes in `provider.toml` are hot-reloaded automatically.
 
 Use `provider.toml` for OpenAI-compatible endpoints such as Ollama, LiteLLM, vLLM, LM Studio, and Azure OpenAI. See [CUSTOM_PROVIDERS.md](CUSTOM_PROVIDERS.md).
 
