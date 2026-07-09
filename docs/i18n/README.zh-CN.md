@@ -178,8 +178,9 @@ Python 3.11+ · aiogram 3.x · SQLAlchemy 2.x async · Pydantic Settings · Alem
 - [x] Telegram Rich rendering
 - [x] 上下文窗口和用户偏好
 - [x] Codex bridge 基础
+- [x] Codex thread 恢复和 Telegram topic 绑定
+- [x] Codex topic 与普通 AI Chat / Bot 指令隔离
 - [ ] 热重载模型机制
-- [ ] Codex thread 恢复和 Telegram topic 绑定打磨
 - [ ] 完整 Codex Workbench UX
 - [ ] Claude Code bridge
 - [ ] 在上游 CLI runtime 暴露相关能力时，呈现长任务、resume 状态和子代理活动

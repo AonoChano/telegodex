@@ -178,8 +178,9 @@ Python 3.11+ · aiogram 3.x · SQLAlchemy 2.x async · Pydantic Settings · Alem
 - [x] Rich Telegram rendering
 - [x] Context windowing and user preferences
 - [x] Codex bridge foundation
+- [x] Codex thread resume と Telegram topic binding
+- [x] Codex topic と通常 AI Chat / Bot commands の分離
 - [ ] Hot reload model mechanism
-- [ ] Codex thread resume と Telegram topic binding の polish
 - [ ] 完全な Codex Workbench UX
 - [ ] Claude Code bridge
 - [ ] Upstream CLI runtime が公開する long-running work、resume state、sub-agent status を表示する
