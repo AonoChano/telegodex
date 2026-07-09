@@ -82,20 +82,15 @@ class AIRouter:
     # Instantiation
     # ------------------------------------------------------------------
 
-    def _instantiate_provider(self, config: ProviderConfig) -> None:
-        """Resolve secrets and build a provider instance.
-
-        Skips the provider with a warning if the API key cannot be
-        resolved (env var missing). Does NOT raise — startup continues
-        with the remaining providers.
-        """
+    def _build_provider(self, config: ProviderConfig) -> BaseAIProvider | None:
+        """Resolve secrets and build a provider instance for *config*."""
         provider_class = self.TRANSPORT_REGISTRY.get(config.transport)
         if provider_class is None:
             logger.error(
                 f"✗ Unknown transport '{config.transport}' for provider "
                 f"'{config.name}'; skipping"
             )
-            return
+            return None
 
         api_key = config.resolve_api_key()
         if api_key is None:
@@ -104,7 +99,7 @@ class AIRouter:
                 f"(api_key_env={config.api_key_env!r} not set in environment, "
                 f"and no api_key_literal provided)"
             )
-            return
+            return None
 
         base_url = config.resolve_base_url()
 
@@ -118,8 +113,8 @@ class AIRouter:
                         f"⚠ Skipping provider '{config.name}': transport "
                         f"'openai_compatible' requires base_url or base_url_env"
                     )
-                    return
-                instance = OpenAICompatibleProvider(
+                    return None
+                return OpenAICompatibleProvider(
                     api_key=api_key,
                     base_url=base_url,
                     provider_name=config.name,
@@ -128,23 +123,74 @@ class AIRouter:
                     headers=config.headers,
                     query=config.query,
                 )
-            else:
-                # OpenAIProvider / AnthropicProvider accept the same kwargs
-                # (base_url / default_model / available_models) and use
-                # their own SDK defaults when None.
-                instance = provider_class(
-                    api_key=api_key,
-                    base_url=base_url,
-                    default_model=config.default_model or None,
-                    available_models=config.models or None,
-                    headers=config.headers,
-                    query=config.query,
-                )
 
-            self.providers[config.name] = instance
-            logger.info(f"✓ Initialized provider: {config.name} (transport={config.transport})")
+            # OpenAIProvider / AnthropicProvider accept the same kwargs
+            # (base_url / default_model / available_models) and use
+            # their own SDK defaults when None.
+            return provider_class(
+                api_key=api_key,
+                base_url=base_url,
+                default_model=config.default_model or None,
+                available_models=config.models or None,
+                headers=config.headers,
+                query=config.query,
+            )
         except Exception as e:
             logger.error(f"✗ Failed to initialize provider '{config.name}': {e}")
+            return None
+
+    def _instantiate_provider(self, config: ProviderConfig) -> None:
+        """Resolve secrets and build a provider instance.
+
+        Skips the provider with a warning if the API key cannot be
+        resolved (env var missing). Does NOT raise — startup continues
+        with the remaining providers.
+        """
+        instance = self._build_provider(config)
+        if instance is None:
+            return
+        self.providers[config.name] = instance
+        logger.info(f"✓ Initialized provider: {config.name} (transport={config.transport})")
+
+    def reload(
+        self,
+        provider_configs: list[ProviderConfig],
+        global_config: GlobalConfig,
+    ) -> bool:
+        """Hot-reload provider configuration in place.
+
+        The active router is replaced only when the new config leaves at
+        least one provider available and the configured default provider can
+        be instantiated. Invalid in-progress edits keep the previous router.
+        """
+        new_providers: dict[str, BaseAIProvider] = {}
+        for config in provider_configs:
+            instance = self._build_provider(config)
+            if instance is not None:
+                new_providers[config.name] = instance
+
+        if not new_providers:
+            logger.warning("Provider hot reload skipped: no providers could be instantiated")
+            return False
+
+        if global_config.default_provider not in new_providers:
+            logger.warning(
+                f"Provider hot reload skipped: default provider '{global_config.default_provider}' is not available"
+            )
+            return False
+
+        old_names = set(self.providers)
+        self.global_config = global_config
+        self._default_provider_name = global_config.default_provider
+        self.providers = new_providers
+        provider_names = ", ".join(self.providers)
+        added = ", ".join(sorted(set(new_providers) - old_names)) or "none"
+        removed = ", ".join(sorted(old_names - set(new_providers))) or "none"
+        logger.info(
+            f"Provider hot reload applied: providers={provider_names}, "
+            f"default={self._default_provider_name}, added={added}, removed={removed}"
+        )
+        return True
 
     # ------------------------------------------------------------------
     # Lookup helpers (unchanged API — handlers stay provider-agnostic)

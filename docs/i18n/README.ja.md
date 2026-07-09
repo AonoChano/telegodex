@@ -113,7 +113,7 @@ default_model = "llama3.2"
 models = ["llama3.2"]
 ```
 
-このブロックを `provider.toml` に追加し、`python run.py --check-config` を実行してから再起動すると、Provider が使えるようになります。
+このブロックを `provider.toml` に追加し、`python run.py --check-config` を実行します。実行中の Bot は `provider.toml` の Provider とモデル一覧の変更を hot reload します。プロセス環境変数を変える場合だけ再起動してください。
 
 参照：[docs/CUSTOM_PROVIDERS.md](../CUSTOM_PROVIDERS.md)
 
@@ -180,7 +180,7 @@ Python 3.11+ · aiogram 3.x · SQLAlchemy 2.x async · Pydantic Settings · Alem
 - [x] Codex bridge foundation
 - [x] Codex thread resume と Telegram topic binding
 - [x] Codex topic と通常 AI Chat / Bot commands の分離
-- [ ] Hot reload model mechanism
+- [x] Hot reload model mechanism
 - [ ] 完全な Codex Workbench UX
 - [ ] Claude Code bridge
 - [ ] Upstream CLI runtime が公開する long-running work、resume state、sub-agent status を表示する

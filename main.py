@@ -1103,6 +1103,7 @@ async def main():
     set_db_session_factory(db.get_session)
 
     # 初始化 AI Router（从 provider.toml 加载所有 provider 配置）
+    from config.provider_hot_reload import ProviderTomlReloader
     from config.provider_loader import load_provider_toml
 
     try:
@@ -1125,6 +1126,7 @@ async def main():
         return
 
     logger.info(f"Available AI providers: {', '.join(ai_router.list_available_providers())}")
+    provider_reloader = ProviderTomlReloader("provider.toml", ai_router)
 
     # 初始化 Orchestrator
     from core.orchestrator import Orchestrator
@@ -1196,6 +1198,8 @@ async def main():
         factor=1.618,
         jitter=0.1,
     )
+    await provider_reloader.start()
+
     # 启动 Codex app-server daemon
     if settings.codex_daemon_auto_start:
         from extensions.codex.daemon import get_codex_daemon
@@ -1213,6 +1217,13 @@ async def main():
         # 关闭顺序：Codex daemon 先停掉（app-server 子进程），
         # 然后 HTTP 共享 session，再 aiogram session，最后 db。
         from extensions.codex.daemon import get_codex_daemon
+
+        try:
+            await provider_reloader.stop()
+        except Exception as e:
+            logger.warning(
+                f"Provider hot reload watcher shutdown failed: {type(e).__name__}: {e!r}"
+            )
 
         try:
             codex = get_codex_daemon()

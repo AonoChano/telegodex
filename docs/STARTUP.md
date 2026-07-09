@@ -37,7 +37,7 @@ See `docs/CUSTOM_PROVIDERS.md` for the full configuration guide.
 - `[global].available_providers` is non-empty (an empty list activates nothing — every provider must be explicitly listed).
 - `[global].default_provider` is in `available_providers`.
 
-It does NOT validate API keys — those are resolved lazily at request time, so a missing `*_API_KEY` env var will skip the provider with a warning at startup but will not fail `--check-config`.
+It does NOT validate API keys — those are resolved lazily at request time, so a missing `*_API_KEY` env var will skip the provider with a warning at startup but will not fail `--check-config`. After startup, Telegodex watches `provider.toml` and hot-reloads provider/model changes without restarting the bot. Invalid in-progress edits are ignored and the previous provider router remains active.
 
 On success, the check prints the list of parsed provider blocks (e.g. `openai, anthropic, gemini, ...`).
 

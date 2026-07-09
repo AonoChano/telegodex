@@ -113,7 +113,7 @@ default_model = "llama3.2"
 models = ["llama3.2"]
 ```
 
-把这段加入 `provider.toml`，运行 `python run.py --check-config`，重启后就可以使用该 Provider。
+把这段加入 `provider.toml`，运行 `python run.py --check-config`。运行中的 Bot 会从 `provider.toml` 热重载 Provider 和模型列表；只有进程级环境变量需要变更时才需要重启。
 
 参考：[docs/CUSTOM_PROVIDERS.md](../CUSTOM_PROVIDERS.md)
 
@@ -180,7 +180,7 @@ Python 3.11+ · aiogram 3.x · SQLAlchemy 2.x async · Pydantic Settings · Alem
 - [x] Codex bridge 基础
 - [x] Codex thread 恢复和 Telegram topic 绑定
 - [x] Codex topic 与普通 AI Chat / Bot 指令隔离
-- [ ] 热重载模型机制
+- [x] 热重载模型机制
 - [ ] 完整 Codex Workbench UX
 - [ ] Claude Code bridge
 - [ ] 在上游 CLI runtime 暴露相关能力时，呈现长任务、resume 状态和子代理活动

@@ -113,7 +113,7 @@ default_model = "llama3.2"
 models = ["llama3.2"]
 ```
 
-Add the block to `provider.toml`, run `python run.py --check-config`, restart, and the provider becomes available.
+Add the block to `provider.toml` and run `python run.py --check-config`. A running bot hot-reloads provider and model list changes from `provider.toml`; restart only when process-level environment values need to change.
 
 Reference: [docs/CUSTOM_PROVIDERS.md](docs/CUSTOM_PROVIDERS.md)
 
@@ -180,7 +180,7 @@ Python 3.11+ · aiogram 3.x · SQLAlchemy 2.x async · Pydantic Settings · Alem
 - [x] Codex bridge foundation
 - [x] Codex thread resume and Telegram topic binding
 - [x] Codex topic isolation for AI chat and Bot commands
-- [ ] Hot reload model mechanism
+- [x] Hot reload model mechanism
 - [ ] Full Codex workbench UX
 - [ ] Claude Code bridge
 - [ ] Surface upstream CLI runtime activity such as long-running work, resume state, and sub-agent status when the runtime exposes it
