@@ -9,7 +9,7 @@ related: [CUSTOM_PROVIDERS.md, USAGE.md]
 
 # Model Catalog
 
-Provider model names live in `provider.toml` (the `default_model` and `models` fields on each `[providers.<id>]` block). The Telegram settings UI reads the model list from each instantiated provider's `get_available_models()` method, which is populated from the TOML config.
+Provider model names live in `provider.toml` (the `default_model` and `models` fields on each `[providers.<id>]` block). The Telegram settings UI reads the model list from each instantiated provider's `get_available_models()` method, which is populated from the TOML config. Running bots hot-reload provider/model changes from `provider.toml` automatically.
 
 ## Where To Look
 
