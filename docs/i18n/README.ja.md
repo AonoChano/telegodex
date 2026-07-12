@@ -178,8 +178,9 @@ Python 3.11+ · aiogram 3.x · SQLAlchemy 2.x async · Pydantic Settings · Alem
 - [x] Rich Telegram rendering
 - [x] Context windowing and user preferences
 - [x] Codex bridge foundation
+- [x] Codex thread resume と Telegram topic binding
+- [x] Codex topic と通常 AI Chat / Bot commands の分離
 - [x] Hot reload model mechanism
-- [ ] Codex thread resume と Telegram topic binding の polish
 - [ ] 完全な Codex Workbench UX
 - [ ] Claude Code bridge
 - [ ] Upstream CLI runtime が公開する long-running work、resume state、sub-agent status を表示する
@@ -196,7 +197,7 @@ Python 3.11+ · aiogram 3.x · SQLAlchemy 2.x async · Pydantic Settings · Alem
 ---
 ## Star History
 
-[![Star History Chart](https://star-history.com)](https://star-history.com)
+[![Star History Chart](https://www.star-history.com/?repos=AonoChano%2Ftelegodex&type=date&legend=top-left)](https://star-history.com)
 
 ---
 
