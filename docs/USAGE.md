@@ -29,7 +29,7 @@ Telegodex runs as a Telegram Workbench for local CLI AI workflows. Its primary r
 | `/stop` | Interrupt the active Codex turn or shell process |
 | `/live` | Toggle live session status |
 | `/last` | Resend the last assistant reply |
-| `/screenshot` | Capture the current desktop |
+| `/screenshot` | Capture a desktop display; choose one when several are connected |
 
 Telegodex syncs this command menu with Telegram on startup through `setMyCommands`. BotFather is still where the bot token and platform-level bot settings live, but users should not need to maintain the slash-command menu manually.
 
@@ -146,4 +146,4 @@ Keep `.env`, local `provider.toml`, database files, and logs out of commits. `.e
 
 If a provider call fails, confirm the API key, base URL, model name, and network path. For custom providers, test the endpoint with a minimal OpenAI-compatible chat-completions request.
 
-If `/screenshot` fails with an empty-image warning even though Pillow is installed, focus or unminimize the terminal/window and retry. Telegodex falls back from terminal-window capture to full-screen capture, but Windows can still return an empty image for minimized, protected, or unavailable capture surfaces.
+If `/screenshot` cannot capture a display, make sure the Windows desktop session is unlocked and Pillow or pyautogui is installed. When a selected display was disconnected or rearranged, run `/screenshot` again to refresh the display list.

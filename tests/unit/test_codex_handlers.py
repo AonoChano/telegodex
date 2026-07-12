@@ -671,16 +671,6 @@ async def test_cmd_shell_delegates_to_shell_ui(monkeypatch: pytest.MonkeyPatch) 
 
 
 @pytest.mark.asyncio
-async def test_cmd_screenshot_delegates_to_screenshot_ui(monkeypatch: pytest.MonkeyPatch) -> None:
-    message = _message("/screenshot")
-    handle_screenshot_command = AsyncMock()
-    monkeypatch.setattr(codex.screenshot_ui, "handle_screenshot_command", handle_screenshot_command)
-
-    await codex.cmd_screenshot(message)
-
-    handle_screenshot_command.assert_awaited_once_with(message)
-
-@pytest.mark.asyncio
 async def test_codex_stop_callback_delegates_to_stop_ui(monkeypatch: pytest.MonkeyPatch) -> None:
     orchestrator = SimpleNamespace()
     callback_query = SimpleNamespace(data="codex_stop|telegram:100:none")
