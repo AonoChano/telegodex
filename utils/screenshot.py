@@ -1,17 +1,51 @@
-"""Screenshot utilities for capturing the terminal window."""
+"""Desktop screenshot capture and terminal rendering utilities."""
 
 from __future__ import annotations
 
 import asyncio
 import re
 import sys
+from dataclasses import dataclass
 from io import BytesIO
 from typing import Any
 
-from aiogram.types import BufferedInputFile, Message
 from loguru import logger
 
-from bot.utils.routing import TelegramRoute
+_DPI_AWARENESS_ATTEMPTED = False
+
+
+def _enable_windows_dpi_awareness() -> None:
+    """Use physical pixel coordinates for mixed-DPI monitor layouts."""
+    global _DPI_AWARENESS_ATTEMPTED
+    if sys.platform != "win32" or _DPI_AWARENESS_ATTEMPTED:
+        return
+    _DPI_AWARENESS_ATTEMPTED = True
+
+    try:
+        import ctypes
+
+        if ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4)):
+            return
+    except Exception as exc:
+        logger.debug(f"Per-monitor DPI awareness v2 is unavailable: {exc}")
+
+    try:
+        import ctypes
+
+        if ctypes.windll.shcore.SetProcessDpiAwareness(2) == 0:
+            return
+    except Exception as exc:
+        logger.debug(f"Per-monitor DPI awareness is unavailable: {exc}")
+
+    try:
+        import ctypes
+
+        ctypes.windll.user32.SetProcessDPIAware()
+    except Exception as exc:
+        logger.debug(f"System DPI awareness is unavailable: {exc}")
+
+
+_enable_windows_dpi_awareness()
 
 # Optional dependencies — handled via ImportError
 try:
@@ -32,20 +66,6 @@ except ImportError:
     _HAS_PYAUTOGUI = False
 
 try:
-    import pygetwindow
-
-    _HAS_PYGETWINDOW = True
-except ImportError:
-    _HAS_PYGETWINDOW = False
-
-try:
-    import win32gui
-
-    _HAS_WIN32GUI = True
-except ImportError:
-    _HAS_WIN32GUI = False
-
-try:
     import pyte
     from pyte.screens import Char
 
@@ -56,77 +76,111 @@ except ImportError:
     _HAS_PYTE = False
 
 
-def _get_terminal_window_rect() -> tuple[int, int, int, int] | None:
-    """Attempt to locate the terminal window and return its bounding box.
+@dataclass(frozen=True)
+class DisplayMonitor:
+    """A physical display and its virtual-desktop bounds."""
 
-    Returns ``(left, top, right, bottom)`` or ``None`` if detection fails.
-    """
+    identifier: str
+    name: str
+    left: int
+    top: int
+    right: int
+    bottom: int
+    is_primary: bool = False
+
+    @property
+    def width(self) -> int:
+        return self.right - self.left
+
+    @property
+    def height(self) -> int:
+        return self.bottom - self.top
+
+    @property
+    def bbox(self) -> tuple[int, int, int, int]:
+        return (self.left, self.top, self.right, self.bottom)
+
+
+def list_display_monitors() -> list[DisplayMonitor]:
+    """Return connected Windows displays in stable desktop order."""
     if sys.platform != "win32":
-        return None
+        return []
+    _enable_windows_dpi_awareness()
 
-    # Primary: use the current console window via ctypes.
     try:
         import ctypes
+        from ctypes import wintypes
 
-        hwnd = ctypes.windll.kernel32.GetConsoleWindow()
-        if hwnd:
-            if _HAS_WIN32GUI:
-                left, top, right, bottom = win32gui.GetWindowRect(hwnd)
-                return (left, top, right, bottom)
-            # Fallback via ctypes if win32gui is missing.
-            rect = ctypes.wintypes.RECT()
-            ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect))
-            return (rect.left, rect.top, rect.right, rect.bottom)
+        class MonitorInfoEx(ctypes.Structure):
+            _fields_ = [
+                ("cbSize", wintypes.DWORD),
+                ("rcMonitor", wintypes.RECT),
+                ("rcWork", wintypes.RECT),
+                ("dwFlags", wintypes.DWORD),
+                ("szDevice", wintypes.WCHAR * 32),
+            ]
+
+        class DisplayDevice(ctypes.Structure):
+            _fields_ = [
+                ("cb", wintypes.DWORD),
+                ("DeviceName", wintypes.WCHAR * 32),
+                ("DeviceString", wintypes.WCHAR * 128),
+                ("StateFlags", wintypes.DWORD),
+                ("DeviceID", wintypes.WCHAR * 128),
+                ("DeviceKey", wintypes.WCHAR * 128),
+            ]
+
+        monitors: list[DisplayMonitor] = []
+        callback_type = ctypes.WINFUNCTYPE(
+            wintypes.BOOL,
+            wintypes.HANDLE,
+            wintypes.HDC,
+            ctypes.POINTER(wintypes.RECT),
+            wintypes.LPARAM,
+        )
+
+        @callback_type
+        def collect_monitor(handle: Any, _dc: Any, _rect: Any, _data: Any) -> bool:
+            info = MonitorInfoEx()
+            info.cbSize = ctypes.sizeof(info)
+            if not ctypes.windll.user32.GetMonitorInfoW(handle, ctypes.byref(info)):
+                return True
+
+            raw_name = str(info.szDevice) or f"DISPLAY{len(monitors) + 1}"
+            short_name = raw_name.removeprefix(chr(92) * 2 + "." + chr(92))
+            identifier = re.sub(r"[^A-Za-z0-9_-]", "_", short_name)[:32]
+            device = DisplayDevice()
+            device.cb = ctypes.sizeof(device)
+            friendly_name = ""
+            if ctypes.windll.user32.EnumDisplayDevicesW(raw_name, 0, ctypes.byref(device), 0):
+                friendly_name = str(device.DeviceString).strip()
+            name = f"{friendly_name} ({short_name})" if friendly_name else short_name
+            rect = info.rcMonitor
+            monitors.append(
+                DisplayMonitor(
+                    identifier=identifier,
+                    name=name,
+                    left=rect.left,
+                    top=rect.top,
+                    right=rect.right,
+                    bottom=rect.bottom,
+                    is_primary=bool(info.dwFlags & 1),
+                )
+            )
+            return True
+
+        if not ctypes.windll.user32.EnumDisplayMonitors(None, None, collect_monitor, 0):
+            return []
+        return sorted(monitors, key=lambda monitor: (not monitor.is_primary, monitor.top, monitor.left))
     except Exception as exc:
-        logger.debug(f"Failed to get console window rect: {exc}")
-
-    # Secondary: try pygetwindow with common terminal titles.
-    if _HAS_PYGETWINDOW:
-        for keyword in ("PowerShell", "Windows Terminal", "cmd", "Command Prompt"):
-            try:
-                windows = pygetwindow.getWindowsWithTitle(keyword)
-                if windows:
-                    win = windows[0]
-                    return (win.left, win.top, win.right, win.bottom)
-            except Exception as exc:
-                logger.debug(f"pygetwindow search failed for '{keyword}': {exc}")
-
-    # Tertiary: enumerate visible windows with win32gui.
-    if _HAS_WIN32GUI:
-        try:
-            results: list[tuple[int, int, int, int]] = []
-
-            def _enum_handler(hwnd: Any, _: Any) -> None:
-                if not win32gui.IsWindowVisible(hwnd):
-                    return
-                title = win32gui.GetWindowText(hwnd)
-                if any(k in title for k in ("PowerShell", "Windows Terminal", "cmd")):
-                    results.append(win32gui.GetWindowRect(hwnd))
-
-            win32gui.EnumWindows(_enum_handler, None)
-            if results:
-                return results[0]
-        except Exception as exc:
-            logger.debug(f"win32gui enumeration failed: {exc}")
-
-    return None
+        logger.warning(f"Failed to enumerate desktop monitors: {exc}")
+        return []
 
 
-async def capture_terminal_screenshot() -> bytes | None:
-    """Capture the current terminal window as a PNG image.
-
-    Returns PNG bytes or ``None`` if capture fails.
-    """
+async def capture_desktop_screenshot(monitor: DisplayMonitor | None = None) -> bytes | None:
+    """Capture one desktop monitor as PNG, or the default display if omitted."""
+    _enable_windows_dpi_awareness()
     loop = asyncio.get_running_loop()
-
-    def _valid_bbox(bbox: tuple[int, int, int, int] | None) -> tuple[int, int, int, int] | None:
-        if bbox is None:
-            return None
-        left, top, right, bottom = bbox
-        if right <= left or bottom <= top:
-            logger.warning(f"Ignoring invalid screenshot bbox: {bbox}")
-            return None
-        return bbox
 
     def _save_png(img: Any) -> bytes | None:
         width, height = getattr(img, "size", (0, 0))
@@ -144,39 +198,46 @@ async def capture_terminal_screenshot() -> bytes | None:
             logger.warning("No screenshot library available. Install Pillow or pyautogui.")
             return None
 
-        bbox = _valid_bbox(_get_terminal_window_rect())
-        attempts: list[tuple[str, tuple[int, int, int, int] | None]] = []
-        if bbox is not None:
-            attempts.append(("terminal-window", bbox))
-        attempts.append(("full-screen", None))
+        bbox = monitor.bbox if monitor is not None else None
+        if bbox is not None and (monitor.width <= 0 or monitor.height <= 0):
+            logger.warning(f"Ignoring invalid monitor bounds: {bbox}")
+            return None
 
         if _HAS_PIL:
-            for label, grab_bbox in attempts:
-                try:
-                    img = ImageGrab.grab(bbox=grab_bbox) if grab_bbox else ImageGrab.grab()
-                    data = _save_png(img)
-                    if data:
-                        return data
-                except Exception as exc:
-                    logger.warning(f"Pillow screenshot capture failed ({label}): {exc}")
+            try:
+                if bbox is None:
+                    img = ImageGrab.grab()
+                elif sys.platform == "win32":
+                    img = ImageGrab.grab(bbox=bbox, all_screens=True)
+                else:
+                    img = ImageGrab.grab(bbox=bbox)
+                data = _save_png(img)
+                if data:
+                    return data
+            except Exception as exc:
+                logger.warning(f"Pillow desktop capture failed: {exc}")
 
         if _HAS_PYAUTOGUI:
-            for label, grab_bbox in attempts:
-                try:
-                    if grab_bbox:
-                        left, top, right, bottom = grab_bbox
-                        img = pyautogui.screenshot(region=(left, top, right - left, bottom - top))
-                    else:
-                        img = pyautogui.screenshot()
-                    data = _save_png(img)
-                    if data:
-                        return data
-                except Exception as exc:
-                    logger.warning(f"pyautogui screenshot capture failed ({label}): {exc}")
+            try:
+                if bbox:
+                    left, top, right, bottom = bbox
+                    img = pyautogui.screenshot(region=(left, top, right - left, bottom - top))
+                else:
+                    img = pyautogui.screenshot()
+                data = _save_png(img)
+                if data:
+                    return data
+            except Exception as exc:
+                logger.warning(f"pyautogui desktop capture failed: {exc}")
 
         return None
 
     return await loop.run_in_executor(None, _capture)
+
+
+async def capture_terminal_screenshot() -> bytes | None:
+    """Capture the default display for compatibility with older callers."""
+    return await capture_desktop_screenshot()
 
 
 # ---------------------------------------------------------------------------
@@ -385,32 +446,3 @@ def ansi_to_html(ansi_text: str) -> str:
     return (
         f'<pre style="background:#000;color:#ccc;padding:8px;font-family:monospace;white-space:pre-wrap;">{text}</pre>'
     )
-
-
-async def send_screenshot_to_chat(
-    message: Message,
-    route: TelegramRoute,
-) -> None:
-    """Capture a screenshot and send it to the chat."""
-    png_bytes = await capture_terminal_screenshot()
-    if png_bytes is None:
-        await message.answer(
-            "Failed to capture screenshot. Pillow/pyautogui may be missing, "
-            "or the current desktop/window returned an empty image. "
-            "Try focusing or unminimizing the terminal and retry.",
-            **route.send_kwargs(),
-        )
-        return
-
-    try:
-        await message.answer_photo(
-            photo=BufferedInputFile(png_bytes, filename="screenshot.png"),
-            caption="Terminal screenshot",
-            **route.send_kwargs(),
-        )
-    except Exception as exc:
-        logger.warning(f"Failed to send screenshot: {exc}")
-        await message.answer(
-            f"Failed to send screenshot: {exc}",
-            **route.send_kwargs(),
-        )

@@ -85,6 +85,18 @@
       "codex_command_unhandled": "Codex commands open or control dedicated Codex topics. Use <code>/codex new</code> or <code>/codex resume &lt;thread-id&gt;</code> to open one.",
       "codex_topic_command_unsupported": "This is a Codex topic. Use plain messages to continue the Codex thread, or use <code>/codex status</code> for Codex-specific controls. Open general Bot settings and AI chat commands from All or a non-Codex topic."
     },
+    "screenshot": {
+      "select_monitor": "Choose a display to capture:",
+      "monitor_button": "{name} · {width}x{height}",
+      "monitor_button_primary": "{name} · {width}x{height} · Primary",
+      "capturing": "Capturing display...",
+      "capture_failed": "Could not capture this display. Make sure the desktop session is unlocked and Pillow or pyautogui is available.",
+      "send_failed": "Failed to send screenshot: {error}",
+      "caption": "Desktop screenshot · {monitor}",
+      "default_monitor": "default display",
+      "monitor_unavailable": "That display is no longer available. Run /screenshot again.",
+      "picker_owner_mismatch": "This display picker belongs to another user."
+    },
     "common": {
       "back": "« Back",
       "close": "« Close",

@@ -85,6 +85,18 @@
       "codex_command_unhandled": "Codex 指令用于打开或控制专属 Codex Topic。请使用 <code>/codex new</code> 或 <code>/codex resume &lt;thread-id&gt;</code> 打开一个 Codex Topic。",
       "codex_topic_command_unsupported": "这里是 Codex Topic。请直接发送普通消息继续当前 Codex thread，或使用 <code>/codex status</code> 等 Codex 专属控制。通用 Bot 设置和普通 AI Chat 指令请在 All 或非 Codex Topic 中使用。"
     },
+    "screenshot": {
+      "select_monitor": "请选择要截图的显示器：",
+      "monitor_button": "{name} · {width}x{height}",
+      "monitor_button_primary": "{name} · {width}x{height} · 主屏幕",
+      "capturing": "正在截取显示器...",
+      "capture_failed": "无法截取该显示器。请确认桌面会话未锁定，并已安装 Pillow 或 pyautogui。",
+      "send_failed": "截图发送失败：{error}",
+      "caption": "桌面截图 · {monitor}",
+      "default_monitor": "默认显示器",
+      "monitor_unavailable": "该显示器已不可用，请重新发送 /screenshot。",
+      "picker_owner_mismatch": "这个显示器选择器属于其他用户。"
+    },
     "common": {
       "back": "« 返回",
       "close": "« 关闭",
