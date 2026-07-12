@@ -104,15 +104,6 @@ This is the fastest path from "I want this done" to "it is running".
 
 ---
 
-## Screenshots
-
-`/screenshot` captures the current terminal window where Codex is running
-and sends it as a photo. Use it when you want to verify what Codex is
-looking at right now — file listings, editor state, build output — without
-leaving Telegram.
-
----
-
 ## Configuration
 
 Codex Bridge auto-detects the `codex` binary from `PATH` and common install

@@ -24,7 +24,7 @@ bottom of the chat. This chapter lists every entry point.
 | `/history` | View conversation history |
 | `/codex` | Drive Codex CLI as a subprocess (see 🛠️ Codex Bridge) |
 | `/shell` | Propose or run a shell command through Codex |
-| `/screenshot` | Capture the current terminal window |
+| `/screenshot` | Capture a desktop display; choose one when several are connected |
 
 Commands are case-insensitive and can be typed anywhere in the chat.
 

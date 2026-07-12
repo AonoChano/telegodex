@@ -3,11 +3,13 @@ from .codex import router as codex_router
 from .help import router as help_router
 from .history import router as history_router
 from .messages import router as messages_router
+from .screenshot import router as screenshot_router
 from .send import router as send_router
 from .toolbar import router as toolbar_router
 
 __all__ = [
     "messages_router",
+    "screenshot_router",
     "callbacks_router",
     "codex_router",
     "help_router",

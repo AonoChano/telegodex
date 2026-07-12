@@ -17,41 +17,95 @@ class _FakeImage:
         img.save(buffer, format=format)
 
 
-@pytest.mark.asyncio
-async def test_capture_screenshot_ignores_invalid_bbox_and_falls_back(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls = []
+def test_optional_pyautogui_symbol_is_always_defined() -> None:
+    assert hasattr(screenshot, "pyautogui")
 
-    def grab(*, bbox=None):
-        calls.append(bbox)
+
+@pytest.mark.asyncio
+async def test_capture_selected_monitor_uses_virtual_desktop_bounds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[tuple[int, int, int, int] | None, bool]] = []
+
+    def grab(*, bbox=None, all_screens=False):
+        calls.append((bbox, all_screens))
         return _FakeImage()
 
     monkeypatch.setattr(screenshot, "_HAS_PIL", True)
     monkeypatch.setattr(screenshot, "_HAS_PYAUTOGUI", False)
-    monkeypatch.setattr(screenshot, "_get_terminal_window_rect", lambda: (10, 10, 10, 20))
+    monkeypatch.setattr(screenshot, "_enable_windows_dpi_awareness", lambda: None)
+    monkeypatch.setattr(screenshot.sys, "platform", "win32")
     monkeypatch.setattr(screenshot.ImageGrab, "grab", grab)
+    monitor = screenshot.DisplayMonitor(
+        identifier="DISPLAY2",
+        name="DISPLAY2",
+        left=-1920,
+        top=0,
+        right=0,
+        bottom=1080,
+    )
 
-    data = await screenshot.capture_terminal_screenshot()
+    data = await screenshot.capture_desktop_screenshot(monitor)
 
     assert data is not None
-    assert calls == [None]
+    assert calls == [((-1920, 0, 0, 1080), True)]
 
 
 @pytest.mark.asyncio
-async def test_capture_screenshot_retries_fullscreen_after_empty_window_image(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls = []
+async def test_capture_selected_monitor_falls_back_to_pyautogui_region(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pil_calls = []
+    pyautogui_calls = []
 
-    def grab(*, bbox=None):
-        calls.append(bbox)
-        if bbox is not None:
-            return _FakeImage(size=(0, 0))
-        return _FakeImage(size=(2, 2))
+    def grab(*, bbox=None, all_screens=False):
+        pil_calls.append((bbox, all_screens))
+        return _FakeImage(size=(0, 0))
+
+    class FakePyAutoGui:
+        @staticmethod
+        def screenshot(*, region=None):
+            pyautogui_calls.append(region)
+            return _FakeImage()
+
+    monkeypatch.setattr(screenshot, "_HAS_PIL", True)
+    monkeypatch.setattr(screenshot, "_HAS_PYAUTOGUI", True)
+    monkeypatch.setattr(screenshot, "_enable_windows_dpi_awareness", lambda: None)
+    monkeypatch.setattr(screenshot.sys, "platform", "win32")
+    monkeypatch.setattr(screenshot.ImageGrab, "grab", grab)
+    monkeypatch.setattr(screenshot, "pyautogui", FakePyAutoGui())
+    monitor = screenshot.DisplayMonitor(
+        identifier="DISPLAY1",
+        name="DISPLAY1",
+        left=10,
+        top=20,
+        right=810,
+        bottom=620,
+    )
+
+    data = await screenshot.capture_desktop_screenshot(monitor)
+
+    assert data is not None
+    assert pil_calls == [((10, 20, 810, 620), True)]
+    assert pyautogui_calls == [(10, 20, 800, 600)]
+
+
+@pytest.mark.asyncio
+async def test_capture_rejects_invalid_monitor_bounds(monkeypatch: pytest.MonkeyPatch) -> None:
+    def grab(**_kwargs):
+        raise AssertionError("capture should not be attempted")
 
     monkeypatch.setattr(screenshot, "_HAS_PIL", True)
     monkeypatch.setattr(screenshot, "_HAS_PYAUTOGUI", False)
-    monkeypatch.setattr(screenshot, "_get_terminal_window_rect", lambda: (1, 2, 20, 30))
+    monkeypatch.setattr(screenshot, "_enable_windows_dpi_awareness", lambda: None)
     monkeypatch.setattr(screenshot.ImageGrab, "grab", grab)
+    monitor = screenshot.DisplayMonitor(
+        identifier="DISPLAY1",
+        name="DISPLAY1",
+        left=10,
+        top=10,
+        right=10,
+        bottom=100,
+    )
 
-    data = await screenshot.capture_terminal_screenshot()
-
-    assert data is not None
-    assert calls == [(1, 2, 20, 30), None]
+    assert await screenshot.capture_desktop_screenshot(monitor) is None

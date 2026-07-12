@@ -12,15 +12,14 @@ from __future__ import annotations
 from typing import Any
 
 from aiogram import F, Router
+from aiogram.dispatcher.event.bases import SkipHandler
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
-from aiogram.dispatcher.event.bases import SkipHandler
 
 from bot.codex import (
     command_flow,
     model_ui,
     reply_ui,
-    screenshot_ui,
     session_ui,
     shell_ui,
     stop_ui,
@@ -48,8 +47,8 @@ from config import settings
 from core.orchestrator import Orchestrator
 from core.session import SessionKey
 from extensions.codex.daemon import codex_daemon
-from storage.context_manager import ContextManager
 from i18n import resolve_locale, tr
+from storage.context_manager import ContextManager
 
 router = Router(name="codex")
 
@@ -375,12 +374,3 @@ async def handle_shell_approve_callback(
     orchestrator: Orchestrator,
 ) -> None:
     await shell_ui.handle_shell_approve_callback(callback_query, orchestrator, execute_shell=_execute_shell_telegram)
-
-# ---------------------------------------------------------------------------
-# /screenshot command handler
-# ---------------------------------------------------------------------------
-
-
-@router.message(Command("screenshot"))
-async def cmd_screenshot(message: Message) -> None:
-    await screenshot_ui.handle_screenshot_command(message)

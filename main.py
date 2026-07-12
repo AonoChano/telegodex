@@ -26,6 +26,7 @@ from bot.handlers import (
     help_router,
     history_router,
     messages_router,
+    screenshot_router,
     send_router,
     toolbar_router,
 )
@@ -1077,8 +1078,9 @@ async def main():
     await db.init_db()
 
     # Initialize i18n
-    from i18n import get_i18n_manager
     from pathlib import Path
+
+    from i18n import get_i18n_manager
 
     locales_dir = Path(__file__).parent / "i18n" / "locales"
     try:
@@ -1165,6 +1167,7 @@ async def main():
     # 注册路由
     dp.include_router(toolbar_router)
     dp.include_router(codex_router)
+    dp.include_router(screenshot_router)
     dp.include_router(history_router)
     dp.include_router(send_router)
     dp.include_router(help_router)

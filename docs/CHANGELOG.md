@@ -1,7 +1,7 @@
 ---
 title: Changelog
 category: changelog
-last_updated: 2026-07-03
+last_updated: 2026-07-12
 relevance: medium
 summary: Human-maintained release notes for Telegodex
 related: [PRODUCT_EXPERIENCE.md, RICH_MESSAGES.md, STARTUP.md]
@@ -11,6 +11,7 @@ related: [PRODUCT_EXPERIENCE.md, RICH_MESSAGES.md, STARTUP.md]
 
 ## Unreleased
 
+- Moved `/screenshot` to the Bot-native supervision surface and added a Windows multi-display picker with one full-width name-and-resolution button per monitor.
 - Replaced the single-text `/help` reply with a paginated ebook system: `/help` now opens a table-of-contents inline keyboard (max 6 chapters per page), chapter content is rendered as Rich Message Markdown sourced from per-language `.md` files under `i18n/help/<locale>/`, with YAML frontmatter, page breaks, JSONL error logging to `i18n/help/log/`, and English as the base fallback language.
 - Improved Telegram inline keyboard layout so settings and action menus use compact rows with full-width footer buttons.
 - Added i18n system.

@@ -35,7 +35,7 @@ TELEGRAM_BOT_COMMANDS: tuple[BotCommand, ...] = (
     BotCommand(command="stop", description="Interrupt the active Codex or shell task"),
     BotCommand(command="live", description="Toggle live session status"),
     BotCommand(command="last", description="Resend the last assistant reply"),
-    BotCommand(command="screenshot", description="Capture the current desktop"),
+    BotCommand(command="screenshot", description="Capture a desktop display"),
 )
 
 
