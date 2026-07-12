@@ -17,6 +17,10 @@ class _FakeImage:
         img.save(buffer, format=format)
 
 
+def test_optional_pyautogui_symbol_is_always_defined() -> None:
+    assert hasattr(screenshot, "pyautogui")
+
+
 @pytest.mark.asyncio
 async def test_capture_selected_monitor_uses_virtual_desktop_bounds(
     monkeypatch: pytest.MonkeyPatch,

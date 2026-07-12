@@ -63,6 +63,7 @@ try:
 
     _HAS_PYAUTOGUI = True
 except ImportError:
+    pyautogui = None  # type: ignore[assignment]
     _HAS_PYAUTOGUI = False
 
 try:
