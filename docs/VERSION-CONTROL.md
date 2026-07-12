@@ -74,6 +74,17 @@ The startup banner reads the version from `pyproject.toml`. If the project versi
 
 Keep version changes tied to coherent, verified work. Do not bump the version for unfinished experiments.
 
+## Repository Integration Workflow
+
+External contributions use Pull Requests. Repository maintainers may integrate owner-authorized work directly into `master`:
+
+1. Synchronize the local `master` branch with `origin/master`.
+2. Run the checks relevant to the changed files.
+3. Create a conventional commit and push it to `origin/master`.
+4. Monitor the resulting GitHub Actions run and repair failures promptly with a follow-up commit.
+
+CI runs on Pull Requests and direct pushes to `master`. Required checks protect external Pull Requests before merge; maintainer direct pushes are checked after integration. A maintainer may still choose a branch and Pull Request for risky work or when pre-merge review is useful.
+
 ---
 
-Last updated: 2026-06-19
+Last updated: 2026-07-12

@@ -2,7 +2,13 @@
 
 Telegodex is a Telegram Workbench project for developer-operated AI workflows. Contributions should preserve that direction: Telegram-native rich output, provider-neutral AI chat, and safe local agent control.
 
-## Before Opening a PR
+## Repository Workflow
+
+External contributions are submitted through Pull Requests. Repository maintainers may commit and push directly to `master` after running the relevant local checks. CI runs for both Pull Requests and pushes to `master`; a failed post-push maintainer build should be repaired promptly with a follow-up commit.
+
+Maintainers may still use a branch and Pull Request when a change is high risk or would benefit from review before integration.
+
+## Before Integrating Changes
 
 Run:
 
