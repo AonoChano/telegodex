@@ -32,7 +32,31 @@ async def bind_codex_thread_to_topic(
             Conversation.codex_thread_id == thread_id,
         )
     )
-    conv = result.scalars().first()
+    conversations = list(result.scalars().all())
+    conv = next(
+        (
+            candidate
+            for candidate in conversations
+            if candidate.transport == "telegram"
+            and candidate.topic_id == topic_id
+        ),
+        None,
+    )
+    if conv is None:
+        conv = next(
+            (
+                candidate
+                for candidate in conversations
+                if candidate.topic_id is None
+                and candidate.thread_id is None
+            ),
+            None,
+        )
+
+    for previous in conversations:
+        if previous is not conv:
+            previous.is_active = False
+
     if conv is None:
         logger.warning(
             "Codex topic bind: missing conversation for chat_id={} thread_id={}; creating binding row",

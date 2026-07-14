@@ -85,3 +85,62 @@ async def test_codex_topic_state_distinguishes_recoverable_inactive_topic() -> N
 
     await engine.dispose()
 
+
+async def test_rebinding_thread_preserves_old_topic_as_recoverable() -> None:
+    engine, session_factory = await _session_factory()
+    async with session_factory() as session:
+        old_binding = Conversation(
+            user_id=7,
+            chat_id=100,
+            transport="telegram",
+            topic_id=222,
+            thread_id=222,
+            codex_thread_id="thread-abcdef",
+            cwd="C:/repo",
+            is_active=True,
+            provider_sessions={"codex": {"session_id": "thread-abcdef"}},
+        )
+        pending_binding = Conversation(
+            user_id=7,
+            chat_id=100,
+            transport="telegram",
+            topic_id=None,
+            thread_id=None,
+            codex_thread_id="thread-abcdef",
+            cwd="C:/repo",
+            is_active=True,
+            provider_sessions={"codex": {"session_id": "thread-abcdef"}},
+        )
+        session.add_all([old_binding, pending_binding])
+        await session.commit()
+
+        context = ContextManager(session)
+        await topic_state.bind_codex_thread_to_topic(
+            context_manager=context,
+            chat_id=100,
+            topic_id=333,
+            thread_id="thread-abcdef",
+            user_id=7,
+            cwd="C:/repo",
+        )
+
+        result = await session.execute(
+            select(Conversation)
+            .where(
+                Conversation.chat_id == 100,
+                Conversation.codex_thread_id == "thread-abcdef",
+            )
+            .order_by(Conversation.id)
+        )
+        old_row, new_row = result.scalars().all()
+        assert old_row.topic_id == 222
+        assert old_row.is_active is False
+        assert new_row.topic_id == 333
+        assert new_row.thread_id == 333
+        assert new_row.is_active is True
+        assert await topic_state.codex_topic_state(222, context, chat_id=100) == topic_state.CODEX_TOPIC_RECOVERABLE
+        assert await topic_state.codex_topic_state(333, context, chat_id=100) == topic_state.CODEX_TOPIC_BOUND
+        assert await topic_state.codex_topic_state(333, context, chat_id=101) == topic_state.CODEX_TOPIC_NOT_CODEX
+
+    await engine.dispose()
+

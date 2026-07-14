@@ -349,12 +349,31 @@ class CodexSessionManager(SessionManager):
             cwd = str(resp.get("cwd") or thread.get("cwd") or "") or None
             thread_path = thread.get("path")
 
+            previous_key = self._thread_to_session_key.get(resolved_thread_id)
+            if previous_key is not None and previous_key != session_key:
+                self._sessions.pop(previous_key, None)
+                self._resume_info.pop(previous_key, None)
+                self._thread_to_topic.pop(resolved_thread_id, None)
+
             stmt = select(Conversation).where(
                 Conversation.chat_id == session_key.chat_id,
                 Conversation.codex_thread_id == resolved_thread_id,
             )
             result = await db.execute(stmt)
-            conv = result.scalars().first()
+            conversations = list(result.scalars().all())
+            conv = next(
+                (
+                    candidate
+                    for candidate in conversations
+                    if candidate.transport == session_key.transport
+                    and candidate.topic_id == session_key.topic_id
+                ),
+                None,
+            )
+
+            for previous in conversations:
+                if previous is not conv:
+                    previous.is_active = False
 
             if conv is None:
                 conv = Conversation(
@@ -430,7 +449,7 @@ class CodexSessionManager(SessionManager):
         )
         result = await db.execute(stmt)
         conv = result.scalars().first()
-        if conv is None:
+        if conv is None or conv.chat_id is None:
             return None
 
         key = SessionKey(
