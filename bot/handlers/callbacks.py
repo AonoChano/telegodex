@@ -5,7 +5,8 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 from loguru import logger
 from sqlalchemy import select
 
-from ai import AIRouter, Message as AIMessage, MessageRole
+from ai import AIRouter, MessageRole
+from ai import Message as AIMessage
 from ai.token_usage import estimate_messages_tokens
 from bot.handlers.chat_runtime import select_chat_runtime
 from bot.handlers.chat_sessions import load_session_data
@@ -18,6 +19,7 @@ from bot.keyboards import (
     get_settings_menu,
     get_temperature_selector,
 )
+from bot.utils.callback_data import decode_callback_data
 from bot.utils.routing import TelegramRoute
 from core.orchestrator.chat_tools import build_telegodex_capability_prompt, next_permission_mode, permission_mode_label
 from core.session import SessionKey
@@ -260,11 +262,13 @@ async def handle_temperature_change(callback: CallbackQuery, context_manager: Co
 @router.callback_query(lambda c: c.data and c.data.startswith("provider:"))
 async def handle_provider_change(callback: CallbackQuery, context_manager: ContextManager):
     """处理服务商切换"""
-    provider = callback.data.split(":", 1)[1]
-
     user = await context_manager.session.execute(select(User).where(User.id == callback.from_user.id))
     user_obj = user.scalar_one()
     locale = resolve_locale(user_obj.ui_language, user_obj.language_code)
+    provider = decode_callback_data(callback.data, "provider")
+    if provider is None:
+        await callback.answer(tr("bot.errors.invalid_callback", locale), show_alert=True)
+        return
 
     user_obj.preferred_provider = provider
     user_obj.preferred_model = None  # 重置模型选择
@@ -281,12 +285,14 @@ async def handle_provider_change(callback: CallbackQuery, context_manager: Conte
 @router.callback_query(lambda c: c.data and c.data.startswith("model:"))
 async def handle_model_change(callback: CallbackQuery, context_manager: ContextManager):
     """处理模型切换"""
-    parts = callback.data.split(":", 2)
-    model = parts[2]
-
     user = await context_manager.session.execute(select(User).where(User.id == callback.from_user.id))
     user_obj = user.scalar_one()
     locale = resolve_locale(user_obj.ui_language, user_obj.language_code)
+    payload = decode_callback_data(callback.data, "model")
+    if payload is None or ":" not in payload:
+        await callback.answer(tr("bot.errors.invalid_callback", locale), show_alert=True)
+        return
+    _, model = payload.split(":", 1)
 
     user_obj.preferred_model = model
 
@@ -411,10 +417,13 @@ async def handle_codex_approval(callback: CallbackQuery, orchestrator: Any):
 @router.callback_query(lambda c: c.data and c.data.startswith("lang:set:"))
 async def handle_language_change(callback: CallbackQuery, context_manager: ContextManager):
     """Handle language selection."""
-    locale_code = callback.data.split(":", 2)[2]
-
     user = await context_manager.session.execute(select(User).where(User.id == callback.from_user.id))
     user_obj = user.scalar_one()
+    fallback_locale = resolve_locale(user_obj.ui_language, user_obj.language_code)
+    locale_code = decode_callback_data(callback.data, "lang:set")
+    if locale_code is None:
+        await callback.answer(tr("bot.errors.invalid_callback", fallback_locale), show_alert=True)
+        return
     user_obj.ui_language = locale_code
     await context_manager.session.commit()
 

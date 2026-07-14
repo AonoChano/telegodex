@@ -8,6 +8,7 @@ from bot.keyboards import (
     get_settings_menu,
     get_temperature_selector,
 )
+from bot.utils.callback_data import decode_callback_data
 from i18n import LocaleInfo
 
 
@@ -91,6 +92,15 @@ def test_model_selector_keeps_long_model_names_single_column() -> None:
     )
 
     assert _row_lengths(markup) == [1, 1, 1, 1]
+
+
+def test_model_selector_tokenizes_oversized_callback_data() -> None:
+    model = "模型-" * 40
+    markup = get_model_selector("custom-provider", [model], None, "en")
+    button = markup.inline_keyboard[0][0]
+
+    assert len((button.callback_data or "").encode("utf-8")) <= 64
+    assert decode_callback_data(button.callback_data, "model") == f"custom-provider:{model}"
 
 
 def test_temperature_selector_marks_current_value_and_keeps_back_footer() -> None:

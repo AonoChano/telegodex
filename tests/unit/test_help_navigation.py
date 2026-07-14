@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from bot.handlers import help as help_handler
+from bot.utils.callback_data import encode_callback_data
 
 
 class MessageStub:
@@ -40,6 +41,24 @@ def _keyboard() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="Next", callback_data="help:toc:2")]
         ]
     )
+
+
+@pytest.mark.asyncio
+async def test_chapter_navigation_resolves_tokenized_chapter_id() -> None:
+    chapter_id = "章节-" * 40
+    callback = SimpleNamespace(
+        data=encode_callback_data("help:ch", f"{chapter_id}:3"),
+        answer=AsyncMock(),
+        message=None,
+    )
+    renderer = SimpleNamespace(
+        render_chapter_page=MagicMock(return_value=("page", _keyboard()))
+    )
+
+    await help_handler._handle_chapter_navigation(callback, renderer, "en")
+
+    renderer.render_chapter_page.assert_called_once_with("en", chapter_id, 3)
+    callback.answer.assert_awaited_once_with()
 
 
 @pytest.mark.asyncio

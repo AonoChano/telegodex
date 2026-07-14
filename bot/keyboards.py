@@ -2,6 +2,7 @@ from unicodedata import east_asian_width
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
 
+from bot.utils.callback_data import encode_callback_data
 from core.orchestrator.chat_tools import permission_mode_label
 from i18n import LocaleInfo, tr
 
@@ -145,7 +146,12 @@ def get_provider_selector(
         if provider == current_provider:
             label = tr("bot.keyboards.provider_active", locale, label=label)
 
-        buttons.append(InlineKeyboardButton(text=label, callback_data=f"provider:{provider}"))
+        buttons.append(
+            InlineKeyboardButton(
+                text=label,
+                callback_data=encode_callback_data("provider", provider),
+            )
+        )
 
     return smart_inline_keyboard(
         buttons,
@@ -168,7 +174,12 @@ def get_model_selector(
         if model == current_model:
             label = f"✅ {label}"
 
-        buttons.append(InlineKeyboardButton(text=label, callback_data=f"model:{provider}:{model}"))
+        buttons.append(
+            InlineKeyboardButton(
+                text=label,
+                callback_data=encode_callback_data("model", f"{provider}:{model}"),
+            )
+        )
 
     return smart_inline_keyboard(
         buttons,
@@ -290,7 +301,12 @@ def get_language_selector(
         label = info.display_name
         if info.locale == current_locale:
             label = f"✅ {label}"
-        buttons.append(InlineKeyboardButton(text=label, callback_data=f"lang:set:{info.locale}"))
+        buttons.append(
+            InlineKeyboardButton(
+                text=label,
+                callback_data=encode_callback_data("lang:set", info.locale),
+            )
+        )
 
     return smart_inline_keyboard(
         buttons,

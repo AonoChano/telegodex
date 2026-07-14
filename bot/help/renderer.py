@@ -7,6 +7,7 @@ from pathlib import Path
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from loguru import logger
 
+from bot.utils.callback_data import encode_callback_data
 from i18n import tr
 
 from .loader import HelpChapter, load_help_locale
@@ -124,7 +125,7 @@ class HelpRenderer:
                 [
                     InlineKeyboardButton(
                         text=chapter.title,
-                        callback_data=f"help:ch:{chapter.chapter_id}:1",
+                        callback_data=encode_callback_data("help:ch", f"{chapter.chapter_id}:1"),
                     )
                 ]
             )
@@ -251,7 +252,7 @@ class HelpRenderer:
                             locale,
                             title=prev_chapter.title,
                         ),
-                        callback_data=f"help:ch:{prev_chapter.chapter_id}:1",
+                        callback_data=encode_callback_data("help:ch", f"{prev_chapter.chapter_id}:1"),
                     )
                 ]
             if is_last_page and next_chapter is not None:
@@ -262,7 +263,7 @@ class HelpRenderer:
                             locale,
                             title=next_chapter.title,
                         ),
-                        callback_data=f"help:ch:{next_chapter.chapter_id}:1",
+                        callback_data=encode_callback_data("help:ch", f"{next_chapter.chapter_id}:1"),
                     )
                 ]
             return None
@@ -272,14 +273,14 @@ class HelpRenderer:
             buttons.append(
                 InlineKeyboardButton(
                     text=tr("bot.help.prev_chapter", locale),
-                    callback_data=f"help:ch:{prev_chapter.chapter_id}:1",
+                    callback_data=encode_callback_data("help:ch", f"{prev_chapter.chapter_id}:1"),
                 )
             )
         if next_chapter is not None:
             buttons.append(
                 InlineKeyboardButton(
                     text=tr("bot.help.next_chapter", locale),
-                    callback_data=f"help:ch:{next_chapter.chapter_id}:1",
+                    callback_data=encode_callback_data("help:ch", f"{next_chapter.chapter_id}:1"),
                 )
             )
         return buttons if buttons else None
@@ -311,8 +312,8 @@ class HelpRenderer:
         next_page = current_page + 1 if current_page < total_pages else 1
 
         if mode == "chapter" and chapter_id is not None:
-            prev_cb = f"help:ch:{chapter_id}:{prev_page}"
-            next_cb = f"help:ch:{chapter_id}:{next_page}"
+            prev_cb = encode_callback_data("help:ch", f"{chapter_id}:{prev_page}")
+            next_cb = encode_callback_data("help:ch", f"{chapter_id}:{next_page}")
         else:
             prev_cb = f"help:toc:{prev_page}"
             next_cb = f"help:toc:{next_page}"

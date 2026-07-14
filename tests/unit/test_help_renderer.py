@@ -8,6 +8,7 @@ import pytest
 from aiogram.types import InlineKeyboardMarkup
 
 from bot.help.renderer import BASE_LOCALE, TOC_PAGE_SIZE, HelpRenderer
+from bot.utils.callback_data import decode_callback_data
 
 
 def _write_chapter(
@@ -214,6 +215,21 @@ def test_build_toc_keyboard_single_page_no_pagination(renderer: HelpRenderer) ->
     # 6 chapter rows + 1 close row = 7 rows (no pagination).
     assert len(rows) == 7
     assert rows[-1][0].callback_data == "help:close"
+
+
+def test_long_chapter_id_uses_safe_callback_token(tmp_path: Path) -> None:
+    chapter_id = "chapter_" + "非常长" * 30
+    en_dir = tmp_path / "en"
+    _write_chapter(en_dir, chapter_id, "Long chapter", 1, ["# Long"])
+    renderer = HelpRenderer(tmp_path)
+    renderer.initialize()
+
+    keyboard = renderer.build_toc_keyboard("en", current_page=1, total_pages=1)
+    callback_data = keyboard.inline_keyboard[0][0].callback_data
+
+    assert callback_data is not None
+    assert len(callback_data.encode("utf-8")) <= 64
+    assert decode_callback_data(callback_data, "help:ch") == f"{chapter_id}:1"
 
 
 # ---------------------------------------------------------------------------

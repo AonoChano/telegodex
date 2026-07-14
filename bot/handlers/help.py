@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+
 from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
@@ -9,6 +11,7 @@ from loguru import logger
 from sqlalchemy import select
 
 from bot.help import HelpRenderer, get_help_renderer
+from bot.utils.callback_data import decode_callback_data
 from bot.utils.rich_messages import edit_rich_message, send_rich_message
 from bot.utils.routing import TelegramRoute
 from i18n import resolve_locale, tr
@@ -191,10 +194,8 @@ async def _handle_close(callback: CallbackQuery) -> None:
         await callback.message.delete()
     except Exception as exc:
         logger.debug(f"Failed to delete help message: {exc}")
-        try:
+        with contextlib.suppress(Exception):
             await callback.message.edit_text(reply_markup=None)
-        except Exception:
-            pass
     await callback.answer()
 
 
@@ -218,14 +219,13 @@ async def _handle_chapter_navigation(
     callback: CallbackQuery, renderer: HelpRenderer, locale: str
 ) -> None:
     """Handle chapter page navigation with rich in-place editing first."""
-    data = callback.data or ""
-    parts = data.split(":")
-    if len(parts) != 4:
+    payload = decode_callback_data(callback.data, "help:ch")
+    if payload is None or ":" not in payload:
         await callback.answer(tr("bot.errors.invalid_callback", locale), show_alert=True)
         return
-    chapter_id = parts[2]
+    chapter_id, page_text = payload.rsplit(":", 1)
     try:
-        page = int(parts[3])
+        page = int(page_text)
     except ValueError:
         await callback.answer(tr("bot.errors.invalid_callback", locale), show_alert=True)
         return
