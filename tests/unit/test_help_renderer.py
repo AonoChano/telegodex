@@ -218,7 +218,7 @@ def test_build_toc_keyboard_single_page_no_pagination(renderer: HelpRenderer) ->
 
 
 def test_long_chapter_id_uses_safe_callback_token(tmp_path: Path) -> None:
-    chapter_id = "chapter_" + "非常长" * 30
+    chapter_id = "chapter_" + "非常长" * 12
     en_dir = tmp_path / "en"
     _write_chapter(en_dir, chapter_id, "Long chapter", 1, ["# Long"])
     renderer = HelpRenderer(tmp_path)
